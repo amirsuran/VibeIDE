@@ -106,8 +106,8 @@ function checkWarning(name, fn, mode = 'fast') {
 // FAST CHECKS (always run, ≤3s)
 // ──────────────────────────────────────────────────────────
 
-// 1. API keys configured
-check('api-keys-configured', () => {
+// 1. API keys / local model (warning only — CI and fresh clones have no provider)
+checkWarning('api-keys-configured', () => {
 	const envVars = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GEMINI_API_KEY'];
 	const found = envVars.filter(v => process.env[v]);
 	if (found.length > 0) return `API keys found: ${found.join(', ')}`;
