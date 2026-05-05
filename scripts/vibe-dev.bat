@@ -1,15 +1,22 @@
 @echo off
-REM VibeIDE — one-shot dev launch (Windows): optional profile wipe (--clear), compile-or-transpile, React/NLS, Electron.
+REM VibeIDE — one-shot dev launch (Windows): optional profile wipe (--clear), gulp compile or opt-in transpile, React/NLS, Electron.
 REM Run from repo root: scripts\vibe-dev.bat   or   run-dev.bat (wrapper).
 REM Backup mirror (paths differ): bin\vibe-dev.bat — see docs/knowledge.md § Запуск dev VibeIDE.
 REM
 REM --clear / -clear /clear — delete dev profile dirs below, then launch ^(flags not passed to Electron^)
-REM VIBE_SKIP_TRANSPILE=1   — skip npm run transpile-client when incremental compile is skipped (stale out/ possible)
+REM По умолчанию transpile-client НЕ запускается: он чистит out и заменяет gulp-бандл на разрозненный ESM —
+REM в Electron тогда import *.css ломается ^(MIME text/css^) и падает workbench.desktop.main.js.
+REM VIBE_USE_TRANSPILE_CLIENT=1 — принудительно запустить transpile-client после инкрементального прохода ^(на свой риск^).
+REM VIBE_SKIP_TRANSPILE=1 — устарело, то же что поведение по умолчанию ^(можно оставить для совместимости^).
 REM VIBE_SKIP_REACT=1       — skip npm run buildreact when sidebar bundle is missing
 REM VIBE_SKIP_NLS=1         — skip vibe-nls-extract + clp cache clear
 
 setlocal EnableExtensions EnableDelayedExpansion
 title VibeIDE — vibe-dev
+
+REM Unstable TLS to GitHub release-assets (ECONNRESET): optional mirror for @electron/get.
+REM Example: set VIBE_ELECTRON_MIRROR=https://cdn.npmmirror.com/binaries/electron/
+if defined VIBE_ELECTRON_MIRROR set "ELECTRON_MIRROR=!VIBE_ELECTRON_MIRROR!"
 
 cd /d "%~dp0.."
 set "REPO_ROOT=%CD%"
@@ -81,12 +88,12 @@ if "%NEED_COMPILE%"=="1" (
 	call npm run compile
 	if errorlevel 1 exit /b 1
 ) else (
-	if not "%VIBE_SKIP_TRANSPILE%"=="1" (
-		echo [vibe-dev] npm run transpile-client ...
+	if "%VIBE_USE_TRANSPILE_CLIENT%"=="1" (
+		echo [vibe-dev] VIBE_USE_TRANSPILE_CLIENT=1 — npm run transpile-client ^(may break Electron workbench bundle/CSS^) ...
 		call npm run transpile-client
 		if errorlevel 1 exit /b 1
 	) else (
-		echo [vibe-dev] VIBE_SKIP_TRANSPILE=1 — skipping transpile-client
+		echo [vibe-dev] skipping transpile-client ^(keeps gulp bundle; set VIBE_USE_TRANSPILE_CLIENT=1 to force^)
 	)
 )
 

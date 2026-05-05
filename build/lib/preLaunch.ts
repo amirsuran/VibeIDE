@@ -17,6 +17,14 @@ function runProcess(command: string, args: ReadonlyArray<string> = []) {
 	});
 }
 
+function runProcessReturnCode(command: string, args: ReadonlyArray<string> = []): Promise<number | null> {
+	return new Promise((resolve, reject) => {
+		const child = spawn(command, args, { cwd: rootDir, stdio: 'inherit', env: process.env, shell: process.platform === 'win32' });
+		child.on('exit', code => resolve(code));
+		child.on('error', reject);
+	});
+}
+
 async function exists(subdir: string) {
 	try {
 		await fs.stat(path.join(rootDir, subdir));
@@ -33,7 +41,21 @@ async function ensureNodeModules() {
 }
 
 async function getElectron() {
-	await runProcess(npm, ['run', 'electron']);
+	const max = Math.max(1, Number.parseInt(process.env['VSCODE_ELECTRON_DOWNLOAD_RETRIES'] ?? '5', 10) || 5);
+	for (let attempt = 1; attempt <= max; attempt++) {
+		const code = await runProcessReturnCode(npm, ['run', 'electron']);
+		if (code === 0) {
+			return;
+		}
+		if (attempt < max) {
+			const delayMs = Math.min(30_000, 2000 * 2 ** (attempt - 1));
+			console.log(`[preLaunch] npm run electron failed (exit ${code}), attempt ${attempt}/${max}; next retry in ${delayMs / 1000}s (unstable link to GitHub release assets).`);
+			await new Promise(r => setTimeout(r, delayMs));
+		} else {
+			console.error('[preLaunch] npm run electron failed after retries. Try: set VIBE_ELECTRON_MIRROR=https://cdn.npmmirror.com/binaries/electron/ (see docs/knowledge.md).');
+			process.exit(code ?? 1);
+		}
+	}
 }
 
 async function ensureCompiled() {
