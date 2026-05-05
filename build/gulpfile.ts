@@ -13,6 +13,7 @@ import { compileExtensionMediaTask, compileExtensionsTask, watchExtensionsTask }
 import * as compilation from './lib/compilation.ts';
 import * as task from './lib/task.ts';
 import * as util from './lib/util.ts';
+import { buildVibeideBrowserReactTask } from './lib/vibeideReactBuild.ts';
 
 // Extension point names
 gulp.task(compilation.compileExtensionPointNamesTask);
@@ -38,8 +39,11 @@ gulp.task(compileClientTask);
 const watchClientTask = task.define('watch-client', task.parallel(compilation.watchTypeCheckTask('src'), compilation.watchApiProposalNamesTask, compilation.watchExtensionPointNamesTask, compilation.watchCodiconsTask));
 gulp.task(watchClientTask);
 
-// All
-const _compileTask = task.define('compile', task.parallel(monacoTypecheckTask, compileClientTask, compileExtensionsTask, compileExtensionMediaTask));
+// All (VibeIDE React bundles in react/out are gitignored — build them before client typecheck/compile)
+const _compileTask = task.define('compile', task.series(
+	buildVibeideBrowserReactTask,
+	task.parallel(monacoTypecheckTask, compileClientTask, compileExtensionsTask, compileExtensionMediaTask)
+));
 gulp.task(_compileTask);
 
 gulp.task(task.define('watch', task.parallel(/* monacoTypecheckWatchTask, */ watchClientTask, watchExtensionsTask)));

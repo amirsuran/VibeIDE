@@ -39,6 +39,7 @@ import globCallback from 'glob';
 import rceditCallback from 'rcedit';
 import * as cp from 'child_process';
 import { spawnTsgo } from './lib/tsgo.ts';
+import { buildVibeideBrowserReactTask } from './lib/vibeideReactBuild.ts';
 
 
 const glob = promisify(globCallback);
@@ -239,6 +240,7 @@ gulp.task(task.define('core-ci-old', task.series(
 )));
 
 gulp.task(task.define('core-ci', task.series(
+	buildVibeideBrowserReactTask,
 	copyCodiconsTask,
 	compileNonNativeExtensionsBuildTask,
 	compileExtensionMediaBuildTask,
