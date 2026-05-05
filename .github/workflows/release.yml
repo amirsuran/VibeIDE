@@ -1,3 +1,6 @@
+# Публичный репозиторий: минуты Actions не расходуются из бесплатного лимита.
+# Триггер: тег vX.Y.Z (рекомендуется) или ручной workflow_dispatch (собирается текущий ref ветки, имя релиза — из поля tag).
+
 name: Release Build
 
 on:
@@ -11,8 +14,12 @@ on:
         required: true
         default: 'v0.1.0'
 
+permissions:
+  contents: read
+
 env:
-  VIBE_VERSION: ${{ github.ref_name || inputs.tag }}
+  # При push тега — ref_name = тег; при ручном запуске — введённый tag (не подменяет checkout ref).
+  VIBE_VERSION: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
 
 jobs:
   # ─────────────────────────────────────────────────────────────────
@@ -26,19 +33,22 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version-file: .nvmrc
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm install --ignore-scripts
+        run: npm ci
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
 
       - name: Compile TypeScript
         run: npm run compile-build
-        timeout-minutes: 30
+        timeout-minutes: 45
 
       - name: Compile extensions
         run: npm run compile-extensions-build
-        timeout-minutes: 20
+        timeout-minutes: 30
 
       - name: Upload compiled output
         uses: actions/upload-artifact@v4
@@ -65,7 +75,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version-file: .nvmrc
 
       - name: Download compiled output
         uses: actions/download-artifact@v4
@@ -73,7 +83,11 @@ jobs:
           name: compiled-output
 
       - name: Install dependencies
-        run: npm install --ignore-scripts
+        run: npm ci
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+          npm_config_foreground_scripts: 'true'
 
       - name: Install InnoSetup
         run: choco install innosetup -y
@@ -112,7 +126,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version-file: .nvmrc
 
       - name: Download compiled output
         uses: actions/download-artifact@v4
@@ -120,7 +134,11 @@ jobs:
           name: compiled-output
 
       - name: Install dependencies
-        run: npm install --ignore-scripts
+        run: npm ci
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+          npm_config_foreground_scripts: 'true'
 
       - name: Build macOS ARM64
         run: node node_modules/gulp/bin/gulp.js vscode-darwin-arm64
@@ -162,7 +180,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version-file: .nvmrc
 
       - name: Download compiled output
         uses: actions/download-artifact@v4
@@ -171,8 +189,12 @@ jobs:
 
       - name: Install dependencies
         run: |
-          npm install --ignore-scripts
+          npm ci
           sudo apt-get install -y rpm fakeroot
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+          npm_config_foreground_scripts: 'true'
 
       - name: Build Linux app
         run: node node_modules/gulp/bin/gulp.js vscode-linux-${{ matrix.arch }}
@@ -211,6 +233,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -219,26 +243,35 @@ jobs:
 
       - name: Generate changelog
         run: |
-          node scripts/vibe-changelog.js --since $(git describe --tags --abbrev=0 HEAD^) \
-            > RELEASE_NOTES.md || echo "## VibeIDE ${VIBE_VERSION}" > RELEASE_NOTES.md
+          set -e
+          PREV=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)
+          if [ -n "$PREV" ]; then
+            node scripts/vibe-changelog.js --since "$PREV" > RELEASE_NOTES.md
+          else
+            echo "## VibeIDE ${VIBE_VERSION}" > RELEASE_NOTES.md
+            echo "" >> RELEASE_NOTES.md
+            echo "Первый релиз или нет предыдущего тега — полный changelog: см. коммиты на \`main\`." >> RELEASE_NOTES.md
+          fi
 
       - name: Generate transparency report
         run: node scripts/vibe-transparency-dashboard.js --output transparency.json
 
       - name: Generate SBOM
         run: |
-          npm install --ignore-scripts --silent
           node -e "
-            const pkg = require('./package.json');
+            const fs = require('fs');
+            const product = JSON.parse(fs.readFileSync('product.json', 'utf8'));
             const sbom = {
               bomFormat: 'CycloneDX',
               specVersion: '1.4',
-              version: '${VIBE_VERSION}',
-              metadata: { component: { name: 'vibeide', version: pkg.vibeVersion } },
+              version: process.env.VIBE_VERSION,
+              metadata: { component: { name: 'vibeide', version: product.vibeVersion } },
               components: []
             };
-            require('fs').writeFileSync('sbom.json', JSON.stringify(sbom, null, 2));
+            fs.writeFileSync('sbom.json', JSON.stringify(sbom, null, 2));
           "
+        env:
+          VIBE_VERSION: ${{ env.VIBE_VERSION }}
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
