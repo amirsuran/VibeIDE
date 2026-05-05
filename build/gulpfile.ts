@@ -24,16 +24,19 @@ const require = createRequire(import.meta.url);
 gulp.task(compilation.compileApiProposalNamesTask);
 gulp.task(compilation.watchApiProposalNamesTask);
 
+// Copy VS CSS into out/ so ESM `import './media/foo.css'` + dev import maps resolve (see cssDevService + workbench.ts).
+const copyVsCssTask = task.define('copy-vs-css', () => gulp.src('src/vs/**/*.css', { base: 'src' }).pipe(gulp.dest('out')));
+
 // SWC Client Transpile
-const transpileClientSWCTask = task.define('transpile-client-esbuild', task.series(util.rimraf('out'), compilation.transpileTask('src', 'out', true)));
+const transpileClientSWCTask = task.define('transpile-client-esbuild', task.series(util.rimraf('out'), compilation.transpileTask('src', 'out', true), copyVsCssTask));
 gulp.task(transpileClientSWCTask);
 
 // Transpile only
-const transpileClientTask = task.define('transpile-client', task.series(util.rimraf('out'), compilation.transpileTask('src', 'out')));
+const transpileClientTask = task.define('transpile-client', task.series(util.rimraf('out'), compilation.transpileTask('src', 'out'), copyVsCssTask));
 gulp.task(transpileClientTask);
 
 // Fast compile for development time (includes NLS metadata in out/ for localized UI — build flag enables nls() transform)
-const compileClientTask = task.define('compile-client', task.series(util.rimraf('out'), compilation.copyCodiconsTask, compilation.compileApiProposalNamesTask, compilation.compileExtensionPointNamesTask, compilation.compileTask('src', 'out', true, { disableMangle: true, preserveEnglish: true })));
+const compileClientTask = task.define('compile-client', task.series(util.rimraf('out'), compilation.copyCodiconsTask, compilation.compileApiProposalNamesTask, compilation.compileExtensionPointNamesTask, compilation.compileTask('src', 'out', true, { disableMangle: true, preserveEnglish: true }), copyVsCssTask));
 gulp.task(compileClientTask);
 
 const watchClientTask = task.define('watch-client', task.parallel(compilation.watchTypeCheckTask('src'), compilation.watchApiProposalNamesTask, compilation.watchExtensionPointNamesTask, compilation.watchCodiconsTask));

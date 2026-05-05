@@ -4,6 +4,8 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { spawn } from 'child_process';
+import { existsSync } from 'fs';
+import { join } from '../../../base/common/path.js';
 import { relative } from '../../../base/common/path.js';
 import { FileAccess } from '../../../base/common/network.js';
 import { StopWatch } from '../../../base/common/stopwatch.js';
@@ -51,7 +53,19 @@ export class CSSDevelopmentService implements ICSSDevelopmentService {
 
 			const chunks: Buffer[] = [];
 			const basePath = FileAccess.asFileUri('').fsPath;
-			const process = spawn(rg.rgPath, ['-g', '**/*.css', '--files', '--no-ignore', basePath], {});
+			const outDir = join(basePath, 'out');
+			const outVs = join(outDir, 'vs');
+
+			// Paths must be relative to `out/` (e.g. vs/workbench/.../media/foo.css) so workbench.ts
+			// `new URL(cssModule, baseUrl)` matches ESM imports next to emitted .js under out/vs/.
+			// gulp compile-client runs copy-vs-css: src/vs/**/*.css -> out/vs/...
+			if (!existsSync(outVs)) {
+				this.logService.warn('[CSS_DEV] out/vs not found — run full compile (gulp copies CSS next to JS).');
+				resolve([]);
+				return;
+			}
+
+			const process = spawn(rg.rgPath, ['-g', '**/*.css', '--files', '--no-ignore', outVs], {});
 
 			process.stdout.on('data', data => {
 				chunks.push(data);
@@ -62,10 +76,7 @@ export class CSSDevelopmentService implements ICSSDevelopmentService {
 			});
 			process.on('close', () => {
 				const data = Buffer.concat(chunks).toString('utf8');
-				const result = data.split('\n').filter(Boolean).map(path => relative(basePath, path).replace(/\\/g, '/')).filter(Boolean).sort();
-				if (result.some(path => path.indexOf('vs/') !== 0)) {
-					this.logService.error(`[CSS_DEV] Detected invalid paths in css modules, raw output: ${data}`);
-				}
+				const result = data.split('\n').filter(Boolean).map(absPath => relative(outDir, absPath).replace(/\\/g, '/')).filter(rel => !!rel && rel.indexOf('vs/') === 0).sort();
 				resolve(result);
 				this.logService.info(`[CSS_DEV] DONE, ${result.length} css modules (${Math.round(sw.elapsed())}ms)`);
 			});
