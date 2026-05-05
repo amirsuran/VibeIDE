@@ -188,11 +188,12 @@ function ensureAgentHarnessLink(sourceRelativePath: string, linkPath: string): '
 	}
 
 	const sourcePath = path.resolve(path.dirname(linkPath), sourceRelativePath);
-	if (!fs.existsSync(sourcePath)) {
+	// One syscall; throwIfNoEntry avoids ENOENT when .agents/ is gitignored (CI).
+	const stats = fs.statSync(sourcePath, { throwIfNoEntry: false });
+	if (stats === undefined) {
 		return 'skipped';
 	}
-
-	const isDirectory = fs.statSync(sourcePath).isDirectory();
+	const isDirectory = stats.isDirectory();
 
 	try {
 		if (process.platform === 'win32' && isDirectory) {
