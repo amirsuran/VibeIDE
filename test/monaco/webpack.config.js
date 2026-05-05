@@ -3,8 +3,21 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+const fs = require('fs');
 const path = require('path');
 const WarningsToErrorsPlugin = require('warnings-to-errors-webpack-plugin');
+
+/** Copy static HTML into dist next to emitted bundles (tests load dist/core.html). */
+class CopyCoreHtmlPlugin {
+	apply(compiler) {
+		compiler.hooks.afterEmit.tap('CopyCoreHtmlPlugin', () => {
+			fs.copyFileSync(
+				path.join(__dirname, 'core.html'),
+				path.join(__dirname, 'dist', 'core.html')
+			);
+		});
+	}
+}
 
 module.exports = {
 	mode: 'production',
@@ -53,7 +66,8 @@ module.exports = {
 		chunks: true
 	},
 	plugins: [
-		new WarningsToErrorsPlugin()
+		new WarningsToErrorsPlugin(),
+		new CopyCoreHtmlPlugin()
 	],
 	optimization: {
 		// Without it, CI fails, which indicates a webpack minification bug.
