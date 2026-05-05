@@ -52,8 +52,10 @@ export class CSSDevelopmentService implements ICSSDevelopmentService {
 			const sw = StopWatch.create();
 
 			const chunks: Buffer[] = [];
-			const basePath = FileAccess.asFileUri('').fsPath;
-			const outDir = join(basePath, 'out');
+			// _VSCODE_FILE_ROOT = import.meta.dirname of bootstrap-esm.js which lives in out/,
+			// so FileAccess.asFileUri('').fsPath already resolves to the out/ directory.
+			// Do NOT append 'out' again — that would produce the non-existent out/out/vs path.
+			const outDir = FileAccess.asFileUri('').fsPath;
 			const outVs = join(outDir, 'vs');
 
 			// Paths must be relative to `out/` (e.g. vs/workbench/.../media/foo.css) so workbench.ts
@@ -76,10 +78,4 @@ export class CSSDevelopmentService implements ICSSDevelopmentService {
 			});
 			process.on('close', () => {
 				const data = Buffer.concat(chunks).toString('utf8');
-				const result = data.split('\n').filter(Boolean).map(absPath => relative(outDir, absPath).replace(/\\/g, '/')).filter(rel => !!rel && rel.indexOf('vs/') === 0).sort();
-				resolve(result);
-				this.logService.info(`[CSS_DEV] DONE, ${result.length} css modules (${Math.round(sw.elapsed())}ms)`);
-			});
-		});
-	}
-}
+				const result = data.split('\n').filter(Boolean).map(absPath => relative(outDir, absPath).replace(/\\/g,
