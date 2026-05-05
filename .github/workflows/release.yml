@@ -36,11 +36,12 @@ jobs:
           node-version-file: .nvmrc
           cache: 'npm'
 
-      # kerberos (node-gyp) needs krb5/GSSAPI headers on Linux
+      # kerberos (node-gyp) needs krb5/GSSAPI headers on Linux;
+      # native-keymap needs libx11 + libxkbfile for pkg-config
       - name: Install Linux native build prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config libkrb5-dev
+          sudo apt-get install -y build-essential pkg-config libkrb5-dev libx11-dev libxkbfile-dev
 
       - name: Install dependencies
         run: npm ci
@@ -196,7 +197,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config libkrb5-dev rpm fakeroot
+          sudo apt-get install -y build-essential pkg-config libkrb5-dev libx11-dev libxkbfile-dev rpm fakeroot
           npm ci
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

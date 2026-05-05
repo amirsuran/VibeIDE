@@ -28,6 +28,12 @@ jobs:
         with:
           node-version-file: .nvmrc
 
+      # Always install: native-keymap node-gyp needs x11 + xkbfile .pc files before npm ci.
+      - name: Linux native build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libx11-dev libxkbfile-dev libkrb5-dev libxss1
+
       - name: Compute node modules cache key
         id: nodeModulesCacheKey
         run: echo "value=$(node build/azure-pipelines/common/computeNodeModulesCacheKey.ts)" >> $GITHUB_OUTPUT
@@ -49,11 +55,6 @@ jobs:
           path: ${{ steps.npmCacheDirPath.outputs.dir }}
           key: ${{ runner.os }}-npmCacheDir-${{ steps.nodeModulesCacheKey.outputs.value }}
           restore-keys: ${{ runner.os }}-npmCacheDir-
-      - name: Install system dependencies
-        if: ${{ steps.cacheNodeModules.outputs.cache-hit != 'true' }}
-        run: |
-          sudo apt update
-          sudo apt install -y libxkbfile-dev pkg-config libkrb5-dev libxss1
       - name: Execute npm
         if: ${{ steps.cacheNodeModules.outputs.cache-hit != 'true' }}
         env:
