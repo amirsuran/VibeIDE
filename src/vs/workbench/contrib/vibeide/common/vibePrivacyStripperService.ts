@@ -22,6 +22,44 @@ export interface IVibePrivacyStripperService {
 	strip(text: string): string;
 }
 
+export interface PrivacyStripPatterns {
+	workspacePath: string;
+	homePath: string;
+	username: string;
+}
+
+/**
+ * Pure helper. No DI, no logging. Strips workspace path, home path and username
+ * occurrences from `text` and returns the rewritten string. Empty / too-short
+ * pattern values are skipped (safety against stripping too aggressively).
+ */
+export function stripPrivacyText(text: string, patterns: PrivacyStripPatterns): string {
+	if (!text) {
+		return text;
+	}
+	let result = text;
+
+	if (patterns.workspacePath && patterns.workspacePath.length > 3) {
+		const escapedPath = patterns.workspacePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+		result = result.replace(new RegExp(escapedPath.replace(/\\/g, '(?:\\\\|/)'), 'gi'), '<workspace>');
+	}
+
+	if (patterns.homePath && patterns.homePath.length > 3) {
+		const escapedHome = patterns.homePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+		result = result.replace(new RegExp(escapedHome.replace(/\\/g, '(?:\\\\|/)'), 'gi'), '<home>');
+	}
+
+	if (patterns.username && patterns.username.length > 2) {
+		const escapedUser = patterns.username.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+		result = result.replace(
+			new RegExp(`(?:Users|home|user)(?:\\\\|/)${escapedUser}(?=(?:\\\\|/|\\s|$))`, 'gi'),
+			'Users/<user>'
+		);
+	}
+
+	return result;
+}
+
 /**
  * VibeIDE Privacy-by-default fingerprint stripping.
  * Auto-strips absolute paths, usernames, and machine names from prompts.
@@ -65,36 +103,14 @@ class VibePrivacyStripperService extends Disposable implements IVibePrivacyStrip
 	}
 
 	strip(text: string): string {
-		if (!text) return text;
-
-		let result = text;
-
-		// Replace absolute workspace path with relative placeholder
-		if (this._workspacePath && this._workspacePath.length > 3) {
-			const escapedPath = this._workspacePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-			result = result.replace(new RegExp(escapedPath.replace(/\\/g, '(?:\\\\|/)'), 'gi'), '<workspace>');
-		}
-
-		// Replace home directory path
-		if (this._homePath && this._homePath.length > 3) {
-			const escapedHome = this._homePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-			result = result.replace(new RegExp(escapedHome.replace(/\\/g, '(?:\\\\|/)'), 'gi'), '<home>');
-		}
-
-		// Replace username in paths (e.g., /Users/johndoe/... or C:\Users\johndoe\...)
-		if (this._username && this._username.length > 2) {
-			const escapedUser = this._username.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-			// Only replace when username appears in path context
-			result = result.replace(
-				new RegExp(`(?:Users|home|user)(?:\\\\|/)${escapedUser}(?=(?:\\\\|/|\\s|$))`, 'gi'),
-				'Users/<user>'
-			);
-		}
-
+		const result = stripPrivacyText(text, {
+			workspacePath: this._workspacePath,
+			homePath: this._homePath,
+			username: this._username,
+		});
 		if (result !== text) {
 			this._logService.debug('[VibeIDE PrivacyStripper] Stripped sensitive path info from prompt');
 		}
-
 		return result;
 	}
 }
