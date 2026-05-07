@@ -18,6 +18,10 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path $PSScriptRoot -Parent
 Set-Location $Root
 
+# ── Helpers ───────────────────────────────────────────────────────────────────
+function Step([string]$msg) { Write-Host "▶ $msg" -ForegroundColor Yellow }
+function OK([string]$msg)   { Write-Host "✓ $msg" -ForegroundColor Green  }
+
 # ── Version ──────────────────────────────────────────────────────────────────
 $productPath = "$Root\product.json"
 $product = Get-Content $productPath -Raw | ConvertFrom-Json
@@ -58,50 +62,53 @@ if (-not $Version) {
 
 Write-Host "`n🚀 Building VibeIDE $Version for Windows x64`n" -ForegroundColor Cyan
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
-function Step([string]$msg) {
-    Write-Host "▶ $msg" -ForegroundColor Yellow
+# ── npm / node helpers (Windows: must use .cmd wrappers) ─────────────────────
+function Npm([string]$cmd) {
+    cmd /c "npm $cmd"
+    if ($LASTEXITCODE -ne 0) { throw "npm $cmd failed (exit $LASTEXITCODE)" }
 }
-function OK([string]$msg) {
-    Write-Host "✓ $msg" -ForegroundColor Green
+function Gulp([string]$task) {
+    cmd /c "node --max-old-space-size=8192 node_modules\gulp\bin\gulp.js $task"
+    if ($LASTEXITCODE -ne 0) { throw "gulp $task failed (exit $LASTEXITCODE)" }
 }
 
 # ── 1. Compile TypeScript ─────────────────────────────────────────────────────
 if (-not $SkipCompile) {
     Step "Compiling TypeScript (npm run compile-build)..."
-    & npm run compile-build
-    if ($LASTEXITCODE -ne 0) { Write-Error "compile-build failed"; exit 1 }
+    Npm "run compile-build"
     OK "TypeScript compiled"
 } else {
     Write-Host "⏭ Skipping compile (-SkipCompile)" -ForegroundColor DarkGray
 }
 
 # ── 2. Build Windows x64 app ──────────────────────────────────────────────────
-$gulp = "node_modules\gulp\bin\gulp.js"
-$node = "node --max-old-space-size=8192"
-
 Step "Building Windows x64 app..."
-& node --max-old-space-size=8192 $gulp vscode-win32-x64
-if ($LASTEXITCODE -ne 0) { Write-Error "vscode-win32-x64 failed"; exit 1 }
+Gulp "vscode-win32-x64"
 OK "App built"
 
+Step "Copying inno updater tools..."
+Gulp "vscode-win32-x64-inno-updater"
+OK "Inno updater tools copied"
+
 Step "Building Windows x64 installer (.exe)..."
-& node --max-old-space-size=8192 $gulp vscode-win32-x64-setup
-if ($LASTEXITCODE -ne 0) { Write-Error "vscode-win32-x64-setup failed"; exit 1 }
+Gulp "vscode-win32-x64-system-setup"
 OK "Installer built"
 
 Step "Building Windows x64 portable archive (.zip)..."
-& node --max-old-space-size=8192 $gulp vscode-win32-x64-archive
-if ($LASTEXITCODE -ne 0) { Write-Error "vscode-win32-x64-archive failed"; exit 1 }
-OK "Portable archive built"
+$archiveDir = "$Root\.build\win32-x64\archive"
+$zipName    = "VibeIDE-$newVibe-win32-x64.zip"
+$zipPath    = "$archiveDir\$zipName"
+New-Item -ItemType Directory -Force -Path $archiveDir | Out-Null
+$appSourceDir = "$Root\..\VibeIDE-win32-x64"
+Compress-Archive -Path "$appSourceDir\*" -DestinationPath $zipPath -Force
+OK "Portable archive built: $zipName"
 
 # ── 3. Collect artifacts ──────────────────────────────────────────────────────
 Step "Collecting artifacts..."
-$setupDir  = ".build\win32-x64\system-setup"
-$archiveDir = ".build\win32-x64\archive"
+$setupDir  = "$Root\.build\win32-x64\system-setup"
 
-$exeFiles = Get-ChildItem "$setupDir\VibeIDESetup-*.exe" -ErrorAction SilentlyContinue
-$zipFiles  = Get-ChildItem "$archiveDir\VibeIDE-*.zip"   -ErrorAction SilentlyContinue
+$exeFiles = Get-ChildItem "$setupDir\VSCodeSetup*.exe" -ErrorAction SilentlyContinue
+$zipFiles  = Get-ChildItem "$archiveDir\VibeIDE-*.zip" -ErrorAction SilentlyContinue
 
 if (-not $exeFiles) { Write-Error "No .exe found in $setupDir"; exit 1 }
 if (-not $zipFiles)  { Write-Error "No .zip found in $archiveDir"; exit 1 }

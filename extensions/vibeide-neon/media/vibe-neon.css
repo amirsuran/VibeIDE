@@ -49,6 +49,14 @@
   background: linear-gradient(to bottom, #fff951 25%, #fc28a8);
 }
 
+/* VibeIDE Chat Group marker — tab header uses registered color tokens so any theme override works.
+   The data-attribute is set programmatically by VibeChatEditorPane; CSS classes are intentionally
+   avoided so the styling responds to the active color theme via CSS custom properties. */
+.monaco-workbench .part.editor>.content [data-vibeide-chat-group]>.title {
+  background-color: var(--vscode-vibeide-chatGroup-tabsBackground) !important;
+  box-shadow: 0 2px 16px var(--vscode-vibeide-chatGroup-glowColor);
+}
+
 /* Active tab neon */
 .monaco-workbench .part.editor>.content .editor-group-container>.title .tabs-container>.tab.sizing-fit.active {
   box-shadow: inset 0 -5px 25px #fc28a825;

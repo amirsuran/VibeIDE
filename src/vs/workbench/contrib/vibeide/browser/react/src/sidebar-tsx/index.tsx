@@ -5,7 +5,9 @@
 
 import { mountFnGenerator } from '../util/mountFnGenerator.js'
 import { Sidebar } from './Sidebar.js'
+import { SidebarHistory } from './SidebarHistory.js'
 
 export const mountSidebar = mountFnGenerator(Sidebar)
+export const mountSidebarHistory = mountFnGenerator(SidebarHistory)
 
 

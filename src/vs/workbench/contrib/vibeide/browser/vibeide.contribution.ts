@@ -321,6 +321,12 @@ import './vibeKeyboardShortcutsService.js'
 // VibeIDE: Commands registry (Command Palette entries)
 import './vibeCommands.js'
 
+// VibeIDE: Chat group color tokens (registerColor — must load before first theme application)
+import './vibeideChatGroupColors.js'
+
+// VibeIDE: Chat editor pane (split tab) + vibeide.chat.open command
+import './vibeideChatPane.js'
+
 // VibeIDE: CommandCenter sparkle menu (replaces native Copilot button; adds New Chat / History / Settings / etc.)
 import './vibeideCommandCenterMenu.js'
 
@@ -422,7 +428,6 @@ import '../common/vibeMultiAgentService.js'
 
 // VibeIDE: Multi-agent / worktree observability (status bar + safety notice)
 import './vibeMultiAgentObservationStatusBar.js'
-import './vibeSecondSessionAutoIsolationWarning.js'
 
 // VibeIDE: Ambient agent (opt-in background monitoring)
 import '../common/vibeAmbientAgentService.js'

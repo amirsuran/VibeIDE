@@ -15,7 +15,7 @@ import { IsRunningType, ThreadType } from '../../../chatThreadService.js';
 
 const numInitialThreads = 3
 
-export const PastThreadsList = ({ className = '' }: { className?: string }) => {
+export const PastThreadsList = ({ className = '', onAfterSwitch }: { className?: string; onAfterSwitch?: () => void }) => {
 	const [showAll, setShowAll] = useState(false);
 
 	const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
@@ -68,6 +68,7 @@ export const PastThreadsList = ({ className = '' }: { className?: string }) => {
 							hoveredIdx={hoveredIdx}
 							setHoveredIdx={setHoveredIdx}
 							isRunning={runningThreadIds[pastThread.id]}
+							onAfterSwitch={onAfterSwitch}
 						/>
 					);
 				})
@@ -130,9 +131,6 @@ const DuplicateButton = ({ threadId }: { threadId: string }) => {
 		Icon={Copy}
 		className='size-[11px]'
 		onClick={() => { chatThreadsService.duplicateThread(threadId); }}
-		data-tooltip-id='vibe-tooltip'
-		data-tooltip-place='top'
-		data-tooltip-content='Duplicate thread'
 	>
 	</IconShell1>
 
@@ -152,37 +150,29 @@ const TrashButton = ({ threadId }: { threadId: string }) => {
 				Icon={X}
 				className='size-[11px]'
 				onClick={() => { setIsTrashPressed(false); }}
-				data-tooltip-id='vibe-tooltip'
-				data-tooltip-place='top'
-				data-tooltip-content='Cancel'
 			/>
 			<IconShell1
 				Icon={Check}
 				className='size-[11px]'
 				onClick={() => { chatThreadsService.deleteThread(threadId); setIsTrashPressed(false); }}
-				data-tooltip-id='vibe-tooltip'
-				data-tooltip-place='top'
-				data-tooltip-content='Confirm'
 			/>
 		</div>
 		: <IconShell1
 			Icon={Trash2}
 			className='size-[11px]'
 			onClick={() => { setIsTrashPressed(true); }}
-			data-tooltip-id='vibe-tooltip'
-			data-tooltip-place='top'
-			data-tooltip-content='Delete thread'
 		/>
 	)
 }
 
-const PastThreadElement = ({
+export const PastThreadElement = ({
 	pastThread,
 	idx,
 	hoveredIdx,
 	setHoveredIdx,
 	isRunning,
 	onAfterSwitch,
+	isActive = false,
 }: {
 	pastThread: ThreadType,
 	idx: number,
@@ -190,6 +180,7 @@ const PastThreadElement = ({
 	setHoveredIdx: (idx: number | null) => void,
 	isRunning: IsRunningType | undefined,
 	onAfterSwitch?: () => void,
+	isActive?: boolean,
 }) => {
 
 
@@ -235,7 +226,7 @@ const PastThreadElement = ({
 
 	const detailsHTML = (
 		<span className='inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-vibe-bg-2 text-[10px] tracking-wide uppercase text-vibe-fg-3'>
-			<span>{numMessages} msg</span>
+			<span>{numMessages}</span>
 			<span className='opacity-80'>{formatDate(new Date(pastThread.lastModified))}</span>
 		</span>
 	)
@@ -243,7 +234,8 @@ const PastThreadElement = ({
 	return <div
 		key={pastThread.id}
 		className={`
-			group px-3 py-2 rounded-2xl @@chat-composer-shell cursor-pointer text-sm text-vibe-fg-1 transition-colors duration-150 ease-out
+			group relative px-3 py-2 rounded-2xl cursor-pointer text-sm text-vibe-fg-1 transition-colors duration-150 ease-out
+			${isActive ? 'bg-vibe-bg-3' : '@@chat-composer-shell'}
 		`}
 		onClick={() => {
 			chatThreadsService.switchToThread(pastThread.id);
@@ -252,6 +244,12 @@ const PastThreadElement = ({
 		onMouseEnter={() => setHoveredIdx(idx)}
 		onMouseLeave={() => setHoveredIdx(null)}
 	>
+		{isActive && (
+			<span
+				className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-[55%] rounded-full"
+				style={{ background: 'var(--vscode-vibeide-chatGroup-activeBorder, #fc28a8)' }}
+			/>
+		)}
 		<div className="flex items-center justify-between gap-2">
 			<span className="flex items-center gap-2 min-w-0 overflow-hidden text-vibe-fg-2">
                 {/* status icon */}
@@ -261,11 +259,7 @@ const PastThreadElement = ({
                     <MessageCircleQuestion className="text-vibe-fg-1 flex-shrink-0 flex-grow-0" size={14} />
                 ) : null}
 				{/* name */}
-				<span className="truncate overflow-hidden text-ellipsis text-vibe-fg-1"
-					data-tooltip-id='vibe-tooltip'
-					data-tooltip-content={numMessages + ' messages'}
-					data-tooltip-place='top'
-				>{firstMsg}</span>
+				<span className="truncate overflow-hidden text-ellipsis text-vibe-fg-1">{firstMsg}</span>
 
 				{/* <span className='opacity-60'>{`(${numMessages})`}</span> */}
 			</span>
@@ -381,6 +375,7 @@ export const ChatHistoryToolbarDropdown: React.FC<{ className?: string }> = ({ c
 					const maxHeight = Math.max(160, Math.min(availableHeight - 12, 400));
 					Object.assign(elements.floating.style, {
 						maxHeight: `${maxHeight}px`,
+						maxWidth: 'min(90vw, 360px)',
 						overflow: 'hidden',
 						display: 'flex',
 						flexDirection: 'column',
@@ -458,7 +453,7 @@ export const ChatHistoryToolbarDropdown: React.FC<{ className?: string }> = ({ c
 			{isOpen ? (
 				<div
 					ref={refs.setFloating}
-					className="z-[10000] bg-vibe-bg-1 border-vibe-border-3 border rounded-xl shadow-lg overflow-hidden"
+					className="z-[10000] bg-vibe-bg-1 border vibe-popup-panel rounded-xl shadow-lg overflow-hidden"
 					style={{ position: strategy, top: y ?? 0, left: x ?? 0 }}
 				>
 					<div className="px-2 py-1.5 border-b border-vibe-border-2 shrink-0">

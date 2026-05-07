@@ -16,7 +16,6 @@ import { IAiEmbeddingVectorService } from '../../../services/aiEmbeddingVector/c
 import { ISecretDetectionService } from '../common/secretDetectionService.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { OfflinePrivacyGate } from '../common/offlinePrivacyGate.js';
-import { ITreeSitterService } from './treeSitterService.js';
 import { IVectorStore } from '../common/vectorStore.js';
 import { IVibeideSettingsService } from '../common/vibeideSettingsService.js';
 import { getPerformanceHarness } from '../common/performanceHarness.js';
@@ -164,7 +163,6 @@ class RepoIndexerService extends Disposable implements IRepoIndexerService {
 		@IModelService private readonly modelService: IModelService,
 		@IEnvironmentService private readonly environmentService: IEnvironmentService,
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
-		@ITreeSitterService private readonly treeSitterService: ITreeSitterService,
 		@IVectorStore private readonly vectorStore: IVectorStore,
 		@IVibeideSettingsService private readonly settingsService: IVibeideSettingsService,
 	) {
@@ -410,7 +408,7 @@ class RepoIndexerService extends Disposable implements IRepoIndexerService {
 
 			// Use compact JSON (no pretty printing) for smaller file size
 			const content = JSON.stringify(serializableIndex);
-			const { VSBuffer } = await import('../../../../base/common/buffer.js');
+			const bufferModule = await import('../../../../base/common/buffer.js');
 			// Ensure parent folder exists
 			const parentPath = indexPath.with({ path: indexPath.path.replace(/\/[^/]*$/, '') });
 			try {
@@ -418,7 +416,7 @@ class RepoIndexerService extends Disposable implements IRepoIndexerService {
 			} catch {
 				// Folder might already exist, ignore
 			}
-			await this.fileService.writeFile(indexPath, VSBuffer.fromString(content));
+			await this.fileService.writeFile(indexPath, bufferModule.VSBuffer.fromString(content));
 		} catch (e) {
 			console.warn('[RepoIndexer] Failed to save repo index:', e);
 		}
@@ -489,38 +487,6 @@ class RepoIndexerService extends Disposable implements IRepoIndexerService {
 	private async _extractSymbols(uri: URI): Promise<string[]> {
 		const symbols: string[] = [];
 
-		// Try tree-sitter first if enabled
-		if (this.treeSitterService.isEnabled()) {
-			try {
-				const fileContent = this._fileContentCache.get(uri.fsPath) ||
-					(await this.fileService.readFile(uri)).value.toString();
-				const astSymbols = await this.treeSitterService.extractSymbols(uri, fileContent);
-
-				// Convert AST symbols to string array
-				const extractNames = (sym: any): void => {
-					if (sym.name && !symbols.includes(sym.name)) {
-						symbols.push(sym.name);
-					}
-					if (sym.children) {
-						for (const child of sym.children) {
-							extractNames(child);
-						}
-					}
-				};
-
-				for (const sym of astSymbols) {
-					extractNames(sym);
-				}
-
-				if (symbols.length > 0) {
-					return symbols; // Return tree-sitter results if successful
-				}
-			} catch {
-				// Fall through to fallback method
-			}
-		}
-
-		// Fallback to existing method
 		try {
 			// Only extract symbols if model is already loaded (to avoid expensive model initialization)
 			// During rebuild, symbols will only be extracted for files that are already open/loaded
@@ -655,72 +621,43 @@ class RepoIndexerService extends Disposable implements IRepoIndexerService {
 			}
 			const snippetText = lines.slice(0, endLine).join('\n').slice(0, initialLimit).replace(/\n$/, '');
 
-			// Generate chunks - try AST-aware chunking first if enabled
-			let chunks: IndexChunk[] = [];
+			// Generate chunks using character-based chunking
+			const chunks: IndexChunk[] = [];
+			let currentPos = 0;
+			let chunkIndex = 0;
 
-			if (this.treeSitterService.isEnabled()) {
-				try {
-					// Extract symbols for AST chunking
-					const astSymbols = await this.treeSitterService.extractSymbols(uri, text);
-					if (astSymbols.length > 0) {
-						const astChunks = await this.treeSitterService.createASTChunks(uri, text, astSymbols);
-
-						// Convert AST chunks to IndexChunks
-						chunks = astChunks.map(chunk => ({
-							text: chunk.text,
-							startLine: chunk.startLine,
-							endLine: chunk.endLine,
-							tokens: this._tokenize(chunk.text), // Pre-compute tokens
-						}));
-
-						// Limit to maxChunks
-						if (chunks.length > maxChunks) {
-							chunks = chunks.slice(0, maxChunks);
-						}
-					}
-				} catch {
-					// Fall through to fallback chunking
+			while (currentPos < text.length && chunkIndex < maxChunks) {
+				let chunkEndPos = currentPos + chunkSize;
+				if (chunkEndPos > text.length) {
+					chunkEndPos = text.length;
 				}
-			}
 
-			// Fallback to character-based chunking if AST chunking didn't produce results
-			if (chunks.length === 0) {
-				let currentPos = 0;
-				let chunkIndex = 0;
+				// Find line boundaries - calculate accurately
+				const chunkText = text.slice(currentPos, chunkEndPos);
+				const beforeText = text.slice(0, currentPos);
 
-				while (currentPos < text.length && chunkIndex < maxChunks) {
-					let chunkEndPos = currentPos + chunkSize;
-					if (chunkEndPos > text.length) {
-						chunkEndPos = text.length;
-					}
+				// Calculate line numbers: count newlines before start position
+				// If beforeText is empty, we're on line 1
+				// If beforeText has n newlines, we're on line n+1
+				const startLineNum = beforeText === '' ? 1 : beforeText.split('\n').length;
+				const endLineNum = text.slice(0, chunkEndPos).split('\n').length;
 
-					// Find line boundaries - calculate accurately
-					const chunkText = text.slice(currentPos, chunkEndPos);
-					const beforeText = text.slice(0, currentPos);
-
-					// Calculate line numbers: count newlines before start position
-					// If beforeText is empty, we're on line 1
-					// If beforeText has n newlines, we're on line n+1
-					const startLineNum = beforeText === '' ? 1 : beforeText.split('\n').length;
-					const endLineNum = text.slice(0, chunkEndPos).split('\n').length;
-
-					if (chunkText.trim().length > 50) { // Only add non-trivial chunks
-						const trimmedChunk = chunkText.trim();
-						// Always pre-compute tokens during indexing (not lazy)
-						const chunkTokens = this._tokenize(trimmedChunk);
-						chunks.push({
-							text: trimmedChunk,
-							startLine: startLineNum,
-							endLine: endLineNum,
-							tokens: chunkTokens // Pre-computed tokens for faster scoring
-						});
-					}
-
-					currentPos += chunkSize - chunkOverlap;
-					chunkIndex++;
-
-					if (chunkEndPos >= text.length) break;
+				if (chunkText.trim().length > 50) { // Only add non-trivial chunks
+					const trimmedChunk = chunkText.trim();
+					// Always pre-compute tokens during indexing (not lazy)
+					const chunkTokens = this._tokenize(trimmedChunk);
+					chunks.push({
+						text: trimmedChunk,
+						startLine: startLineNum,
+						endLine: endLineNum,
+						tokens: chunkTokens // Pre-computed tokens for faster scoring
+					});
 				}
+
+				currentPos += chunkSize - chunkOverlap;
+				chunkIndex++;
+
+				if (chunkEndPos >= text.length) break;
 			}
 
 			// If no chunks generated, use first snippet as single chunk

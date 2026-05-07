@@ -559,7 +559,13 @@ body.monaco-workbench,
  * stays visible in all theme contexts, including [data-vibeide-chat-group] where
  * --vibe-border-* resolves to transparent (widget.border is often undefined). */
 .vibe-popup-panel {
-	border-color: var(--vscode-editorWidget-border, var(--vscode-input-border, var(--vscode-widget-border, rgba(255, 255, 255, 0.13)))) !important;
+	border-color: var(
+		--vscode-commandCenter-border,
+		var(
+			--vscode-commandCenter-inactiveBorder,
+			var(--vscode-input-border, var(--vscode-widget-border, transparent))
+		)
+	) !important;
 }
 
 /* Font Awesome 6 Solid — nominal weight 900 (see vibeideFontAwesomeSolid.ts). */

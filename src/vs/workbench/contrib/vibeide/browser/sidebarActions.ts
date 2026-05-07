@@ -18,11 +18,12 @@ import { VIBEIDE_VIEW_CONTAINER_ID, VIBEIDE_VIEW_ID } from './sidebarPane.js';
 import { IMetricsService } from '../common/metricsService.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { VIBEIDE_TOGGLE_SETTINGS_ACTION_ID } from './vibeideSettingsPane.js';
-import { VIBEIDE_CTRL_L_ACTION_ID, VIBEIDE_SHOW_CHAT_HISTORY_CMD } from './actionIDs.js';
+import { VIBEIDE_CTRL_L_ACTION_ID } from './actionIDs.js';
 import { localize2 } from '../../../../nls.js';
 import { IChatThreadService } from './chatThreadService.js';
 import { IViewsService } from '../../../services/views/common/viewsService.js';
 import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
+import { openVibeChatEditor } from './vibeideChatPane.js';
 
 // ---------- Register commands and keybindings ----------
 
@@ -67,7 +68,7 @@ registerAction2(class extends Action2 {
 	constructor() {
 		super({
 			id: VIBEIDE_OPEN_SIDEBAR_ACTION_ID,
-			title: localize2('vibeOpenSidebar', 'VibeIDE: Open Sidebar'),
+			title: localize2('vibeOpenSidebar', 'VibeIDE: Open Chat'),
 			f1: true,
 			keybinding: {
 				weight: KeybindingWeight.ExternalExtension,
@@ -76,10 +77,9 @@ registerAction2(class extends Action2 {
 		});
 	}
 	async run(accessor: ServicesAccessor): Promise<void> {
-		const viewsService = accessor.get(IViewsService)
-		const chatThreadsService = accessor.get(IChatThreadService)
-		viewsService.openViewContainer(VIBEIDE_VIEW_CONTAINER_ID)
-		await chatThreadsService.focusCurrentChat()
+		await openVibeChatEditor(accessor);
+		const chatThreadsService = accessor.get(IChatThreadService);
+		await chatThreadsService.focusCurrentChat();
 	}
 })
 
@@ -107,8 +107,6 @@ registerAction2(class extends Action2 {
 	}
 	async run(accessor: ServicesAccessor): Promise<void> {
 		// Get services
-		const commandService = accessor.get(ICommandService)
-		const viewsService = accessor.get(IViewsService)
 		const metricsService = accessor.get(IMetricsService)
 		const editorService = accessor.get(ICodeEditorService)
 		const chatThreadService = accessor.get(IChatThreadService)
@@ -119,11 +117,8 @@ registerAction2(class extends Action2 {
 		const editor = editorService.getActiveCodeEditor()
 		const model = editor?.getModel()
 
-		// open panel - always open even if no editor
-		const wasAlreadyOpen = viewsService.isViewContainerVisible(VIBEIDE_VIEW_CONTAINER_ID)
-		if (!wasAlreadyOpen) {
-			await commandService.executeCommand(VIBEIDE_OPEN_SIDEBAR_ACTION_ID)
-		}
+		// open chat editor - always open even if no editor
+		await openVibeChatEditor(accessor);
 
 		// If there's a model, add selection to chat
 		if (model) {
@@ -179,11 +174,10 @@ registerAction2(class extends Action2 {
 	}
 	async run(accessor: ServicesAccessor): Promise<void> {
 
-		const viewsService = accessor.get(IViewsService)
 		const metricsService = accessor.get(IMetricsService)
 		const chatThreadsService = accessor.get(IChatThreadService)
 		const editorService = accessor.get(ICodeEditorService)
-		viewsService.openViewContainer(VIBEIDE_VIEW_CONTAINER_ID)
+		await openVibeChatEditor(accessor);
 		metricsService.capture('Chat Navigation', { type: 'Start New Chat' })
 
 		// get current selections and value to transfer
@@ -226,22 +220,21 @@ registerAction2(class extends Action2 {
 	}
 })
 
-// History menu button
+// History command — opens the AuxiliaryBar history panel (no toolbar button: the panel IS history)
 registerAction2(class extends Action2 {
 	constructor() {
 		super({
 			id: 'vibe.historyAction',
 			title: 'View Past Chats',
 			icon: { id: 'history' },
-			menu: [{ id: MenuId.ViewTitle, group: 'navigation', order: 2, when: ContextKeyExpr.equals('view', VIBEIDE_VIEW_ID), }]
 		});
 	}
 	async run(accessor: ServicesAccessor): Promise<void> {
 		const metricsService = accessor.get(IMetricsService)
-		const commandService = accessor.get(ICommandService)
+		const viewsService = accessor.get(IViewsService)
 
 		metricsService.capture('Chat Navigation', { type: 'History' })
-		await commandService.executeCommand(VIBEIDE_SHOW_CHAT_HISTORY_CMD)
+		viewsService.openViewContainer(VIBEIDE_VIEW_CONTAINER_ID)
 	}
 })
 

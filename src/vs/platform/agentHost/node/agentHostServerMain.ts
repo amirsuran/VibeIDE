@@ -194,8 +194,8 @@ async function main(): Promise<void> {
 
 	if (options.enableMockAgent) {
 		// Dynamic import to avoid bundling test code in production
-		import('../test/node/mockAgent.js').then(({ ScriptedMockAgent }) => {
-			const mockAgent = disposables.add(new ScriptedMockAgent());
+		import('../test/node/mockAgent.js').then(m => {
+			const mockAgent = disposables.add(new m.ScriptedMockAgent());
 			agentService.registerProvider(mockAgent);
 		}).catch(err => {
 			logService.error('[AgentHostServer] Failed to load mock agent', err);

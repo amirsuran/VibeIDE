@@ -51,6 +51,7 @@ dist
 .github/skills/.local/
 
 # VibeIDE
+AGENTS.md
 .tmp2/
 .tool-versions
 src/vs/workbench/contrib/vibeide/browser/react/out/**

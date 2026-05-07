@@ -317,7 +317,6 @@ CommandsRegistry.registerCommand('vibeide.transparency.show', (_accessor: Servic
 
 // Switch chat mode to Plan (accessible from Command Palette)
 CommandsRegistry.registerCommand('vibeide.chatMode.plan', (accessor: ServicesAccessor) => {
-	const { IVibeideSettingsService } = require('../common/vibeideSettingsService.js') as typeof import('../common/vibeideSettingsService.js');
 	const settings = accessor.get(IVibeideSettingsService);
 	settings.setGlobalSetting('chatMode', 'plan');
 	accessor.get(ILogService).info('[VibeIDE] Chat mode → Plan');

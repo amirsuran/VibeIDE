@@ -31,3 +31,6 @@ export const VIBEIDE_REJECT_FILE_ACTION_ID = 'vibeide.rejectFile';
 export const VIBEIDE_ACCEPT_ALL_DIFFS_ACTION_ID = 'vibeide.acceptAllDiffs';
 
 export const VIBEIDE_REJECT_ALL_DIFFS_ACTION_ID = 'vibeide.rejectAllDiffs';
+
+/** Open the chat editor pane in the right split column. */
+export const VIBEIDE_OPEN_CHAT_EDITOR_CMD = 'vibeide.chat.open';

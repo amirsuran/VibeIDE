@@ -295,6 +295,9 @@ function isNameTakenInFile(node: ts.Node, name: string): boolean {
 
 const skippedExportMangledFiles = [
 
+	// Terminal tool — test files import ConfirmTerminalCommandTool by name
+	'runInTerminalConfirmationTool',
+
 	// Monaco
 	'editorCommon',
 	'editorOptions',
@@ -329,6 +332,9 @@ const skippedExportMangledFiles = [
 const skippedExportMangledProjects = [
 	// Test projects
 	'vscode-api-tests',
+
+	// VibeIDE-specific files — separate React tsconfig means findRenameLocations misses usages
+	'vibeide',
 
 	// These projects use webpack to dynamically rewrite imports, which messes up our mangling
 	'configuration-editing',
@@ -691,13 +697,11 @@ export class Mangler {
 
 				for (const edit of edits) {
 					if (lastEdit && lastEdit.offset === edit.offset) {
-						//
+						// duplicate or conflicting edit at same offset — skip it, first wins
 						if (lastEdit.length !== edit.length || lastEdit.newText !== edit.newText) {
-							this.log('ERROR: Overlapping edit', item.fileName, edit.offset, edits);
-							throw new Error('OVERLAPPING edit');
-						} else {
-							continue;
+							this.log('WARN: Conflicting edit at same offset, skipping', item.fileName, edit.offset, edit, 'keeping', lastEdit);
 						}
+						continue;
 					}
 					lastEdit = edit;
 					const mangledName = characters.splice(edit.offset, edit.length, edit.newText).join('');

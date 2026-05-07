@@ -1,5 +1,64 @@
-# VS Code Agents Instructions
+# Инструкции для AI-агентов
 
-This file provides instructions for AI coding agents working with the VS Code codebase.
+Этот файл содержит инструкции для AI-агентов, работающих с кодовой базой VibeIDE.
 
-For detailed project overview, architecture, coding guidelines, and validation steps, see the [Copilot Instructions](.github/copilot-instructions.md).
+## Язык
+
+Всегда отвечать на русском языке.
+
+Полный обзор проекта, архитектура, гайдлайны кодинга и шаги валидации — в [Copilot Instructions](.github/copilot-instructions.md).
+
+## База знаний
+
+Все нетривиальные архитектурные находки, баги, решения и договорённости записываются в `docs/knowledge.md` (в репозитории), а не в приватную память агента. После каждого ответа, где появились такие факты, добавить новую секцию `## [категория] Заголовок` в конец `docs/knowledge.md` и сообщить пользователю что добавлено.
+
+## После правок кода
+
+После каждого изменения кода явно указывать команду для применения изменений (compile, buildreact и т.п.).
+
+---
+
+## Продуктовые решения (жёсткие ограничения для имплементации)
+
+### Transparency & Control Suite — единый релиз
+Все фичи T&C (Debug my prompt, Context window visualizer, Diff preview, Agent pre-flight plan и др.) выходят **одним релизом в Фазе 2** с единым landing page. Не разбивать на отдельные релизы.
+
+### Приоритетный стек настроек `.vibe/`
+Иерархия (от высшего к низшему): Enterprise locked → Global constraints → Profile constraints → Directory rules → Mode constraints. Mode **не может** снять ограничения уровней 1–3.
+
+### Trust Score — виджет в статус-баре, keyboard-first
+Trust Score (Manual/Supervised/Auto) — **постоянный виджет в статус-баре**, меняется одним кликом или keyboard shortcut. Полностью keyboard-accessible. Keyboard-first — стандарт, не опция.
+
+### Diff confidence score и LLM-as-judge — независимые индикаторы
+Confidence score = эвристический бейдж (ключевые слова: auth, password, delete → 🔴). LLM-as-judge = отдельный advisory бейдж. Judge **не может** повысить confidence до 🟢. 🔴 confidence **блокирует Auto режим** независимо от judge. Два отдельных UI-индикатора.
+
+### Pre-flight plan vs Task decomposition UI — разные элементы
+Pre-flight plan = статический план ДО старта (модальный диалог). Task decomposition UI = live прогресс ВО ВРЕМЯ выполнения (постоянный progress sidebar). Это два разных UI-элемента.
+
+### Dead man's switch — три явных исключения
+DMS таймер **НЕ сбрасывается** при: (1) движении мыши, (2) rate limit 429 + retry backoff, (3) ожидании approval pre-flight плана. Сбрасывается только явным Approve action.
+
+### Auto-repair loop исключён из loop detector
+`run tests → fix → run tests` внутри repair loop — легитимный паттерн, не цикл. Loop detector не должен паузировать repair loop.
+
+### `.vibe/constraints.json` — детерминированный enforcement, не промпт
+`constraints.json` форсируется через **детерминированную sandbox-прослойку до агента** — IDE физически блокирует вызов при нарушении constraint, независимо от инструкций в промпте.
+
+### Встроенный Workbench Chat — скрыт CSS, сервисы не трогать
+UI встроенного чата VS Code (`workbench.panel.chat`, вкладки aux bar, inline chat widget, sparkle точки входа) **скрывается CSS** в `HideBuiltinChatContribution` (`hideBuiltinChat.ts`, фаза `BlockRestore`). Core chat сервисы **не удалялись** — `chatThreadService` и смежный код от них зависит. Если встроенный чат вернётся после синка апстрима — дополнять селекторы в `HIDE_CSS`; сервисы не удалять.
+
+---
+
+## Рабочий процесс
+
+### Git флоу коммитов
+Стандартный флоу: `git add <files>` → `git commit -m "feat: описание (vX.Y.Z)"` → `git push`. Релизы через `gh release create`. В roadmap-night режиме не использовать `git add .` — коммитить пофайлово.
+
+### Каталог скриптов — проверять перед созданием
+Перед созданием нового скрипта прочитать секцию `docs/knowledge.md` § «Каталог скриптов» и просмотреть `bin/` и `scripts/`. Переиспользуемые утилиты без привязки к npm/gulp — в `bin/`; зафиксированные шаги сборки — в `scripts/`. Каждый новый файл в `bin/` сопровождается строкой в таблице той секции.
+
+### Баги — Discord → roadmap
+Пользовательские баги собираются в Discord (канал **bugs**). Maintainers читают выгрузку и добавляют приоритетные пункты в `docs/roadmap.md` как `- [ ]` — без автозакрытия без human review. Дубликаты сверять с GitHub Issues. Bot Token только в env/secret store.
+
+### Ночной прогон roadmap
+Протокол в `.vibe/skills/roadmap-night/SKILL.md`, запуск через `/skill:roadmap-night`. Основные правила: обрабатывать пункты сверху вниз; коммит после каждой порции ≤3 верхнеуровневых пунктов; при неудаче — defer с `> **Roadmap night (deferred):** причина` вместо остановки; defer не отменяет обработку остальных пунктов той же порции; ≥2 бесполезных tool-round на одном пункте → сразу defer. Полный протокол в `docs/knowledge.md`.

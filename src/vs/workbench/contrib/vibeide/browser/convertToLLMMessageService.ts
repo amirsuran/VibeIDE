@@ -66,7 +66,6 @@ import { EndOfLinePreference } from '../../../../editor/common/model.js';
 import { ToolName } from '../common/toolsServiceTypes.js';
 import { IMCPService } from '../common/mcpService.js';
 import { IRepoIndexerService } from './repoIndexerService.js';
-import { INotificationService } from '../../../../platform/notification/common/notification.js';
 import { IMemoriesService } from '../common/memoriesService.js';
 import { IVibeSkillsLibraryService } from '../common/vibeSkillsLibraryService.js';
 import { IAuditLogService } from '../common/auditLogService.js';
@@ -1260,7 +1259,6 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 		@IVibeideModelService private readonly vibeideModelService: IVibeideModelService,
 		@IMCPService private readonly mcpService: IMCPService,
 		@IRepoIndexerService private readonly repoIndexerService: IRepoIndexerService,
-		@INotificationService private readonly notificationService: INotificationService,
 		@IMemoriesService private readonly memoriesService: IMemoriesService,
 		@IVibeSkillsLibraryService private readonly skillsLibraryService: IVibeSkillsLibraryService,
 		@IAuditLogService private readonly auditLogService: IAuditLogService,

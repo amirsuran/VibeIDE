@@ -33,7 +33,7 @@ import { IKeybindingService } from '../../../../platform/keybinding/common/keybi
 import { IOpenerService } from '../../../../platform/opener/common/opener.js';
 import { ITelemetryService } from '../../../../platform/telemetry/common/telemetry.js';
 import { IHoverService } from '../../../../platform/hover/browser/hover.js';
-import { mountSidebar } from './react/out/sidebar-tsx/index.js';
+import { mountSidebarHistory } from './react/out/sidebar-tsx/index.js';
 
 import { Orientation } from '../../../../base/browser/ui/sash/sash.js';
 // import { IDisposable } from '../../../../base/common/lifecycle.js';
@@ -79,8 +79,7 @@ class SidebarViewPane extends ViewPane {
 
 		// gets set immediately
 		this.instantiationService.invokeFunction(accessor => {
-			// mount react
-			const disposeFn: (() => void) | undefined = mountSidebar(parent, accessor)?.dispose;
+			const disposeFn: (() => void) | undefined = mountSidebarHistory(parent, accessor)?.dispose;
 			this._register(toDisposable(() => disposeFn?.()));
 		});
 	}
@@ -105,7 +104,7 @@ export const VIBEIDE_VIEW_ID = VIBEIDE_VIEW_CONTAINER_ID;
 const viewContainerRegistry = Registry.as<IViewContainersRegistry>(ViewContainerExtensions.ViewContainersRegistry);
 const container = viewContainerRegistry.registerViewContainer({
 	id: VIBEIDE_VIEW_CONTAINER_ID,
-	title: nls.localize2('vibeContainer', 'Chat'), // Chat container (Ctrl + L)
+	title: nls.localize2('vibeContainer', 'History'),
 	ctorDescriptor: new SyncDescriptor(ViewPaneContainer, [VIBEIDE_VIEW_CONTAINER_ID, {
 		mergeViewWithContainerWhenSingleView: true,
 		orientation: Orientation.HORIZONTAL,
@@ -127,7 +126,7 @@ viewsRegistry.registerViews([{
 	id: VIBEIDE_VIEW_ID,
 	hideByDefault: false, // start open
 	containerIcon: FileAccess.asBrowserUri('vs/workbench/browser/media/vibeide-icon.png'), // VibeIDE logo
-	name: nls.localize2('vibeChat', ''), // this says ... : CHAT
+	name: nls.localize2('vibeHistory', ''),
 	ctorDescriptor: new SyncDescriptor(SidebarViewPane),
 	canToggleVisibility: false,
 	canMoveView: false, // can't move this out of its container
