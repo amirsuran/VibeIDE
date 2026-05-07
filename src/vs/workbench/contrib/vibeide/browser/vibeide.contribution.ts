@@ -290,6 +290,9 @@ import './vibeSettingsMigrationContribution.js'
 // VibeIDE: AI provenance marker setting + helper
 import '../common/vibeAiProvenanceConfiguration.js'
 
+// VibeIDE: Agent response language setting + helper
+import '../common/vibeAgentResponseLanguageConfiguration.js'
+
 // VibeIDE: Persisted plan resume (scan .vibe/plans/ on startup, offer to continue interrupted plans)
 import './vibePersistedPlanResumeContribution.js'
 import './vibePersistedPlanDiskEditContribution.js'
