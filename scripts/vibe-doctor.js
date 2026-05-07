@@ -22,6 +22,8 @@ const MODE = {
 	ci: args.includes('--ci'),
 	repair: args.includes('--repair'),
 	json: args.includes('--json'),
+	i18n: args.includes('--i18n'),
+	network: args.includes('--network'),
 };
 
 const results = [];
@@ -422,6 +424,214 @@ checkWarning('agent-locks-stale', () => {
 	}
 	return `.vibe/agent-locks.json OK (${entries.length} entr${entries.length === 1 ? 'y' : 'ies'})`;
 });
+
+// ──────────────────────────────────────────────────────────
+// SUB-REPORTS (--i18n / --network) — separate from the standard checks output
+// ──────────────────────────────────────────────────────────
+
+function buildI18nReport() {
+	const ROOT = process.cwd();
+	const VIBE_SRC = path.join(ROOT, 'src', 'vs', 'workbench', 'contrib', 'vibeide');
+	const NLS_DIR = path.join(ROOT, 'out', 'nls');
+
+	function walkTs(dir, acc = []) {
+		if (!fs.existsSync(dir)) {
+			return acc;
+		}
+		for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+			const p = path.join(dir, ent.name);
+			if (ent.isDirectory()) {
+				if (ent.name === 'node_modules' || ent.name === 'out' || ent.name === 'react') {
+					continue;
+				}
+				walkTs(p, acc);
+			} else if (/\.tsx?$/.test(ent.name)) {
+				acc.push(p);
+			}
+		}
+		return acc;
+	}
+
+	// Collect all (key, message) pairs from `localize(...)` and `localize2(...)` in source.
+	const callRe = /\b(localize2?)\s*\(\s*(['"])((?:\\.|(?!\2).)*?)\2\s*,\s*(['"])((?:\\.|(?!\4).)*?)\4/g;
+	const sourceMessages = new Map(); // key → message
+	for (const file of walkTs(VIBE_SRC)) {
+		const text = fs.readFileSync(file, 'utf-8');
+		let m;
+		while ((m = callRe.exec(text)) !== null) {
+			sourceMessages.set(m[3], m[5]);
+		}
+	}
+	const totalKeys = sourceMessages.size;
+
+	// Locate locale bundles.
+	const locales = [];
+	if (fs.existsSync(NLS_DIR)) {
+		for (const ent of fs.readdirSync(NLS_DIR, { withFileTypes: true })) {
+			if (!ent.isFile()) continue;
+			const m = ent.name.match(/^vibeide\.nls\.([a-zA-Z0-9_-]+)\.json$/);
+			if (!m) continue;
+			let bundle = {};
+			try {
+				bundle = JSON.parse(fs.readFileSync(path.join(NLS_DIR, ent.name), 'utf-8'));
+			} catch { /* unreadable bundle counts as 0% */ }
+			let translated = 0;
+			let needsTranslation = 0;
+			let stale = 0;
+			for (const key of Object.keys(bundle)) {
+				if (!sourceMessages.has(key)) continue;
+				const value = bundle[key];
+				if (typeof value !== 'string') continue;
+				if (value.startsWith('[NEEDS_TRANSLATION]')) {
+					needsTranslation += 1;
+				} else if (value.length === 0) {
+					/* empty: treat as needs */
+					needsTranslation += 1;
+				} else {
+					translated += 1;
+				}
+				// Heuristic for stale: source key absent from bundle but present in source — handled below
+			}
+			const missing = [];
+			for (const key of sourceMessages.keys()) {
+				if (!Object.prototype.hasOwnProperty.call(bundle, key)) {
+					missing.push(key);
+				}
+			}
+			locales.push({
+				locale: m[1],
+				bundle: path.relative(ROOT, path.join(NLS_DIR, ent.name)),
+				totalKeys,
+				translated,
+				needsTranslation,
+				stale,
+				missing: missing.length,
+				missingKeys: missing.slice(0, 10), // first 10 for display
+				coveragePercent: totalKeys === 0 ? 100 : Math.round((translated / totalKeys) * 100),
+			});
+		}
+	}
+
+	return { totalKeys, locales };
+}
+
+function buildNetworkReport() {
+	const ROOT = process.cwd();
+	const PRODUCT = path.join(ROOT, 'product.json');
+	const MCP_PATH = path.join(ROOT, '.vibe', 'mcp.json');
+	const PERMS = path.join(ROOT, '.vibe', 'permissions.json');
+
+	function readJson(p) {
+		try {
+			return JSON.parse(fs.readFileSync(p, 'utf-8'));
+		} catch {
+			return null;
+		}
+	}
+
+	const product = readJson(PRODUCT) ?? {};
+	const mcp = readJson(MCP_PATH) ?? {};
+	const perms = readJson(PERMS) ?? {};
+
+	const endpoints = [];
+
+	// Update channel
+	if (product.updateUrl) {
+		endpoints.push({ scope: 'update', url: product.updateUrl, source: 'product.json' });
+	}
+	if (product.releasesApiUrl) {
+		endpoints.push({ scope: 'update', url: product.releasesApiUrl, source: 'product.json' });
+	}
+	// Models registry
+	if (product.modelsRegistryUrl) {
+		endpoints.push({ scope: 'models-registry', url: product.modelsRegistryUrl, source: 'product.json' });
+	}
+	// MCP servers
+	if (mcp && typeof mcp === 'object' && mcp.mcpServers) {
+		for (const [name, def] of Object.entries(mcp.mcpServers)) {
+			const url = (def && typeof def === 'object' && (def.url || def.command)) || '<inline command>';
+			endpoints.push({ scope: 'mcp', url: String(url), source: `.vibe/mcp.json#${name}` });
+		}
+	}
+	// Provider hints from env (read-only, no secrets emitted)
+	const providerEnv = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GEMINI_API_KEY', 'OPENROUTER_API_KEY'];
+	for (const v of providerEnv) {
+		if (process.env[v]) {
+			endpoints.push({ scope: 'provider', url: `<configured via ${v}>`, source: 'env' });
+		}
+	}
+	// Privacy strict mode hint
+	const strictMode = !!perms?.privacy?.strict;
+
+	return {
+		strictMode,
+		endpoints,
+		notes: strictMode
+			? 'privacy.strict = true: only loopback (127.0.0.1) and explicitly allowed endpoints should be reachable.'
+			: 'privacy.strict = false: outbound calls follow the per-feature settings.',
+	};
+}
+
+if (MODE.i18n) {
+	const report = buildI18nReport();
+	if (MODE.json) {
+		console.log(JSON.stringify(report, null, 2));
+		process.exit(0);
+	}
+	console.log('\n🌐 VibeIDE i18n coverage');
+	console.log('─'.repeat(40));
+	console.log(`Total source keys: ${report.totalKeys}`);
+	if (report.locales.length === 0) {
+		console.log('No locale bundles found under out/nls/. Run `node scripts/vibe-i18n-migrate.js --apply` first.');
+		process.exit(0);
+	}
+	for (const l of report.locales) {
+		console.log(`\n  [${l.locale}] ${l.bundle}`);
+		console.log(`    coverage:           ${l.coveragePercent}% (${l.translated}/${l.totalKeys})`);
+		console.log(`    needs-translation:  ${l.needsTranslation}`);
+		console.log(`    missing in bundle:  ${l.missing}`);
+		if (l.missingKeys.length > 0) {
+			console.log('    sample missing keys:');
+			for (const k of l.missingKeys) {
+				console.log(`      - ${k}`);
+			}
+		}
+	}
+	process.exit(0);
+}
+
+if (MODE.network) {
+	const report = buildNetworkReport();
+	if (MODE.json) {
+		console.log(JSON.stringify(report, null, 2));
+		process.exit(0);
+	}
+	console.log('\n🌐 VibeIDE outbound endpoints (potential)');
+	console.log('─'.repeat(40));
+	console.log(`privacy.strict: ${report.strictMode}`);
+	console.log(report.notes);
+	if (report.endpoints.length === 0) {
+		console.log('\nNo outbound endpoints declared.');
+	} else {
+		console.log('');
+		const groups = new Map();
+		for (const ep of report.endpoints) {
+			const arr = groups.get(ep.scope) ?? [];
+			arr.push(ep);
+			groups.set(ep.scope, arr);
+		}
+		for (const [scope, eps] of groups) {
+			console.log(`  [${scope}]`);
+			for (const ep of eps) {
+				console.log(`    ${ep.url}    (${ep.source})`);
+			}
+		}
+	}
+	console.log('\nThis report does NOT prove a build is offline-clean — it lists what could be');
+	console.log('reached. The .github/workflows/privacy-verify.yml backlog item adds the runtime');
+	console.log('sniffer that actually confirms strict mode.');
+	process.exit(0);
+}
 
 // ──────────────────────────────────────────────────────────
 // OUTPUT
