@@ -1,0 +1,60 @@
+name: docs-links
+
+on:
+  pull_request:
+    paths:
+      - "**/*.md"
+      - ".github/workflows/docs-links.yml"
+  push:
+    branches: [main]
+    paths:
+      - "**/*.md"
+
+permissions:
+  contents: read
+
+jobs:
+  link-check:
+    name: markdown-link-check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install markdown-link-check
+        run: npm install --no-save markdown-link-check@3
+
+      - name: Write config
+        run: |
+          cat > .markdown-link-check.json <<'EOF'
+          {
+            "ignorePatterns": [
+              { "pattern": "^http://localhost" },
+              { "pattern": "^https://localhost" },
+              { "pattern": "^https://127\\.0\\.0\\.1" },
+              { "pattern": "^https://aka\\.ms/" },
+              { "pattern": "^https://schemas\\.vibeide\\.io/" }
+            ],
+            "timeout": "20s",
+            "retryOn429": true,
+            "retryCount": 3,
+            "fallbackRetryDelay": "30s",
+            "aliveStatusCodes": [200, 206, 301, 302, 308]
+          }
+          EOF
+
+      - name: Check tracked markdown
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t FILES < <(git ls-files '*.md')
+          if [ ${#FILES[@]} -eq 0 ]; then
+            echo "No tracked markdown files; skipping."
+            exit 0
+          fi
+          npx markdown-link-check --config .markdown-link-check.json --quiet "${FILES[@]}"
