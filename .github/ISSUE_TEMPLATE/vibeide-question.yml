@@ -1,0 +1,47 @@
+name: VibeIDE Question
+description: Вопрос про использование, конфигурацию или архитектуру VibeIDE.
+title: "[question]: "
+labels: ["question", "vibeide"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Перед отправкой:
+        - Поискали в `docs/`, `docs/SECURITY_FAQ.md`, `README.md`?
+        - Если вопрос про настройку — какой результат `vibe doctor` или `vibe doctor --full`?
+        - Для быстрого Q&A может подойти Discord (когда канал откроется).
+  - type: textarea
+    id: question
+    attributes:
+      label: Вопрос
+      description: Что именно нужно понять? Чем точнее формулировка — тем точнее ответ.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Контекст
+      description: |
+        Что ты делаешь / собираешься сделать? Какой workflow? Какие провайдеры используешь?
+        Чем больше деталей — тем меньше итераций уточнений.
+    validations:
+      required: true
+  - type: textarea
+    id: tried
+    attributes:
+      label: Что уже пробовал?
+      description: Какие настройки / команды / workaround'ы попробовал?
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Тема
+      options:
+        - Установка / запуск / сборка
+        - Провайдеры / модели / API-ключи
+        - Privacy / телеметрия / аудит
+        - Skills / Plans / Workflows / .vibe/
+        - CLI
+        - Архитектура / форк-политика
+        - Другое
+    validations:
+      required: true

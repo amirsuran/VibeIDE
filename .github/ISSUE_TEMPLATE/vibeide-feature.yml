@@ -1,0 +1,66 @@
+name: VibeIDE Feature request
+description: Предложить фичу или улучшение для VibeIDE.
+title: "[feature]: "
+labels: ["enhancement", "vibeide"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Хорошие feature requests описывают **проблему**, а не сразу **решение**.
+        Если предлагаешь точечное решение — объясни кейс, в котором оно нужно.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Какую проблему решаем?
+      description: Кейс из реальной жизни, в котором текущий VibeIDE мешает или не помогает.
+      placeholder: |
+        Например: «Когда я переключаюсь между пятью проектами в неделю,
+        приходится каждый раз вручную пересобирать react-бандл, потому что …»
+    validations:
+      required: true
+  - type: textarea
+    id: proposed
+    attributes:
+      label: Предлагаемое решение
+      description: |
+        Что должен делать VibeIDE? Если есть UX-набросок (скетч, описание панели), приложи.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Альтернативы
+      description: |
+        Что ты пробовал? Какие workaround'ы есть? Почему они неудобны?
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Скоуп
+      description: К какой части продукта относится?
+      options:
+        - Agent runtime / planning / multi-agent
+        - Skills / Workflows / .vibe/
+        - UI / sidebar / status bar
+        - Provider / models / privacy
+        - CLI / scripts
+        - Documentation
+        - Другое
+    validations:
+      required: true
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Насколько это важно?
+      options:
+        - Блокирует ежедневную работу
+        - Сильно ускорило бы flow
+        - Было бы приятно иметь
+    validations:
+      required: true
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Подтверждение
+      options:
+        - label: Я искал похожие feature requests среди открытых и закрытых issues.
+          required: true

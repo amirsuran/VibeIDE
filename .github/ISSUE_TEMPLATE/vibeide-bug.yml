@@ -1,0 +1,90 @@
+name: VibeIDE Bug
+description: Report a bug in VibeIDE (not in upstream VS Code).
+title: "[bug]: "
+labels: ["bug", "vibeide"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Спасибо за репорт! Прежде чем отправить, проверь:
+        - Существующие issues — нет ли дубля.
+        - Что ошибка воспроизводится в VibeIDE, а не в чистом VS Code (если только VS Code — issue в upstream).
+        - Что ты можешь приложить redacted-лог (команда `VibeIDE: Copy diagnostic report for issue` в палитре).
+  - type: input
+    id: vibeide-version
+    attributes:
+      label: Версия VibeIDE
+      description: Help → About, или `vibeide --version`. Поле `vibeVersion`.
+      placeholder: "0.2.0"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: ОС и версия
+      description: Например, `Windows 11 26200`, `macOS 14.5`, `Ubuntu 24.04`.
+    validations:
+      required: true
+  - type: dropdown
+    id: install-source
+    attributes:
+      label: Откуда установлен
+      options:
+        - GitHub Release (official)
+        - Самостоятельная сборка из репозитория
+        - Другое (опишите ниже)
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Шаги воспроизведения
+      description: Как точно воспроизвести? Чем меньше шагов — тем быстрее починим.
+      placeholder: |
+        1. Открыть workspace …
+        2. Выбрать модель …
+        3. Запустить агента в Auto …
+        4. Видим: …
+        5. Ожидали: …
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Ожидаемое поведение
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Фактическое поведение
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostic-report
+    attributes:
+      label: Diagnostic report
+      description: |
+        Запусти `VibeIDE: Copy diagnostic report for issue` из палитры и вставь сюда.
+        Если команда недоступна — приложи скриншот / кусок Output channel.
+      render: text
+  - type: dropdown
+    id: trust-mode
+    attributes:
+      label: Trust Score mode при возникновении бага
+      options:
+        - Manual
+        - Supervised
+        - Auto
+        - Не помню / не применимо
+    validations:
+      required: true
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Подтверждение
+      options:
+        - label: В логах нет API-ключей и других секретов.
+          required: true
+        - label: Я искал дубли в открытых и закрытых issues.
+          required: true
