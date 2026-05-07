@@ -284,6 +284,9 @@ import './vibeSkillsSessionStatusBar.js'
 // VibeIDE: Chat mode switcher (status bar + cycle command)
 import './vibeChatModeStatusBar.js'
 
+// VibeIDE: One-shot cortexide.* → vibeide.* settings migration
+import './vibeSettingsMigrationContribution.js'
+
 // VibeIDE: Persisted plan resume (scan .vibe/plans/ on startup, offer to continue interrupted plans)
 import './vibePersistedPlanResumeContribution.js'
 import './vibePersistedPlanDiskEditContribution.js'
