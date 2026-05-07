@@ -35,6 +35,53 @@ export interface IVibePerFilePermissionsService {
 }
 
 /**
+ * Pure helper. Glob match for `filePath` against a single pattern. Mirrors the previous
+ * private `_match()` implementation. Splits `**` from `*` and `?` so single-star matches
+ * a single segment and double-star matches across segments. Anchored to path-segment
+ * boundaries via `(^|/)` ... `($|/)`.
+ */
+export function matchPermissionPattern(filePath: string, pattern: string): boolean {
+	const regexStr = pattern.replace(/\\/g, '/')
+		.replace(/[.+^${}()|[\]\\]/g, '\\$&')
+		.replace(/\*\*/g, '§DS§').replace(/\*/g, '[^/]*').replace(/\?/g, '[^/]')
+		.replace(/§DS§/g, '.*');
+	try {
+		return new RegExp(`(^|/)${regexStr}($|/)`).test(filePath);
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Pure decision: given the user's `permissions` doc and a filesystem path, returns
+ * whether write is allowed. Independent of IFileService / DI.
+ */
+export function canWriteWithPermissions(filePath: string, permissions: VibePermissions): boolean {
+	const normalized = filePath.replace(/\\/g, '/');
+	if (permissions.deny_write?.some(p => matchPermissionPattern(normalized, p))) {
+		return false;
+	}
+	if (permissions.allow_write && permissions.allow_write.length > 0) {
+		return permissions.allow_write.some(p => matchPermissionPattern(normalized, p));
+	}
+	return true;
+}
+
+/**
+ * Pure decision: read counterpart of `canWriteWithPermissions`.
+ */
+export function canReadWithPermissions(filePath: string, permissions: VibePermissions): boolean {
+	const normalized = filePath.replace(/\\/g, '/');
+	if (permissions.deny_read?.some(p => matchPermissionPattern(normalized, p))) {
+		return false;
+	}
+	if (permissions.allow_read && permissions.allow_read.length > 0) {
+		return permissions.allow_read.some(p => matchPermissionPattern(normalized, p));
+	}
+	return true;
+}
+
+/**
  * VibeIDE Per-file Agent Permissions (.vibe/permissions.json).
  * Whitelist/blacklist specific files for agent access.
  * Works alongside .vibe/constraints.json (constraints = deny rules).
@@ -71,36 +118,11 @@ class VibePerFilePermissionsService extends Disposable implements IVibePerFilePe
 	}
 
 	canWrite(filePath: string): boolean {
-		const normalized = filePath.replace(/\\/g, '/');
-
-		// Check deny_write first
-		if (this._permissions.deny_write?.some(p => this._match(normalized, p))) return false;
-
-		// Check allow_write (if defined, must be in list)
-		if (this._permissions.allow_write && this._permissions.allow_write.length > 0) {
-			return this._permissions.allow_write.some(p => this._match(normalized, p));
-		}
-
-		return true; // default: allow
+		return canWriteWithPermissions(filePath, this._permissions);
 	}
 
 	canRead(filePath: string): boolean {
-		const normalized = filePath.replace(/\\/g, '/');
-		if (this._permissions.deny_read?.some(p => this._match(normalized, p))) return false;
-		if (this._permissions.allow_read && this._permissions.allow_read.length > 0) {
-			return this._permissions.allow_read.some(p => this._match(normalized, p));
-		}
-		return true;
-	}
-
-	private _match(filePath: string, pattern: string): boolean {
-		const regexStr = pattern.replace(/\\/g, '/')
-			.replace(/[.+^${}()|[\]\\]/g, '\\$&')
-			.replace(/\*\*/g, '§DS§').replace(/\*/g, '[^/]*').replace(/\?/g, '[^/]')
-			.replace(/§DS§/g, '.*');
-		try {
-			return new RegExp(`(^|/)${regexStr}($|/)`).test(filePath);
-		} catch { return false; }
+		return canReadWithPermissions(filePath, this._permissions);
 	}
 }
 
