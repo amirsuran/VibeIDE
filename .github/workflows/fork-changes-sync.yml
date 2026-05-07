@@ -1,0 +1,53 @@
+name: fork-changes-sync
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  append-fork-changes:
+    if: github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'fork-change')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Append entry to FORK_CHANGES.md
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          set -euo pipefail
+          if [ ! -f FORK_CHANGES.md ]; then
+            echo "FORK_CHANGES.md not found at repo root; skipping."
+            exit 0
+          fi
+          DATE="$(date -u +%Y-%m-%d)"
+          ENTRY="- ${DATE} | PR #${PR_NUMBER} | ${PR_TITLE} | by @${PR_AUTHOR} | ${PR_URL}"
+          if grep -F "PR #${PR_NUMBER}" FORK_CHANGES.md >/dev/null 2>&1; then
+            echo "Entry for PR #${PR_NUMBER} already present; skipping."
+            exit 0
+          fi
+          printf '\n%s\n' "${ENTRY}" >> FORK_CHANGES.md
+
+      - name: Commit and push
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- FORK_CHANGES.md; then
+            echo "No change to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add FORK_CHANGES.md
+          git commit -m "chore(fork-changes): record PR #${{ github.event.pull_request.number }}"
+          git push origin main
