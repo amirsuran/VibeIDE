@@ -13,6 +13,8 @@
 
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
 const { execSync } = require('child_process');
 
 const args = process.argv.slice(2);
@@ -22,9 +24,44 @@ const SINCE = args.find(a => a.startsWith('--since='))?.split('=')[1]
 	|| (args.includes('--since') ? args[args.indexOf('--since') + 1] : null);
 const FORMAT = args.find(a => a.startsWith('--format='))?.split('=')[1]
 	|| (args.includes('--format') ? args[args.indexOf('--format') + 1] : 'markdown');
+const PHRASE_OVERRIDE = args.find(a => a.startsWith('--phrase='))?.split('=').slice(1).join('=')
+	|| (args.includes('--phrase') ? args[args.indexOf('--phrase') + 1] : null);
 
-/** Community + donation footer: keep in sync with README.md (GitHub Releases render HTML). */
+const DONATION_PHRASES_FILE = path.resolve(__dirname, '..', 'docs', 'release-donation-phrases.md');
+
+/**
+ * Read the first phrase from the «Активные» section of docs/release-donation-phrases.md.
+ * Returns null if the file is missing or has no active phrase. Read-only — never writes.
+ */
+function readActiveDonationPhrase() {
+	if (PHRASE_OVERRIDE !== null && PHRASE_OVERRIDE !== undefined) {
+		return PHRASE_OVERRIDE;
+	}
+	if (!fs.existsSync(DONATION_PHRASES_FILE)) {
+		return null;
+	}
+	const text = fs.readFileSync(DONATION_PHRASES_FILE, 'utf-8');
+	// Find the «Активные» section, then the first non-empty list item.
+	const idx = text.indexOf('## Активные');
+	if (idx < 0) {
+		return null;
+	}
+	const tail = text.slice(idx);
+	const stop = tail.search(/\n## /);
+	const section = stop > 0 ? tail.slice(0, stop) : tail;
+	for (const raw of section.split(/\r?\n/)) {
+		const m = raw.match(/^\s*(?:\d+\.|[-*])\s+(.+?)\s*$/);
+		if (m) {
+			return m[1];
+		}
+	}
+	return null;
+}
+
+/** Community + donation footer: keep in sync with AGENTS.md «Фраза поддержки в релизах». */
 function supportFooterMarkdown() {
+	const phrase = readActiveDonationPhrase();
+	const phraseLine = phrase ? `\n${phrase}\n` : '';
 	return `
 
 ---
@@ -45,7 +82,7 @@ function supportFooterMarkdown() {
 
 ### Поддержать проект
 
-Если VibeIDE оказался полезным — буду рад благодарности 🙏
+Если VibeIDE оказалось полезным — буду рад благодарности.${phraseLine}
 
 <a href="https://raw.githubusercontent.com/borodatych/VSCodeSyncFiles/main/media/QR-Code.jpg" target="_blank" rel="noopener noreferrer">
   <img src="https://raw.githubusercontent.com/borodatych/VSCodeSyncFiles/main/media/QR-Code.jpg" width="120" alt="QR-код для поддержки проекта" />
