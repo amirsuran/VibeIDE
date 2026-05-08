@@ -122,6 +122,43 @@
 	text-shadow: var(--vibe-neon-text-glow);
 }
 
+/* Re-apply text-shadow on interactive descendants whose own VS Code chrome rules
+ * blocked / overrode the inherited value (pill buttons, toolbar pills, search pills,
+ * native form controls). Resolves to `none` when neon glow is off. */
+.vibe-chat-neon-scope .vibe-pill-button,
+.vibe-chat-neon-scope .vibe-toolbar-pill,
+.vibe-chat-neon-scope .vibe-command-center-search,
+.vibe-chat-neon-scope input,
+.vibe-chat-neon-scope textarea,
+.vibe-chat-neon-scope button {
+	text-shadow: var(--vibe-neon-text-glow);
+}
+
+/* `::placeholder` is a pseudo-element and does not inherit text-shadow from its host. */
+.vibe-chat-neon-scope input::placeholder,
+.vibe-chat-neon-scope textarea::placeholder {
+	text-shadow: var(--vibe-neon-text-glow);
+}
+
+/* HISTORY composite title — workbench-rendered, lives outside the React scope.
+ * NOTE: composite id is the literal string "workbench.view.vibeide" (dots are part of the id),
+ * so we use the attribute selector instead of `#id.with.dots` which the CSS parser treats as
+ * `#id` + classes `.with` and `.dots`. */
+.monaco-workbench .auxiliarybar-part > .content > .composite[id="workbench.view.vibeide"] ~ .composite.title > .title-label h2 {
+	text-shadow: var(--vibe-neon-text-glow);
+}
+
+/* HISTORY composite header: hide the auxiliary-bar maximize toggle (codicon-auxiliarybar-maximize)
+ * and the separator preceding it. Equivalent control is exposed inside the chat composer.
+ * VibeIDE registers a single auxiliary-bar view, so a global hide is acceptable here. */
+.monaco-workbench .auxiliarybar-part .codicon-auxiliarybar-maximize,
+.monaco-workbench .auxiliarybar-part .action-item:has(> .codicon-auxiliarybar-maximize),
+.monaco-workbench .auxiliarybar-part .action-item:has(.action-label.codicon-auxiliarybar-maximize),
+.monaco-workbench .auxiliarybar-part .actionbar-separator,
+.monaco-workbench .auxiliarybar-part .action-bar .seperator {
+	display: none !important;
+}
+
 /* ----------------------------------------------------------------------------------------
  * Workbench chrome & layout scaffolding
  * Do NOT override body/part background and color or --vscode-* so the user's selected

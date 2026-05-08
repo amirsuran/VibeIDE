@@ -22,7 +22,7 @@ import { ChatMode, displayInfoOfProviderName, FeatureName, isFeatureNameDisabled
 import { ICommandService } from '../../../../../../../platform/commands/common/commands.js';
 import { WarningBox } from '../vibe-settings-tsx/WarningBox.js';
 import { getModelCapabilities, getIsReasoningEnabledState, getReservedOutputTokenSpace } from '../../../../common/modelCapabilities.js';
-import { AlertTriangle, File, Ban, Check, ChevronRight, Dot, FileIcon, Pencil, Undo, Undo2, X, Flag, Copy as CopyIcon, Info, CirclePlus, Ellipsis, CircleEllipsis, Folder, ALargeSmall, TypeOutline, Text, Image as ImageIcon, FileText, LoaderCircle } from 'lucide-react';
+import { AlertTriangle, File, Ban, Check, ChevronRight, Dot, FileIcon, Pencil, Undo, Undo2, X, Flag, Copy as CopyIcon, Info, CirclePlus, Ellipsis, CircleEllipsis, Folder, ALargeSmall, TypeOutline, Text, Image as ImageIcon, FileText, LoaderCircle, Maximize2 } from 'lucide-react';
 import { ChatMessage, CheckpointEntry, StagingSelectionItem, ToolMessage, PlanMessage, ReviewMessage, PlanStep, StepStatus, PlanApprovalState } from '../../../../common/chatThreadServiceTypes.js';
 import { formatChatTimestamp, chatTimestampToISO, CHAT_TIMESTAMP_STREAMING_PLACEHOLDER } from '../../../../common/chatTimestampFormatter.js';
 import { approvalTypeOfBuiltinToolName, BuiltinToolCallParams, BuiltinToolName, ToolName, LintErrorItem, ToolApprovalType, toolApprovalTypes } from '../../../../common/toolsServiceTypes.js';
@@ -4797,7 +4797,17 @@ export const SidebarChat = () => {
 		if (contextPct < 0.6 && ctxWarned) setCtxWarned(false)
 	}, [contextPct, ctxWarned, contextTotal, contextBudget, accessor])
 
-	const inputChatArea = <VibeChatArea
+	const inputChatArea = <div className='relative'>
+		<button
+			type='button'
+			onClick={() => commandService.executeCommand('workbench.action.toggleMaximizedAuxiliaryBar')}
+			title='Развернуть'
+			aria-label='Toggle Maximized Auxiliary Bar'
+			className='absolute top-1.5 right-1.5 z-10 p-1 rounded-md text-vibe-fg-3 hover:text-vibe-fg-1 hover:bg-vibe-bg-2-alt transition-colors'
+		>
+			<Maximize2 size={14} />
+		</button>
+		<VibeChatArea
 		featureName='Chat'
 		onSubmit={() => onSubmit()}
 		onAbort={onAbort}
@@ -4902,6 +4912,7 @@ export const SidebarChat = () => {
 		)}
 
 	</VibeChatArea>
+	</div>
 
 
 	const isLandingPage = previousMessages.length === 0

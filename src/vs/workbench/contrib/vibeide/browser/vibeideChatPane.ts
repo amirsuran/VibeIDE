@@ -624,3 +624,4 @@ registerAction2(class extends Action2 {
 		await openVibeChatEditor(accessor.get(IInstantiationService), { newChat: true });
 	}
 });
+

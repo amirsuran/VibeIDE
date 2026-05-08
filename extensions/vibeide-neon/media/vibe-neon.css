@@ -2,7 +2,7 @@
  * The :root selector here augments the global tokens whenever this stylesheet is injected by
  * VibeNeonThemeContribution (only while the active color theme is `vibe-neon`). */
 :root {
-  --vibe-neon-text-glow: 0 0 3px rgba(255,255,255,0.85), 0 0 6px rgba(255,255,255,0.55), 0 0 12px rgba(255,255,255,0.3);
+  --vibe-neon-text-glow: 0 0 2px rgba(255,255,255,0.45), 0 0 5px rgba(255,255,255,0.2);
   --vibe-neon-timestamp-fg: #fff951;
   --vibe-neon-timestamp-glow: 0 0 4px #fff951, 0 0 8px rgba(255,249,81,0.6);
 }
