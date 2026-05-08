@@ -14,6 +14,7 @@ import { IThemeService } from '../../../../platform/theme/common/themeService.js
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
 import { IContextKeyService, IContextKey, RawContextKey } from '../../../../platform/contextkey/common/contextkey.js';
 import { Dimension } from '../../../../base/browser/dom.js';
+import { mainWindow } from '../../../../base/browser/window.js';
 import { EditorPaneDescriptor, IEditorPaneRegistry } from '../../../browser/editor.js';
 import { SyncDescriptor } from '../../../../platform/instantiation/common/descriptors.js';
 import { Action2, registerAction2 } from '../../../../platform/actions/common/actions.js';
@@ -30,7 +31,8 @@ import { IEditorService, SIDE_GROUP } from '../../../services/editor/common/edit
 import { ILanguageService } from '../../../../editor/common/languages/language.js';
 import { IChatThreadService } from './chatThreadService.js';
 import { generateUuid } from '../../../../base/common/uuid.js';
-import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+import { ConfigurationTarget, IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+import { IWorkbenchLayoutService, Parts } from '../../../services/layout/browser/layoutService.js';
 import { IConfigurationRegistry, Extensions as ConfigurationExtensions } from '../../../../platform/configuration/common/configurationRegistry.js';
 import { INotificationService } from '../../../../platform/notification/common/notification.js';
 import { IEditorOptions } from '../../../../platform/editor/common/editor.js';
@@ -622,6 +624,115 @@ registerAction2(class extends Action2 {
 	}
 	async run(accessor: ServicesAccessor): Promise<void> {
 		await openVibeChatEditor(accessor.get(IInstantiationService), { newChat: true });
+	}
+});
+
+// ---------------------------------------------------------------------------
+// Chat composer fullscreen modes (toggle via icons in the chat input field):
+//   "maximize" — hide sidebar / auxbar / panel, maximize active editor group, tabs stay.
+//   "zen"     — same as maximize PLUS hide editor tabs (workbench.editor.showTabs='none').
+// Modes are mutually exclusive; clicking the active mode's icon exits to "off"; clicking the
+// other icon switches mode without first exiting. State is module-level (single window).
+// ---------------------------------------------------------------------------
+
+type ChatFullscreenMode = 'off' | 'maximize' | 'zen';
+let _chatFullscreenMode: ChatFullscreenMode = 'off';
+let _saved: {
+	sidebar?: boolean;
+	auxbar?: boolean;
+	panel?: boolean;
+	activitybar?: boolean;
+	wasMaxBefore?: boolean;
+	showTabs?: string;
+} = {};
+
+function applyChatFullscreenMode(target: ChatFullscreenMode, accessor: ServicesAccessor): void {
+	if (target === _chatFullscreenMode) { return; }
+
+	const layoutService = accessor.get(IWorkbenchLayoutService);
+	const editorGroupsService = accessor.get(IEditorGroupsService);
+	const configurationService = accessor.get(IConfigurationService);
+
+	const wasOff = _chatFullscreenMode === 'off';
+	const willBeOff = target === 'off';
+
+	// Capture original state on the first transition out of "off".
+	if (wasOff) {
+		_saved = {
+			sidebar: layoutService.isVisible(Parts.SIDEBAR_PART),
+			auxbar: layoutService.isVisible(Parts.AUXILIARYBAR_PART),
+			panel: layoutService.isVisible(Parts.PANEL_PART),
+			activitybar: layoutService.isVisible(Parts.ACTIVITYBAR_PART),
+			wasMaxBefore: editorGroupsService.mainPart.hasMaximizedGroup(),
+			showTabs: configurationService.getValue<string>('workbench.editor.showTabs'),
+		};
+	}
+
+	// Side parts + active group maximize. Common to "maximize" and "zen"; reverted only on -> "off".
+	if (wasOff && !willBeOff) {
+		if (_saved.sidebar) { layoutService.setPartHidden(true, Parts.SIDEBAR_PART); }
+		if (_saved.auxbar) { layoutService.setPartHidden(true, Parts.AUXILIARYBAR_PART); }
+		if (_saved.panel) { layoutService.setPartHidden(true, Parts.PANEL_PART); }
+		if (!_saved.wasMaxBefore && !editorGroupsService.mainPart.hasMaximizedGroup()) {
+			editorGroupsService.toggleMaximizeGroup(editorGroupsService.activeGroup);
+		}
+	}
+	if (!wasOff && willBeOff) {
+		if (_saved.sidebar) { layoutService.setPartHidden(false, Parts.SIDEBAR_PART); }
+		if (_saved.auxbar) { layoutService.setPartHidden(false, Parts.AUXILIARYBAR_PART); }
+		if (_saved.panel) { layoutService.setPartHidden(false, Parts.PANEL_PART); }
+		if (!_saved.wasMaxBefore && editorGroupsService.mainPart.hasMaximizedGroup()) {
+			editorGroupsService.toggleMaximizeGroup();
+		}
+	}
+
+	// Activity bar: hidden ONLY in zen mode. Re-shown when switching back to maximize / off.
+	const wantsActivityHidden = target === 'zen' && !!_saved.activitybar;
+	if (wantsActivityHidden && layoutService.isVisible(Parts.ACTIVITYBAR_PART)) {
+		layoutService.setPartHidden(true, Parts.ACTIVITYBAR_PART);
+	} else if (!wantsActivityHidden && _saved.activitybar && !layoutService.isVisible(Parts.ACTIVITYBAR_PART)) {
+		layoutService.setPartHidden(false, Parts.ACTIVITYBAR_PART);
+	}
+
+	// Tabs differ between modes:
+	//  - off / maximize → restore saved value (or 'multiple' if never captured)
+	//  - zen           → 'none'
+	const tabsTarget = target === 'zen' ? 'none' : (_saved.showTabs ?? 'multiple');
+	void configurationService.updateValue('workbench.editor.showTabs', tabsTarget, ConfigurationTarget.MEMORY);
+
+	// Body marker: lets vibeide.css collapse landing-page chrome (model chip, quick actions,
+	// past chats / suggestions) so only the input + token line remain visible in zen mode.
+	mainWindow.document.body.classList.toggle('vibeide-chat-zen', target === 'zen');
+
+	_chatFullscreenMode = target;
+}
+
+const VIBEIDE_CHAT_TOGGLE_MAXIMIZE_CMD = 'vibeide.chat.toggleMaximize';
+const VIBEIDE_CHAT_TOGGLE_ZEN_CMD = 'vibeide.chat.toggleZen';
+
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: VIBEIDE_CHAT_TOGGLE_MAXIMIZE_CMD,
+			title: nls.localize2('vibeChatToggleMaximize', 'VibeIDE: Chat Maximize'),
+			f1: true,
+		});
+	}
+	run(accessor: ServicesAccessor): void {
+		applyChatFullscreenMode(_chatFullscreenMode === 'maximize' ? 'off' : 'maximize', accessor);
+	}
+});
+
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: VIBEIDE_CHAT_TOGGLE_ZEN_CMD,
+			title: nls.localize2('vibeChatToggleZen', 'VibeIDE: Chat Zen Mode'),
+			f1: true,
+		});
+	}
+	run(accessor: ServicesAccessor): void {
+		applyChatFullscreenMode(_chatFullscreenMode === 'zen' ? 'off' : 'zen', accessor);
 	}
 });
 

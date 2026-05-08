@@ -148,6 +148,26 @@
 	text-shadow: var(--vibe-neon-text-glow);
 }
 
+/* Zen mode: collapse landing-page chrome below the input box. Body class is toggled by
+ * vibeideChatPane.ts → applyChatFullscreenMode(). Keeps only the first child of
+ * .vibe-chat-landing visible (= the input wrapper, which contains textarea + token line). */
+body.vibeide-chat-zen .vibe-chat-landing > *:not(:first-child) {
+	display: none !important;
+}
+
+/* Zen mode landing: constrain the input wrapper to a readable width and center it both axes.
+ * The parent .vibe-chat-landing is a flex column, so justify-content centers vertically and
+ * align-self centers the (only-visible) child horizontally. */
+body.vibeide-chat-zen .vibe-chat-landing {
+	justify-content: center;
+}
+
+body.vibeide-chat-zen .vibe-chat-landing > *:first-child {
+	max-width: 600px;
+	width: 100%;
+	align-self: center;
+}
+
 /* HISTORY composite header: hide the auxiliary-bar maximize toggle (codicon-auxiliarybar-maximize)
  * and the separator preceding it. Equivalent control is exposed inside the chat composer.
  * VibeIDE registers a single auxiliary-bar view, so a global hide is acceptable here. */

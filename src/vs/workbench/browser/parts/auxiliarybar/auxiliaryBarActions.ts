@@ -283,11 +283,8 @@ class ToggleMaximizedAuxiliaryBar extends Action2 {
 				condition: AuxiliaryBarMaximizedContext,
 				tooltip: localize('restoreAuxiliaryBar', 'Restore Secondary Side Bar'),
 			},
-			menu: {
-				id: MenuId.AuxiliaryBarTitle,
-				group: 'navigation',
-				order: 1,
-			}
+			// VibeIDE: menu entry intentionally removed; the maximize toggle is exposed
+			// inside the chat composer (SidebarChat.tsx) instead of the auxbar title bar.
 		});
 	}
 

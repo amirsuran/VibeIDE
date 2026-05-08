@@ -44,6 +44,10 @@ import { IViewsService } from '../../../services/views/common/viewsService.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { FileAccess } from '../../../../base/common/network.js';
+import { IFileService } from '../../../../platform/files/common/files.js';
+import { ILanguageService } from '../../../../editor/common/languages/language.js';
+import { IChatThreadService } from './chatThreadService.js';
+import { URI } from '../../../../base/common/uri.js';
 
 // compare against search.contribution.ts and debug.contribution.ts, scm.contribution.ts (source control)
 
@@ -63,8 +67,9 @@ class SidebarViewPane extends ViewPane {
 		@IOpenerService openerService: IOpenerService,
 		@ITelemetryService telemetryService: ITelemetryService,
 		@IHoverService hoverService: IHoverService,
-		// @ICodeEditorService private readonly editorService: ICodeEditorService,
-		// @IContextKeyService private readonly editorContextKeyService: IContextKeyService,
+		@IFileService private readonly fileService: IFileService,
+		@ILanguageService private readonly languageService: ILanguageService,
+		@IChatThreadService private readonly chatThreadService: IChatThreadService,
 	) {
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
 
@@ -76,6 +81,85 @@ class SidebarViewPane extends ViewPane {
 		super.renderBody(parent);
 		// parent.style.overflow = 'auto'
 		parent.style.userSelect = 'text';
+
+		// Capture-phase drop intercept: file drags from the explorer become chat staging selections.
+		// Mirrors the editor-tab version in vibeideChatPane.ts so dropping into the auxiliary-bar chat
+		// behaves the same as dropping into a chat editor tab.
+		// Internal editor tab drags ('application/vnd.code.editor') are skipped.
+		// Image/PDF blob drops (no text/uri-list) fall through to the React composer's onDrop.
+		const isExternalFileDrag = (e: DragEvent): boolean => {
+			const t = e.dataTransfer;
+			if (!t) { return false; }
+			if (t.types.includes('application/vnd.code.editor')) { return false; }
+			return t.types.includes('text/uri-list');
+		};
+		const setDragOverFlag = (on: boolean) => {
+			if (on) { parent.setAttribute('data-vibeide-chat-drag-over', 'true'); }
+			else { parent.removeAttribute('data-vibeide-chat-drag-over'); }
+		};
+		const onDragEnterCapture = (e: DragEvent) => {
+			if (!isExternalFileDrag(e)) { return; }
+			e.preventDefault();
+			e.stopPropagation();
+			setDragOverFlag(true);
+		};
+		const onDragLeaveCapture = (e: DragEvent) => {
+			if (!isExternalFileDrag(e)) { return; }
+			const related = e.relatedTarget as Node | null;
+			if (related && parent.contains(related)) { return; }
+			setDragOverFlag(false);
+		};
+		const onDragOverCapture = (e: DragEvent) => {
+			if (!isExternalFileDrag(e)) { return; }
+			e.preventDefault();
+			e.stopPropagation();
+			if (e.dataTransfer) { e.dataTransfer.dropEffect = 'copy'; }
+		};
+		const onDropCapture = (e: DragEvent) => {
+			if (!isExternalFileDrag(e)) { return; }
+			setDragOverFlag(false);
+			const raw = e.dataTransfer?.getData('text/uri-list') ?? '';
+			e.preventDefault();
+			e.stopPropagation();
+
+			const uris: URI[] = [];
+			for (const line of raw.split(/\r?\n/)) {
+				const trimmed = line.trim();
+				if (!trimmed || trimmed.startsWith('#')) { continue; }
+				try { uris.push(URI.parse(trimmed)); } catch { /* skip malformed */ }
+			}
+			if (uris.length === 0) { return; }
+
+			void (async () => {
+				for (const uri of uris) {
+					try {
+						const stat = await this.fileService.stat(uri);
+						if (stat.isDirectory) {
+							this.chatThreadService.addNewStagingSelection({ type: 'Folder', uri });
+						} else {
+							this.chatThreadService.addNewStagingSelection({
+								type: 'File',
+								uri,
+								language: this.languageService.guessLanguageIdByFilepathOrFirstLine(uri) ?? 'plaintext',
+								state: { wasAddedAsCurrentFile: false },
+							});
+						}
+					} catch { /* skip unreadable */ }
+				}
+				await this.chatThreadService.focusCurrentChat();
+			})();
+		};
+		parent.addEventListener('dragenter', onDragEnterCapture, true);
+		parent.addEventListener('dragleave', onDragLeaveCapture, true);
+		parent.addEventListener('dragover', onDragOverCapture, true);
+		parent.addEventListener('drop', onDropCapture, true);
+		this._register(toDisposable(() => {
+			parent.removeEventListener('dragenter', onDragEnterCapture, true);
+			parent.removeEventListener('dragleave', onDragLeaveCapture, true);
+			parent.removeEventListener('dragover', onDragOverCapture, true);
+			parent.removeEventListener('drop', onDropCapture, true);
+			parent.removeAttribute('data-vibeide-chat-drag-over');
+		}));
 
 		// gets set immediately
 		this.instantiationService.invokeFunction(accessor => {

@@ -22,7 +22,7 @@ import { ChatMode, displayInfoOfProviderName, FeatureName, isFeatureNameDisabled
 import { ICommandService } from '../../../../../../../platform/commands/common/commands.js';
 import { WarningBox } from '../vibe-settings-tsx/WarningBox.js';
 import { getModelCapabilities, getIsReasoningEnabledState, getReservedOutputTokenSpace } from '../../../../common/modelCapabilities.js';
-import { AlertTriangle, File, Ban, Check, ChevronRight, Dot, FileIcon, Pencil, Undo, Undo2, X, Flag, Copy as CopyIcon, Info, CirclePlus, Ellipsis, CircleEllipsis, Folder, ALargeSmall, TypeOutline, Text, Image as ImageIcon, FileText, LoaderCircle, Maximize2 } from 'lucide-react';
+import { AlertTriangle, File, Ban, Check, ChevronRight, Dot, FileIcon, Pencil, Undo, Undo2, X, Flag, Copy as CopyIcon, Info, CirclePlus, Ellipsis, CircleEllipsis, Folder, ALargeSmall, TypeOutline, Text, Image as ImageIcon, FileText, LoaderCircle, Maximize2, Maximize } from 'lucide-react';
 import { ChatMessage, CheckpointEntry, StagingSelectionItem, ToolMessage, PlanMessage, ReviewMessage, PlanStep, StepStatus, PlanApprovalState } from '../../../../common/chatThreadServiceTypes.js';
 import { formatChatTimestamp, chatTimestampToISO, CHAT_TIMESTAMP_STREAMING_PLACEHOLDER } from '../../../../common/chatTimestampFormatter.js';
 import { approvalTypeOfBuiltinToolName, BuiltinToolCallParams, BuiltinToolName, ToolName, LintErrorItem, ToolApprovalType, toolApprovalTypes } from '../../../../common/toolsServiceTypes.js';
@@ -4798,15 +4798,62 @@ export const SidebarChat = () => {
 	}, [contextPct, ctxWarned, contextTotal, contextBudget, accessor])
 
 	const inputChatArea = <div className='relative'>
-		<button
-			type='button'
-			onClick={() => commandService.executeCommand('workbench.action.toggleMaximizedAuxiliaryBar')}
-			title='Развернуть'
-			aria-label='Toggle Maximized Auxiliary Bar'
-			className='absolute top-1.5 right-1.5 z-10 p-1 rounded-md text-vibe-fg-3 hover:text-vibe-fg-1 hover:bg-vibe-bg-2-alt transition-colors'
+		<div
+			style={{
+				position: 'absolute',
+				top: '6px',
+				right: '6px',
+				zIndex: 50,
+				display: 'flex',
+				alignItems: 'center',
+				gap: '4px',
+			}}
 		>
-			<Maximize2 size={14} />
-		</button>
+			<button
+				type='button'
+				onClick={() => commandService.executeCommand('vibeide.chat.toggleMaximize')}
+				title='Развернуть чат на всю ширину (повторно — вернуть)'
+				aria-label='Toggle Chat Maximize'
+				style={{
+					padding: '4px',
+					borderRadius: '4px',
+					background: 'transparent',
+					color: 'inherit',
+					display: 'flex',
+					alignItems: 'center',
+					justifyContent: 'center',
+					border: 'none',
+					cursor: 'pointer',
+					opacity: 0.7,
+				}}
+				onMouseEnter={e => (e.currentTarget.style.opacity = '1')}
+				onMouseLeave={e => (e.currentTarget.style.opacity = '0.7')}
+			>
+				<Maximize2 size={14} />
+			</button>
+			<button
+				type='button'
+				onClick={() => commandService.executeCommand('vibeide.chat.toggleZen')}
+				title='Zen-режим: скрыть всё, включая табы (повторно — выйти)'
+				aria-label='Toggle Chat Zen Mode'
+				style={{
+					padding: '4px',
+					borderRadius: '4px',
+					background: 'transparent',
+					color: 'inherit',
+					display: 'flex',
+					alignItems: 'center',
+					justifyContent: 'center',
+					border: 'none',
+					cursor: 'pointer',
+					opacity: 0.7,
+				}}
+				onMouseEnter={e => (e.currentTarget.style.opacity = '1')}
+				onMouseLeave={e => (e.currentTarget.style.opacity = '0.7')}
+			>
+				<Maximize size={14} />
+			</button>
+		</div>
 		<VibeChatArea
 		featureName='Chat'
 		onSubmit={() => onSubmit()}
@@ -5042,7 +5089,7 @@ export const SidebarChat = () => {
 
     const landingPageContent = <div
 		ref={sidebarRef}
-		className='@@vibe-chat-neon-scope w-full h-full max-h-full flex flex-col overflow-auto px-3'
+		className='@@vibe-chat-neon-scope @@vibe-chat-landing w-full h-full max-h-full flex flex-col overflow-auto px-3'
 	>
 		<ErrorBoundary>
 			{landingPageInput}
