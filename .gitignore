@@ -57,10 +57,13 @@ AGENTS.md
 src/vs/workbench/contrib/vibeide/browser/react/out/**
 src/vs/workbench/contrib/vibeide/browser/react/src2/**
 
-# Test simulation cache (LFS, not needed in repo)
-extensions/copilot/test/simulation/cache/
-
 # VibeIDE local-only paths (keep out of git)
+# Policy contract — see references/v1/docs-policy.md (also local-only):
+#   - docs/ is **fully** ignored — public docs go in the website repo, not here.
+#   - references/* is local-only normative documentation for maintainers.
+#   - Only references/logo-final.png is committed (used by README).
+# Anything published to the public site lives elsewhere; nothing under docs/
+# or references/ is part of the source tree contract.
 references/*
 !references/logo-final.png
 CLAUDE.md
@@ -72,7 +75,7 @@ docs/
 # Root bin/: ignore local scratch by default; allow selected committed utilities (see script-save / knowledge.md)
 bin/*
 !bin/vibe-language-pack-nls.mjs
-# Note: do not add `.github/` here — CI, issue templates, and Copilot docs must remain committable.
+# Note: do not add `.github/` here — CI, issue templates, and agent docs must remain committable.
 
 # Local IDE / OS noise (keep out of public tree)
 .idea/
