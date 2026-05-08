@@ -26,13 +26,18 @@ export interface DiagramMention {
 	isRemote: boolean;
 }
 
+export interface SearchMention {
+	/** Literal query string. Empty when user typed `@search` alone (caller should prompt). */
+	query: string;
+}
+
 export interface IVibeMentionService {
 	readonly _serviceBrand: undefined;
 
 	/**
-	 * Parse @file, @symbol, @web, @resource, @diagram mentions from chat input.
+	 * Parse @file, @symbol, @web, @resource, @diagram, @search mentions from chat input.
 	 */
-	parseMentions(input: string): Array<{ type: 'file' | 'symbol' | 'web' | 'resource' | 'diagram'; value: string }>;
+	parseMentions(input: string): Array<{ type: 'file' | 'symbol' | 'web' | 'resource' | 'diagram' | 'search'; value: string }>;
 
 	/**
 	 * Resolve a @file mention to file content.
@@ -60,6 +65,19 @@ export interface IVibeMentionService {
 	 * Handles: @diagram (generic), @diagram:path/to/file.png, @diagram:https://...
 	 */
 	parseDiagramMentions(input: string): DiagramMention[];
+
+	/**
+	 * True when user typed `@search …` (workspace literal grep, no LLM, no embeddings).
+	 * Distinct from `@web` — search is purely local, web pulls from network.
+	 */
+	hasSearchMention(input: string): boolean;
+
+	/**
+	 * Parse all `@search:<query>` and `@search "query"` mentions. The colon form takes
+	 * a single token; the quoted form takes the contents between the next pair of
+	 * double quotes.
+	 */
+	parseSearchMentions(input: string): SearchMention[];
 }
 
 /**
@@ -70,13 +88,15 @@ export interface IVibeMentionService {
 class VibeMentionService extends Disposable implements IVibeMentionService {
 	declare readonly _serviceBrand: undefined;
 
-	// Patterns: @src/utils.ts, @UserService, @web, @docs, @resource, @diagram
+	// Patterns: @src/utils.ts, @UserService, @web, @docs, @resource, @diagram, @search
 	private readonly FILE_MENTION_RE = /@([\w./\\-]+\.\w+)/g;
 	private readonly SYMBOL_MENTION_RE = /@([A-Z][A-Za-z0-9]+)/g;
-	private readonly WEB_MENTION_RE = /@(web|docs|search)\b/i;
+	private readonly WEB_MENTION_RE = /@(web|docs)\b/i;
 	private readonly RESOURCE_MENTION_RE = /@resource\b/i;
 	// @diagram or @diagram:path/to/file.png or @diagram:https://figma.com/...
 	private readonly DIAGRAM_MENTION_RE = /@diagram(?::([^\s]+))?/gi;
+	// `@search:query`, `@search "quoted query"`, or bare `@search`
+	private readonly SEARCH_MENTION_RE = /@search(?::([^\s]+)|\s+"([^"]+)")?/gi;
 
 	constructor(
 		@ILogService private readonly _logService: ILogService,
@@ -85,8 +105,8 @@ class VibeMentionService extends Disposable implements IVibeMentionService {
 		super();
 	}
 
-	parseMentions(input: string): Array<{ type: 'file' | 'symbol' | 'web' | 'resource' | 'diagram'; value: string }> {
-		const mentions: Array<{ type: 'file' | 'symbol' | 'web' | 'resource' | 'diagram'; value: string }> = [];
+	parseMentions(input: string): Array<{ type: 'file' | 'symbol' | 'web' | 'resource' | 'diagram' | 'search'; value: string }> {
+		const mentions: Array<{ type: 'file' | 'symbol' | 'web' | 'resource' | 'diagram' | 'search'; value: string }> = [];
 		const seen = new Set<string>();
 
 		// @diagram mentions — parse first so @diagram:path.png doesn't match as @file
@@ -96,6 +116,15 @@ class VibeMentionService extends Disposable implements IVibeMentionService {
 			if (!seen.has(key)) {
 				seen.add(key);
 				mentions.push({ type: 'diagram', value: dm.value });
+			}
+		}
+
+		// @search mentions — parse before @file so @search:foo doesn't get split by file regex
+		for (const sm of this.parseSearchMentions(input)) {
+			const key = `search:${sm.query}`;
+			if (!seen.has(key)) {
+				seen.add(key);
+				mentions.push({ type: 'search', value: sm.query });
 			}
 		}
 
@@ -166,6 +195,23 @@ class VibeMentionService extends Disposable implements IVibeMentionService {
 			const value = match[1]?.trim() ?? '';
 			const isRemote = value.startsWith('http://') || value.startsWith('https://') || value.includes('figma.com');
 			results.push({ value, isRemote });
+		}
+		return results;
+	}
+
+	hasSearchMention(input: string): boolean {
+		const re = new RegExp(this.SEARCH_MENTION_RE.source, 'i');
+		return re.test(input);
+	}
+
+	parseSearchMentions(input: string): SearchMention[] {
+		const results: SearchMention[] = [];
+		const re = new RegExp(this.SEARCH_MENTION_RE.source, 'gi');
+		let match;
+		while ((match = re.exec(input)) !== null) {
+			const colonForm = match[1]?.trim() ?? '';
+			const quotedForm = match[2]?.trim() ?? '';
+			results.push({ query: quotedForm || colonForm });
 		}
 		return results;
 	}
