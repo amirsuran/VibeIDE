@@ -9,9 +9,11 @@ import { registerSingleton, InstantiationType } from '../../../../platform/insta
 import { IFileService, FileOperationError, FileOperationResult } from '../../../../platform/files/common/files.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
+import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
 import { URI } from '../../../../base/common/uri.js';
 import { joinPath } from '../../../../base/common/resources.js';
 import { RunOnceScheduler } from '../../../../base/common/async.js';
+import { parseConfigJsonOrDefaults } from './vibeConfigJsonParser.js';
 
 export interface VibeConstraintRule {
 	type: 'deny_write' | 'deny_read' | 'max_lines_per_function' | 'deny_age';
@@ -135,6 +137,7 @@ class VibeConstraintsService extends Disposable implements IVibeConstraintsServi
 		@IFileService private readonly _fileService: IFileService,
 		@IWorkspaceContextService private readonly _workspaceContextService: IWorkspaceContextService,
 		@ILogService private readonly _logService: ILogService,
+		@INotificationService private readonly _notificationService: INotificationService,
 	) {
 		super();
 		this._reloadScheduler = this._register(new RunOnceScheduler(() => this.reload(), 500));
@@ -172,35 +175,73 @@ class VibeConstraintsService extends Disposable implements IVibeConstraintsServi
 		if (!uri) return;
 
 		// Load constraints.json
+		let raw: string | undefined;
 		try {
 			const content = await this._fileService.readFile(uri);
-			const parsed = JSON.parse(content.value.toString()) as VibeConstraints;
-			this._constraints = parsed;
-			this._logService.info(`[VibeIDE Constraints] Loaded ${parsed.rules?.length ?? 0} rules from .vibe/constraints.json`);
+			raw = content.value.toString();
 		} catch (e) {
 			if (e instanceof FileOperationError && e.fileOperationResult === FileOperationResult.FILE_NOT_FOUND) {
 				this._constraints = { rules: [] };
 			} else {
-				this._logService.warn('[VibeIDE Constraints] Failed to parse .vibe/constraints.json:', e);
+				this._logService.warn('[VibeIDE Constraints] readFile failed for .vibe/constraints.json:', e);
 				this._constraints = { rules: [] };
 			}
+			raw = undefined;
+		}
+		if (raw !== undefined) {
+			this._constraints = parseConfigJsonOrDefaults<VibeConstraints>(
+				raw,
+				{ rules: [] },
+				reason => this._reportCorruptConfig('.vibe/constraints.json', uri, reason),
+			);
+			this._logService.info(`[VibeIDE Constraints] Loaded ${this._constraints.rules?.length ?? 0} rules from .vibe/constraints.json`);
 		}
 
 		// Load allowed-models.json
 		const folders = this._workspaceContextService.getWorkspace().folders;
 		if (folders.length > 0) {
 			const allowedModelsUri = joinPath(folders[0].uri, '.vibe', 'allowed-models.json');
+			let allowedRaw: string | undefined;
 			try {
 				const content = await this._fileService.readFile(allowedModelsUri);
-				const parsed = JSON.parse(content.value.toString()) as { models?: string[] };
+				allowedRaw = content.value.toString();
+			} catch {
+				allowedRaw = undefined;
+				this._allowedModels = [];
+			}
+			if (allowedRaw !== undefined) {
+				const parsed = parseConfigJsonOrDefaults<{ models?: string[] }>(
+					allowedRaw,
+					{ models: [] },
+					reason => this._reportCorruptConfig('.vibe/allowed-models.json', allowedModelsUri, reason),
+				);
 				this._allowedModels = parsed.models ?? [];
 				if (this._allowedModels.length > 0) {
 					this._logService.info(`[VibeIDE Constraints] Allowed models: ${this._allowedModels.join(', ')}`);
 				}
-			} catch {
-				this._allowedModels = []; // empty = all models allowed
 			}
 		}
+	}
+
+	private _reportCorruptConfig(label: string, uri: URI, reason: string): void {
+		// Empty file is a normal "no rules saved yet" state — never warn for that.
+		if (reason === 'empty') return;
+		this._logService.warn(`[VibeIDE Constraints] ${label} corrupt (${reason}) — using safe defaults`);
+		this._notificationService.notify({
+			severity: Severity.Warning,
+			message: `VibeIDE: ${label} повреждён (${reason}). Применены безопасные дефолты — откройте файл и исправьте JSON, иначе ограничения не действуют.`,
+			source: 'VibeIDE Constraints',
+			actions: {
+				primary: [{
+					id: 'vibeide.openCorruptConfig',
+					label: 'Открыть файл',
+					tooltip: '',
+					class: undefined,
+					enabled: true,
+					run: async () => { await this._fileService.resolve(uri); },
+				}],
+			},
+		});
 	}
 
 	isModelAllowed(modelId: string): boolean {
