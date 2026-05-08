@@ -1,0 +1,57 @@
+# i18n lint — flag hardcoded user-facing strings in JSX / notify call sites
+#
+# Custom lightweight scan: looks for string literals passed to JSX attributes
+# `title` / `placeholder` / `aria-label` and to INotificationService methods
+# `notify` / `info` / `warn` / `error` / `showInformationMessage` /
+# `showWarningMessage` / `showErrorMessage` without an enclosing `localize(...)`
+# call. Output as PR annotations, warning-only.
+#
+# This is intentionally simpler than ESLint with custom rules — we don't want a
+# rule package to maintain in the fork. Rewrite as an ESLint rule when the i18n
+# bundle pipeline is fully wired (K.4 backlog).
+
+name: i18n-lint
+
+on:
+  pull_request:
+    paths:
+      - 'src/vs/workbench/contrib/vibeide/**/*.ts'
+      - 'src/vs/workbench/contrib/vibeide/**/*.tsx'
+      - '.github/workflows/i18n-lint.yml'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  lint:
+    name: i18n lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Scan for hardcoded user strings
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT='src/vs/workbench/contrib/vibeide'
+          PATTERN='(title|placeholder|aria-label)=["'"'"']([^"'"'"'$]{4,})["'"'"']|(notify|info|warn|showInformationMessage|showWarningMessage|showErrorMessage)\s*\(\s*["'"'"']([^"'"'"'$]{4,})["'"'"']'
+          findings=0
+          while IFS= read -r line; do
+            file=$(echo "$line" | cut -d: -f1)
+            lineno=$(echo "$line" | cut -d: -f2)
+            content=$(echo "$line" | cut -d: -f3-)
+            # Skip if a localize call appears nearby on the same line.
+            if echo "$content" | grep -qE 'localize2?\s*\('; then
+              continue
+            fi
+            echo "::warning file=$file,line=$lineno::Hardcoded user-facing string — wrap in localize()/localize2(): ${content:0:120}"
+            findings=$((findings + 1))
+          done < <(grep -nrE "$PATTERN" "$ROOT" --include='*.ts' --include='*.tsx' || true)
+          echo "i18n-lint findings: $findings"
+          # Warning-only: do not fail the job
+          exit 0

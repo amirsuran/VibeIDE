@@ -1,0 +1,59 @@
+# i18n coverage — soft gate per K.4
+#
+# Walks the VibeIDE source for localize() / localize2() calls, counts how many of
+# them have translations in out/nls/vibeide.nls.<locale>.json, and posts a comment
+# on the PR with the coverage delta. Warning-only by design (K.4 decision):
+# blocking merges on coverage would punish ordinary feature work for translation
+# debt. Old translations falling out (existing key disappeared from <locale>.json)
+# should be handled by scripts/i18n-sync.js which is its own backlog item.
+
+name: i18n-coverage
+
+on:
+  pull_request:
+    paths:
+      - 'src/vs/workbench/contrib/vibeide/**/*.ts'
+      - 'src/vs/workbench/contrib/vibeide/**/*.tsx'
+      - 'extensions/vibeide-*/**/package.json'
+      - 'out/nls/vibeide.nls.*.json'
+      - '.github/workflows/i18n-coverage.yml'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  coverage:
+    name: i18n coverage report
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Run vibe doctor --i18n
+        id: report
+        run: |
+          set -euo pipefail
+          mkdir -p out/nls
+          # i18n bundles may not exist yet on a fresh clone; report what is there.
+          node scripts/vibe-doctor.js --i18n --json > /tmp/i18n.json || true
+          {
+            echo '## 🌐 i18n coverage'
+            echo ''
+            if [ ! -s /tmp/i18n.json ]; then
+              echo '_(no report produced)_'
+            else
+              node -e "const r=require('/tmp/i18n.json');console.log('Total source keys: '+r.totalKeys);if(!r.locales||r.locales.length===0){console.log('No locale bundles under out/nls/.');return}for(const l of r.locales){console.log('- **'+l.locale+'**: '+l.coveragePercent+'% ('+l.translated+'/'+l.totalKeys+'); needs: '+l.needsTranslation+'; missing: '+l.missing)}"
+            fi
+            echo ''
+            echo '_Soft gate per K.4 — this report does not block merges._'
+          } > /tmp/comment.md
+
+      - name: Comment on PR
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          body-path: /tmp/comment.md
