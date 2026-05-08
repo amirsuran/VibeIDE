@@ -27,7 +27,7 @@ export interface PackEntry {
 }
 
 export interface SkillCommunityPackEnvelope {
-	formatVersion: 'vibe-community-skills-catalog-v1' | 'vibe-community-commands-pack-v1';
+	formatVersion: 'vibe-community-skills-catalog-v1' | 'vibe-community-commands-pack-v1' | 'vibe-community-personas-pack-v1';
 	publishedAt: number;
 	entries: ReadonlyArray<PackEntry>;
 	manifestSha256: Readonly<Record<string, string>>;
@@ -50,7 +50,11 @@ const ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 export function decodePackEnvelope(raw: unknown): DecodeResult<SkillCommunityPackEnvelope> {
 	if (raw == null || typeof raw !== 'object') return { ok: false, reason: 'not-an-object' };
 	const obj = raw as Record<string, unknown>;
-	if (obj.formatVersion !== 'vibe-community-skills-catalog-v1' && obj.formatVersion !== 'vibe-community-commands-pack-v1') {
+	if (
+		obj.formatVersion !== 'vibe-community-skills-catalog-v1'
+		&& obj.formatVersion !== 'vibe-community-commands-pack-v1'
+		&& obj.formatVersion !== 'vibe-community-personas-pack-v1'
+	) {
 		return { ok: false, reason: 'formatVersion-unknown' };
 	}
 	if (typeof obj.publishedAt !== 'number' || !Number.isFinite(obj.publishedAt)) {
