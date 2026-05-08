@@ -9,6 +9,9 @@
   "main": "./out/main.js",
   "type": "module",
   "private": true,
+  "bin": {
+    "vibe": "scripts/vibe.js"
+  },
   "scripts": {
     "buildreact": "cd ./src/vs/workbench/contrib/vibeide/browser/react/ && node build.js && cd ../../../../../../../",
     "watchreact": "cd ./src/vs/workbench/contrib/vibeide/browser/react/ && node build.js --watch && cd ../../../../../../../",
