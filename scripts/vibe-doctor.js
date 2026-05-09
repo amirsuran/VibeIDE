@@ -184,6 +184,20 @@ check('npm-audit-critical', () => {
 	}
 }, 'error', 'full');
 
+check('roadmap-K0-DoD', () => {
+	try {
+		const out = execSync('node scripts/check-K0-DoD.mjs --json', { timeout: 5000, encoding: 'utf-8' });
+		const { summary, violations } = JSON.parse(out);
+		if (violations.length > 0) {
+			throw new Error(`K.0 DoD: ${violations.length} item(s) without commit ref or blocker hint (${summary.open} open, ${summary.missingCommit} missing-commit). Run: node scripts/check-K0-DoD.mjs`);
+		}
+		return `roadmap K.0 DoD: ${summary.pass} pass / ${summary.blocked} blocked / 0 violations`;
+	} catch (err) {
+		if (err.message?.startsWith('K.0 DoD:')) { throw err; }
+		return '[skipped: K.0 DoD checker unavailable]';
+	}
+}, 'warning', 'full');
+
 check('vibe-snapshots-size', () => {
 	const snapshotsPath = path.join(process.cwd(), '.vibe', 'snapshots');
 	if (!fs.existsSync(snapshotsPath)) return '[skipped: no snapshots dir]';
