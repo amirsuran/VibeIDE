@@ -8,6 +8,7 @@ import { ILLMMessageService } from './sendLLMMessageService.js';
 import { IVibeideSettingsService } from './vibeideSettingsService.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { isValidProviderModelSelection } from './vibeideSettingsTypes.js';
+import { analyzeNLShellSafety } from './nlShellSafetyAnalyzer.js';
 
 export const INLShellParserService = createDecorator<INLShellParserService>('nlShellParserService');
 
@@ -166,34 +167,18 @@ class NLShellParserService implements INLShellParserService {
 	}
 
 	private _assessRisk(command: string): 'low' | 'medium' | 'high' {
-		const normalized = command.toLowerCase().trim();
-
-		// High-risk patterns
-		if (
-			normalized.includes('rm -rf') ||
-			normalized.includes('rm -r ') ||
-			normalized.includes('sudo rm') ||
-			normalized.includes('format ') ||
-			normalized.includes('git reset --hard') ||
-			normalized.includes('git push --force') ||
-			normalized.includes('git push -f')
-		) {
-			return 'high';
+		// Adopt pure helper `analyzeNLShellSafety` (roadmap §990 / §1052) — single
+		// source of truth for destructive-command detection, also consumed by the
+		// chat-mode confirm dialog and `vibe doctor --shell-safety` audit.
+		const tokens = command.trim().split(/\s+/);
+		const head = tokens[0] ?? '';
+		const args = tokens.slice(1);
+		const result = analyzeNLShellSafety(head, args);
+		switch (result.safety) {
+			case 'destructive': return 'high';
+			case 'ambiguous': return 'medium';
+			case 'safe': return 'low';
 		}
-
-		// Medium-risk patterns
-		if (
-			normalized.includes('sudo ') ||
-			normalized.includes('rm ') ||
-			normalized.includes('chmod ') ||
-			normalized.includes('chown ') ||
-			normalized.includes('git push') ||
-			normalized.includes('git reset')
-		) {
-			return 'medium';
-		}
-
-		return 'low';
 	}
 }
 
