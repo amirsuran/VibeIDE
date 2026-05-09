@@ -198,6 +198,20 @@ check('roadmap-K0-DoD', () => {
 	}
 }, 'warning', 'full');
 
+check('phase-roadmap-sync', () => {
+	try {
+		const out = execSync('node scripts/sync-phase-roadmap.mjs --json', { timeout: 5000, encoding: 'utf-8' });
+		const { reports } = JSON.parse(out);
+		const totals = reports.reduce(
+			(acc, r) => ({ open: acc.open + r.open, covered: acc.covered + r.covered }),
+			{ open: 0, covered: 0 },
+		);
+		return `phase docs ↔ main roadmap: ${totals.covered}/${totals.open} open phase items have a likely main-roadmap counterpart`;
+	} catch (err) {
+		return `[skipped: phase-roadmap auditor unavailable: ${err.message?.split('\n')[0] ?? err}]`;
+	}
+}, 'warning', 'full');
+
 check('vibe-snapshots-size', () => {
 	const snapshotsPath = path.join(process.cwd(), '.vibe', 'snapshots');
 	if (!fs.existsSync(snapshotsPath)) return '[skipped: no snapshots dir]';
