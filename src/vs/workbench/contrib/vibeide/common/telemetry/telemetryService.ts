@@ -33,9 +33,15 @@ export interface IVibeideTelemetryService {
 }
 
 /**
- * Telemetry service for tracking AI interactions
- * CRITICAL: All telemetry operations must be async and non-blocking
- * User experience should NEVER be impacted by telemetry
+ * Telemetry service for tracking AI interactions.
+ * CRITICAL: All telemetry operations must be async and non-blocking.
+ * User experience should NEVER be impacted by telemetry.
+ *
+ * Scope contract: see `references/v1/telemetry-service-scope.md`. This is a
+ * **local audit channel** for routing decisions and model performance — zero
+ * outbound calls. The class name "Telemetry" is misleading and queued for
+ * rename to `RoutingAuditService`; the no-cloud-telemetry policy in
+ * `references/v1/telemetry-policy.md` applies.
  */
 export class VibeideTelemetryService extends Disposable implements IVibeideTelemetryService {
 	readonly _serviceBrand: undefined;
