@@ -9,9 +9,6 @@
 		"vscode": "^1.118.0",
 		"vibeide": ">=0.3.0"
 	},
-	"enabledApiProposals": [
-		"vibeideReadonly"
-	],
 	"activationEvents": [
 		"onCommand:vibeideSample.show"
 	],
