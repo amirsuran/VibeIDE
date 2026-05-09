@@ -261,6 +261,10 @@ export class RefreshModelService extends Disposable implements IRefreshModelServ
 				if (typeof m.contextWindow === 'number' && m.contextWindow > 0) {
 					partial.contextWindow = m.contextWindow;
 				}
+				// Catalog-driven vision capability — overrides provider heuristics for aggregators (OpenRouter etc.)
+				if (typeof m.supportsVision === 'boolean') {
+					partial.supportsVision = m.supportsVision;
+				}
 				if (Object.keys(partial).length) {
 					overrideUpdates[id] = partial;
 				}

@@ -3,17 +3,49 @@
  *  Licensed under the Apache License, Version 2.0. See LICENSE.txt for more information.
  *--------------------------------------------------------------------------------------*/
 
-import { SettingsOfProvider, ModelSelection, ProviderName } from '../../../../common/vibeideSettingsTypes.js';
+import { SettingsOfProvider, ModelSelection, ProviderName, OverridesOfModel } from '../../../../common/vibeideSettingsTypes.js';
 
 /**
- * Vision-capable providers that require API keys
+ * Vision-capable providers that require API keys.
+ * Note: aggregators like OpenRouter / openCode / openAICompatible / liteLLM are NOT in this set
+ * because vision support is per-model, not per-provider. Use catalog-driven `supportsVision`
+ * overrides (set by RemoteCatalogService) to flag individual aggregator models.
  */
 const VISION_PROVIDERS: ProviderName[] = ['anthropic', 'openAI', 'gemini', 'pollinations'];
 
 /**
- * Checks if user has any vision-capable API keys configured
+ * Aggregator providers — vision capability is per-model, decided by catalog override or model-name heuristic.
  */
-export function hasVisionCapableApiKey(settingsOfProvider: SettingsOfProvider, currentModelSelection: ModelSelection | null): boolean {
+const AGGREGATOR_PROVIDERS: ProviderName[] = ['openRouter', 'openCode', 'openCodeZen', 'openAICompatible', 'liteLLM'];
+
+/**
+ * Conservative substring set used as fallback when the catalog hasn't been refreshed yet.
+ * Only well-known vision-model markers — anything else stays false to avoid silently sending
+ * images into a text-only model.
+ */
+const VISION_NAME_SUBSTRINGS = ['vision', '-vl', 'vl-', 'llava', 'bakllava', 'pixtral', 'claude-3', 'claude-4', 'claude-sonnet', 'claude-opus', 'gpt-4o', 'gpt-4.1', 'gpt-5', 'gemini', 'qwen2-vl', 'qwen2.5-vl', 'qwen3-vl'];
+
+function aggregatorVisionHeuristic(modelName: string): boolean {
+	const lower = modelName.toLowerCase();
+	return VISION_NAME_SUBSTRINGS.some(s => lower.includes(s));
+}
+
+/**
+ * Reads the catalog-driven `supportsVision` override for a given model, if any.
+ * Returns undefined when no override is recorded (caller falls through to heuristics).
+ */
+function readSupportsVisionOverride(overridesOfModel: OverridesOfModel | undefined, providerName: ProviderName, modelName: string): boolean | undefined {
+	const v = overridesOfModel?.[providerName]?.[modelName]?.supportsVision;
+	return typeof v === 'boolean' ? v : undefined;
+}
+
+/**
+ * Checks if user has any vision-capable API keys configured.
+ * Includes: native vision providers (Anthropic, OpenAI, Gemini, Pollinations), and aggregators
+ * (OpenRouter, openCode, openAICompatible, liteLLM) when they have at least one enabled model
+ * flagged `supportsVision=true` in catalog overrides or matching the heuristic.
+ */
+export function hasVisionCapableApiKey(settingsOfProvider: SettingsOfProvider, currentModelSelection: ModelSelection | null, overridesOfModel?: OverridesOfModel): boolean {
 	// Check current model selection first (only if not auto mode)
 	if (currentModelSelection) {
 		const { providerName } = currentModelSelection;
@@ -26,7 +58,7 @@ export function hasVisionCapableApiKey(settingsOfProvider: SettingsOfProvider, c
 		}
 	}
 
-	// Check all vision-capable providers (always check this, especially for auto mode)
+	// Check all native vision providers
 	for (const providerName of VISION_PROVIDERS) {
 		const providerSettings = settingsOfProvider[providerName];
 		if (providerSettings.apiKey && providerSettings.apiKey.length > 10) {
@@ -36,6 +68,19 @@ export function hasVisionCapableApiKey(settingsOfProvider: SettingsOfProvider, c
 				return true;
 			}
 		}
+	}
+
+	// Aggregators: vision is per-model — accept only when at least one enabled model is flagged or matches heuristic
+	for (const providerName of AGGREGATOR_PROVIDERS) {
+		const providerSettings = settingsOfProvider[providerName];
+		if (!providerSettings.apiKey || providerSettings.apiKey.length <= 10) continue;
+		const hasVisionModel = providerSettings.models.some(m => {
+			if (m.isHidden) return false;
+			const override = readSupportsVisionOverride(overridesOfModel, providerName, m.modelName);
+			if (typeof override === 'boolean') return override;
+			return aggregatorVisionHeuristic(m.modelName);
+		});
+		if (hasVisionModel) return true;
 	}
 
 	return false;
@@ -94,15 +139,20 @@ export async function checkOllamaModelVisionCapable(modelName: string): Promise<
 }
 
 /**
- * Checks if the currently selected model is a vision-capable model
+ * Checks if the currently selected model is a vision-capable model.
+ * Order: catalog-driven `supportsVision` override → native-vision provider → aggregator heuristic → Ollama vision-name match.
  */
-export function isSelectedModelVisionCapable(currentModelSelection: ModelSelection | null, settingsOfProvider: SettingsOfProvider): boolean {
+export function isSelectedModelVisionCapable(currentModelSelection: ModelSelection | null, settingsOfProvider: SettingsOfProvider, overridesOfModel?: OverridesOfModel): boolean {
 	if (!currentModelSelection) return false;
 
 	const { providerName, modelName } = currentModelSelection;
 
 	// Skip "auto" - it's not a real provider
 	if (providerName === 'auto') return false;
+
+	// Authoritative when set: catalog-derived flag (OpenRouter, openAICompatible, etc.).
+	const override = readSupportsVisionOverride(overridesOfModel, providerName, modelName);
+	if (typeof override === 'boolean') return override;
 
 	// Check if it's a vision-capable API provider with a valid key
 	if (VISION_PROVIDERS.includes(providerName)) {
@@ -115,6 +165,14 @@ export function isSelectedModelVisionCapable(currentModelSelection: ModelSelecti
 			if (modelExists) {
 				return true;
 			}
+		}
+	}
+
+	// Aggregator providers: per-model heuristic on the model name (used when catalog hasn't been fetched yet).
+	if (AGGREGATOR_PROVIDERS.includes(providerName)) {
+		const providerSettings = settingsOfProvider[providerName];
+		if (providerSettings.apiKey && providerSettings.apiKey.length > 10) {
+			return aggregatorVisionHeuristic(modelName);
 		}
 	}
 

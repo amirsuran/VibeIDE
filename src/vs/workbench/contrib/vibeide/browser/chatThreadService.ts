@@ -868,10 +868,17 @@ class ChatThreadService extends Disposable implements IChatThreadService {
 	// Note: _getFallbackModel removed - use _settingsService.resolveAutoModelSelection() instead
 
 	/**
-	 * Check if a model supports vision/image inputs
-	 * Uses the same logic as modelRouter
+	 * Check if a model supports vision/image inputs.
+	 * Order: catalog-driven `supportsVision` override (set by RemoteCatalogService for aggregators
+	 * like OpenRouter where modality info is per-model) → provider heuristics → name-based fallback.
 	 */
 	private _isModelVisionCapable(modelSelection: ModelSelection, capabilities: any): boolean {
+		// Authoritative when set: catalog-derived flag (OpenRouter, openAICompatible, etc.).
+		// Distinguish explicit false from undefined — undefined falls through to heuristics.
+		if (capabilities && typeof capabilities.supportsVision === 'boolean') {
+			return capabilities.supportsVision;
+		}
+
 		const name = modelSelection.modelName.toLowerCase();
 		const provider = modelSelection.providerName.toLowerCase();
 
@@ -898,6 +905,12 @@ class ChatThreadService extends Disposable implements IChatThreadService {
 		}
 		if (provider === 'ollama' || provider === 'vllm') {
 			return name.includes('llava') || name.includes('bakllava') || name.includes('vision');
+		}
+		// Aggregators / OpenAI-compatible — without a catalog flag, fall back to common vision-model name patterns.
+		// Conservative: only return true on well-known vision substrings; anything else stays false to avoid sending
+		// images into a text-only model and getting hallucinated descriptions of the system prompt.
+		if (provider === 'openrouter' || provider === 'opencode' || provider === 'opencodezen' || provider === 'openaicompatible' || provider === 'litellm' || provider === 'pollinations') {
+			if (name.includes('vision') || name.includes('-vl') || name.includes('vl-') || name.includes('llava') || name.includes('pixtral') || name.includes('claude-3') || name.includes('claude-4') || name.includes('claude-sonnet') || name.includes('claude-opus') || name.includes('gpt-4o') || name.includes('gpt-4.1') || name.includes('gpt-5') || name.includes('gemini') || name.includes('qwen2-vl') || name.includes('qwen2.5-vl') || name.includes('qwen3-vl')) return true;
 		}
 
 		return false;
@@ -3600,6 +3613,7 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 							allowRemoteModels: settings.imageQAAllowRemoteModels,
 							enableHybridMode: settings.imageQAEnableHybridMode,
 							settingsOfProvider: this._settingsService.state.settingsOfProvider,
+							overridesOfModel: this._settingsService.state.overridesOfModel,
 						}
 					);
 
@@ -5546,17 +5560,16 @@ We only need to do it for files that were edited since `from`, ie files between 
 
 			if (!isVisionCapable) {
 				// For PDFs, we can still send them as text (extractedText), so no warning needed
-				// For images, we should prevent sending or convert to text description
 				if (images && images.length > 0) {
-					// In auto mode, this shouldn't happen (router should select vision-capable model)
-					// But if it does (e.g., no vision models available), remove images and warn
-					if (isAutoMode) {
-						this._notificationService.warn(`Auto-selected model (${modelSelection.providerName}/${modelSelection.modelName}) does not support images. Images will not be sent. Please configure a vision-capable model.`);
-					} else {
-						this._notificationService.warn(`The selected model (${modelSelection.providerName}/${modelSelection.modelName}) does not support images. Images will not be sent to the model.`);
-					}
-					// Remove images from the message since model can't process them
-					images = [];
+					// Hard-block: silently dropping images and continuing leads to the model hallucinating
+					// "what it sees" based on the system prompt. Refuse the request and tell the user how to fix it.
+					const modelLabel = `${modelSelection.providerName}/${modelSelection.modelName}`;
+					const message = isAutoMode
+						? localize('vibeide.chat.autoModelNoImageSupport', 'Авто-выбранная модель ({0}) не поддерживает изображения. Настройте vision-провайдера (Anthropic, OpenAI, Gemini или OpenRouter с vision-моделью) и повторите отправку.', modelLabel)
+						: localize('vibeide.chat.selectedModelNoImageSupport', 'Выбранная модель ({0}) не поддерживает изображения. Переключитесь на vision-модель (Claude, GPT-4o/4.1/5, Gemini, vision-модель OpenRouter или Ollama llava/bakllava) либо удалите вложение.', modelLabel);
+					this._notificationService.error(message);
+					this._setStreamState(threadId, { isRunning: 'idle', interrupt: 'not_needed' });
+					return;
 				}
 				// PDFs are sent as extracted text, so they work fine with non-vision models
 				// No notification needed - PDFs will be processed correctly via text extraction

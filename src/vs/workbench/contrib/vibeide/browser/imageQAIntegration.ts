@@ -10,7 +10,7 @@
 
 import { ChatImageAttachment } from '../common/chatThreadServiceTypes.js';
 import { imageQAPipeline, type ImageQAOptions, type QAResponse } from '../common/imageQA/index.js';
-import { ModelSelection, SettingsOfProvider } from '../common/vibeideSettingsTypes.js';
+import { ModelSelection, OverridesOfModel, SettingsOfProvider } from '../common/vibeideSettingsTypes.js';
 
 export interface ImageQAPreprocessedMessage {
 	shouldUsePipeline: boolean;
@@ -21,7 +21,11 @@ export interface ImageQAPreprocessedMessage {
 
 // Providers whose chat models accept images natively (no local OCR needed)
 const VISION_PROVIDERS = new Set(['anthropic', 'openAI', 'gemini', 'pollinations']);
+// Aggregator providers — vision is per-model; rely on catalog-driven `supportsVision` overrides
+// or model-name heuristics rather than blanket-trusting the provider.
+const AGGREGATOR_PROVIDERS = new Set(['openRouter', 'openCode', 'openCodeZen', 'openAICompatible', 'liteLLM']);
 const OLLAMA_VISION_KEYWORDS = ['llava', 'bakllava', 'llama-vision', 'qwen-vl'];
+const AGGREGATOR_VISION_SUBSTRINGS = ['vision', '-vl', 'vl-', 'llava', 'pixtral', 'claude-3', 'claude-4', 'claude-sonnet', 'claude-opus', 'gpt-4o', 'gpt-4.1', 'gpt-5', 'gemini'];
 
 /**
  * Returns true if any vision-capable provider has a configured API key with at least one
@@ -44,15 +48,22 @@ function hasAnyVisionProviderConfigured(settingsOfProvider?: SettingsOfProvider)
 /**
  * Lightweight vision-capability heuristic for OCR pipeline gating.
  * Skips the local OCR/QA preprocessing when the chosen LLM can read images itself.
+ * Order: catalog override → native vision provider → aggregator heuristic → Ollama keyword.
  */
-function isModelVisionCapable(modelSelection: ModelSelection | null, settingsOfProvider?: SettingsOfProvider): boolean {
+function isModelVisionCapable(modelSelection: ModelSelection | null, settingsOfProvider?: SettingsOfProvider, overridesOfModel?: OverridesOfModel): boolean {
 	if (!modelSelection) return false;
 	const { providerName, modelName } = modelSelection;
 	if (providerName === 'auto') {
 		// Router decides — if user has any vision-capable provider configured, trust it.
 		return hasAnyVisionProviderConfigured(settingsOfProvider);
 	}
+	const override = overridesOfModel?.[providerName]?.[modelName]?.supportsVision;
+	if (typeof override === 'boolean') return override;
 	if (VISION_PROVIDERS.has(providerName)) return true;
+	if (AGGREGATOR_PROVIDERS.has(providerName)) {
+		const lower = (modelName || '').toLowerCase();
+		return AGGREGATOR_VISION_SUBSTRINGS.some(s => lower.includes(s));
+	}
 	if (providerName === 'ollama') {
 		const lower = (modelName || '').toLowerCase();
 		return OLLAMA_VISION_KEYWORDS.some(k => lower.includes(k));
@@ -68,13 +79,14 @@ export function shouldUseImageQAPipeline(
 	images: ChatImageAttachment[] | undefined,
 	modelSelection?: ModelSelection | null,
 	pipelineEnabled?: boolean,
-	settingsOfProvider?: SettingsOfProvider
+	settingsOfProvider?: SettingsOfProvider,
+	overridesOfModel?: OverridesOfModel
 ): boolean {
 	if (!images || images.length === 0) return false;
 	// Master kill-switch: pipeline is opt-in. Default off — native vision is the primary path.
 	if (!pipelineEnabled) return false;
 	// Vision-capable models read images directly — local OCR/QA is wasted work and surfaces tesseract errors when the worker fails to load.
-	if (isModelVisionCapable(modelSelection ?? null, settingsOfProvider)) return false;
+	if (isModelVisionCapable(modelSelection ?? null, settingsOfProvider, overridesOfModel)) return false;
 	return true;
 }
 
@@ -103,10 +115,11 @@ export async function preprocessImagesForQA(
 		allowRemoteModels?: boolean;
 		enableHybridMode?: boolean;
 		settingsOfProvider?: SettingsOfProvider;
+		overridesOfModel?: OverridesOfModel;
 	}
 ): Promise<ImageQAPreprocessedMessage> {
 	const pipelineEnabled = settings?.pipelineEnabled ?? false;
-	const willUseOCR = shouldUseImageQAPipeline(images, modelSelection, pipelineEnabled, settings?.settingsOfProvider);
+	const willUseOCR = shouldUseImageQAPipeline(images, modelSelection, pipelineEnabled, settings?.settingsOfProvider, settings?.overridesOfModel);
 	if (devMode || pipelineEnabled) {
 		// Diagnostic: surface the gate decision so users can see why OCR did or didn't run.
 		console.debug('[ImageQA gate]', {

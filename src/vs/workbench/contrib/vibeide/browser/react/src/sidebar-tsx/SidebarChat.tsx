@@ -27,7 +27,7 @@ import { ChatMessage, CheckpointEntry, StagingSelectionItem, ToolMessage, PlanMe
 import { formatChatTimestamp, chatTimestampToISO, CHAT_TIMESTAMP_STREAMING_PLACEHOLDER } from '../../../../common/chatTimestampFormatter.js';
 import { approvalTypeOfBuiltinToolName, BuiltinToolCallParams, BuiltinToolName, ToolName, LintErrorItem, ToolApprovalType, toolApprovalTypes } from '../../../../common/toolsServiceTypes.js';
 import { CopyButton, EditToolAcceptRejectButtonsHTML, IconShell1, JumpToFileButton, JumpToTerminalButton, StatusIndicator, StatusIndicatorForApplyButton, useApplyStreamState, useEditToolStreamState } from '../markdown/ApplyBlockHoverButtons.js';
-import { IsRunningType } from '../../../chatThreadService.js';
+import { IsRunningType, WAITING_FOR_MODEL_RESPONSE_SENTINEL } from '../../../chatThreadService.js';
 import { acceptAllBg, acceptBorder, buttonFontSize, buttonTextColor, rejectAllBg, rejectBg, rejectBorder } from '../../../../common/helpers/colors.js';
 import { builtinToolNames, isABuiltinToolName, MAX_FILE_CHARS_PAGE, MAX_TERMINAL_INACTIVE_TIME } from '../../../../common/prompt/prompts.js';
 import { RawToolCallObj } from '../../../../common/sendLLMMessageTypes.js';
@@ -167,6 +167,26 @@ const formatTokenCount = (count: number): string => {
 	return count.toString();
 }
 
+// Frames are drawn as inline SVG (not characters) so all three glyphs share the same
+// 24×24 coordinate system: the dot at (12,12) is exactly the center of the plus, and the
+// 8-point star (plus + diagonals) extends outward from the same pivot — perfect alignment
+// regardless of host font. Using `currentColor` keeps them themed by the parent.
+const LOADING_GLYPH_FRAMES: ReadonlyArray<React.ReactNode> = [
+	<svg key="dot" viewBox="0 0 24 24" width="1em" height="1em" aria-hidden="true">
+		<circle cx="12" cy="12" r="2.5" fill="currentColor" />
+	</svg>,
+	<svg key="plus" viewBox="0 0 24 24" width="1em" height="1em" aria-hidden="true">
+		<line x1="3" y1="12" x2="21" y2="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+		<line x1="12" y1="3" x2="12" y2="21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+	</svg>,
+	<svg key="star" viewBox="0 0 24 24" width="1em" height="1em" aria-hidden="true">
+		<line x1="3" y1="12" x2="21" y2="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+		<line x1="12" y1="3" x2="12" y2="21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+		<line x1="5.6" y1="5.6" x2="18.4" y2="18.4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+		<line x1="18.4" y1="5.6" x2="5.6" y2="18.4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+	</svg>,
+];
+
 export const IconLoading = ({
 	className = '',
 	showTokenCount,
@@ -178,7 +198,6 @@ export const IconLoading = ({
 	state?: LoadingState,
 	inline?: boolean
 }) => {
-	// Use CSS animations instead of JavaScript for better performance
 	const [prevTokenCount, setPrevTokenCount] = useState<number | undefined>(undefined);
 	const [shouldPulse, setShouldPulse] = useState(false);
 
@@ -195,19 +214,30 @@ export const IconLoading = ({
 		? ` (${formatTokenCount(showTokenCount)} tokens)`
 		: '';
 
-	// Different animation speeds for different states
-	const animationSpeed = state === 'thinking' ? '1.6s' : state === 'processing' ? '1.2s' : '1.4s';
+	// Cycle period (ms) per state — divided across the three frames
+	const cyclePeriodMs = state === 'thinking' ? 800 : state === 'processing' ? 600 : 700;
+	const frameDurationMs = Math.round(cyclePeriodMs / LOADING_GLYPH_FRAMES.length);
+
+	const [frameIdx, setFrameIdx] = useState(0);
+	useEffect(() => {
+		// Honor reduced-motion preference: stay on the first frame, no interval
+		const reduceMotion = typeof window !== 'undefined'
+			&& typeof window.matchMedia === 'function'
+			&& window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+		if (reduceMotion) return;
+		const id = window.setInterval(() => {
+			setFrameIdx(i => (i + 1) % LOADING_GLYPH_FRAMES.length);
+		}, frameDurationMs);
+		return () => window.clearInterval(id);
+	}, [frameDurationMs]);
 
 	const dots = (
 		<span
-			className={`inline-flex items-center gap-0.5 ${inline ? 'ml-1' : ''}`}
-			style={{ animationDuration: animationSpeed }}
+			className={`loading-glyph ${inline ? 'ml-1' : ''}`}
 			aria-label={state === 'thinking' ? chatS.loadingThinkingAria : state === 'typing' ? chatS.loadingTypingAria : state === 'processing' ? chatS.loadingProcessingAria : chatS.loadingDefaultAria}
 			role="status"
 		>
-			<span className="loading-dot" />
-			<span className="loading-dot" />
-			<span className="loading-dot" />
+			{LOADING_GLYPH_FRAMES[frameIdx]}
 		</span>
 	);
 
@@ -219,6 +249,49 @@ export const IconLoading = ({
 					{tokenText}
 				</span>
 			)}
+		</div>
+	);
+}
+
+// Inline banner shown when the LLM stream watchdog detects a stall (no new tokens for too long).
+// Lets the user abort or re-send the last user message without leaving the chat.
+const StallBanner = ({
+	stalledAt,
+	onAbort,
+	onRetry,
+}: {
+	stalledAt: number,
+	onAbort: () => void,
+	onRetry: () => void,
+}) => {
+	const [now, setNow] = useState(() => Date.now());
+	useEffect(() => {
+		const id = window.setInterval(() => setNow(Date.now()), 1000);
+		return () => window.clearInterval(id);
+	}, []);
+	const elapsedSec = Math.max(0, Math.round((now - stalledAt) / 1000));
+	return (
+		<div
+			className="flex items-center gap-2 px-2 py-1 rounded border border-vibe-border-2 text-vibe-warning text-xs"
+			role="alert"
+			aria-live="polite"
+		>
+			<IconWarning size={14} className="flex-shrink-0" />
+			<span className="flex-1 text-vibe-fg-2">Модель молчит ~{elapsedSec}s — возможно, стрим завис.</span>
+			<button
+				type="button"
+				onClick={onAbort}
+				className="px-2 py-0.5 rounded border border-vibe-border-2 text-vibe-fg-2 hover:bg-vibe-bg-2-hover"
+			>
+				Прервать
+			</button>
+			<button
+				type="button"
+				onClick={onRetry}
+				className="px-2 py-0.5 rounded border border-vibe-warning text-vibe-warning hover:bg-vibe-bg-2-hover"
+			>
+				Повторить
+			</button>
 		</div>
 	);
 }
@@ -438,7 +511,6 @@ interface VibeideChatAreaProps {
 
 	// Image attachments
 	imageAttachments?: React.ReactNode;
-	onImagePaste?: (files: File[]) => void;
 	onImageDrop?: (files: File[]) => void;
 	onImageUpload?: () => void;
 	onPDFDrop?: (files: File[]) => void;
@@ -499,7 +571,6 @@ export const VibeChatArea: React.FC<VibeideChatAreaProps> = ({
 	selections,
 	setSelections,
 	imageAttachments,
-	onImagePaste,
 	onImageDrop,
 	onImageUpload,
 	onPDFDrop,
@@ -513,45 +584,8 @@ export const VibeChatArea: React.FC<VibeideChatAreaProps> = ({
 	const pdfInputRef = React.useRef<HTMLInputElement>(null);
 	const containerRef = React.useRef<HTMLDivElement>(null);
 
-		// Handle paste
-	React.useEffect(() => {
-		const handlePaste = (e: ClipboardEvent) => {
-			const items = Array.from(e.clipboardData?.items || []);
-			const imageFiles: File[] = [];
-			const pdfFiles: File[] = [];
-
-			for (const item of items) {
-				if (item.type.startsWith('image/')) {
-					const file = item.getAsFile();
-					if (file) {
-						imageFiles.push(file);
-					}
-				} else if (item.type === 'application/pdf') {
-					const file = item.getAsFile();
-					if (file) {
-						pdfFiles.push(file);
-					}
-				}
-			}
-
-			if (imageFiles.length > 0 && onImagePaste) {
-				e.preventDefault();
-				onImagePaste(imageFiles);
-			}
-			if (pdfFiles.length > 0 && onPDFDrop) {
-				e.preventDefault();
-				onPDFDrop(pdfFiles);
-			}
-		};
-
-		const container = containerRef.current || divRef?.current;
-		if (container) {
-			container.addEventListener('paste', handlePaste);
-			return () => {
-				container.removeEventListener('paste', handlePaste);
-			};
-		}
-	}, [divRef, onImagePaste]);
+	// Paste of files (images / PDFs) is handled directly on the textarea via onPaste prop in VibeInputBox2 —
+	// container-level paste listener was removed because it duplicated processing in bubble phase.
 
 	// Throttle drag over events to prevent jank
 	const lastDragOverTimeRef = React.useRef<number>(0);
@@ -1588,10 +1622,16 @@ const UserMessageComponent = ({ chatMessage, messageIdx, isCheckpointGhost, curr
 			className={`
             text-left rounded-lg max-w-full
             ${mode === 'edit' ? ''
-					: mode === 'display' ? 'p-2 flex flex-col bg-vibe-bg-1 text-vibe-fg-1 overflow-x-auto cursor-pointer' : ''
+					: mode === 'display' ? 'p-2 flex flex-col bg-vibe-bg-1 text-vibe-fg-1 overflow-x-auto cursor-pointer select-text' : ''
 				}
         `}
-			onClick={() => { if (mode === 'display') { onOpenEdit() } }}
+			onClick={() => {
+				if (mode !== 'display') return
+				// Don't open edit mode if the user is selecting text inside the bubble.
+				const sel = typeof window !== 'undefined' ? window.getSelection() : null
+				if (sel && !sel.isCollapsed && sel.toString().length > 0) return
+				onOpenEdit()
+			}}
 		>
 			{chatbubbleContents}
 		</div>
@@ -1630,6 +1670,7 @@ const UserMessageComponent = ({ chatMessage, messageIdx, isCheckpointGhost, curr
 
 const SmallProseWrapper = ({ children }: { children: React.ReactNode }) => {
 	return <div className='
+select-text
 text-vibe-fg-4
 prose
 prose-sm
@@ -1692,6 +1733,7 @@ prose-table:text-[13px]
 
 const ProseWrapper = ({ children }: { children: React.ReactNode }) => {
 	return <div className='
+select-text
 text-vibe-fg-2
 prose
 prose-sm
@@ -1759,7 +1801,7 @@ const AssistantMessageComponent = React.memo(({ chatMessage, isCheckpointGhost, 
 		{/* assistant message */}
 		{chatMessage.displayContent &&
 			<div
-				className={`${isCheckpointGhost ? 'opacity-50' : ''} ${!isCommitted ? 'streaming-content-chunk' : ''}`}
+				className={`select-text ${isCheckpointGhost ? 'opacity-50' : ''} ${!isCommitted ? 'streaming-content-chunk' : ''}`}
 				role={!isCommitted ? "status" : undefined}
 				aria-live={!isCommitted ? "polite" : undefined}
 				aria-atomic={!isCommitted ? "false" : undefined}
@@ -1796,10 +1838,7 @@ const AssistantMessageComponent = React.memo(({ chatMessage, isCheckpointGhost, 
 const ReasoningWrapper = ({ isDoneReasoning, isStreaming, children }: { isDoneReasoning: boolean, isStreaming: boolean, children: React.ReactNode }) => {
 	const isDone = isDoneReasoning || !isStreaming
 	const isWriting = !isDone
-	const [isOpen, setIsOpen] = useState(isWriting)
-	useEffect(() => {
-		if (!isWriting) setIsOpen(false) // if just finished reasoning, close
-	}, [isWriting])
+	const [isOpen, setIsOpen] = useState(false)
 	return <ToolHeaderWrapper title='Reasoning' desc1={isWriting ? <IconLoading state="thinking" inline /> : ''} isOpen={isOpen} onClick={() => setIsOpen(v => !v)}>
 		<ToolChildrenWrapper>
 			<div className='!select-text cursor-auto'>
@@ -4204,23 +4243,19 @@ export const SidebarChat = () => {
 		await addPDFsRaw(files);
 	}, [addPDFsRaw, settingsState]);
 
-	// Wrapper to check vision capabilities before adding images
+	// Always attach images. Surface a non-blocking hint if the selected model isn't vision-capable
+	// so the user can switch models before sending. Parity with PDF behavior.
 	const addImages = useCallback(async (files: File[]) => {
+		await addImagesRaw(files);
+
 		const currentModelSel = settingsState.modelSelectionOfFeature['Chat'];
 
-		// In auto mode, skip vision capability check - the router will select an appropriate model
-		if (currentModelSel?.providerName === 'auto' && currentModelSel?.modelName === 'auto') {
-			await addImagesRaw(files);
-			return;
-		}
+		// In auto mode the router picks a vision-capable model — no warning needed
+		if (currentModelSel?.providerName === 'auto' && currentModelSel?.modelName === 'auto') return;
 
-		// Check if user has vision-capable API keys or Ollama vision models
-		const { isSelectedModelVisionCapable, checkOllamaModelVisionCapable, hasVisionCapableApiKey, hasOllamaVisionModel, isOllamaAccessible } = await import('../util/visionModelHelper.js');
+		const { isSelectedModelVisionCapable, checkOllamaModelVisionCapable, isOllamaAccessible } = await import('../util/visionModelHelper.js');
 
-		// First, check if the currently selected model is vision-capable (synchronous check)
 		let selectedIsVision = isSelectedModelVisionCapable(currentModelSel, settingsState.settingsOfProvider);
-
-		// If Ollama model and not detected by name, query Ollama API directly (async)
 		if (!selectedIsVision && currentModelSel?.providerName === 'ollama') {
 			const ollamaAccessible = await isOllamaAccessible();
 			if (ollamaAccessible) {
@@ -4228,29 +4263,16 @@ export const SidebarChat = () => {
 			}
 		}
 
-		if (selectedIsVision) {
-			// User has selected a vision-capable model, proceed
-			await addImagesRaw(files);
-			return;
-		}
-
-		// If not selected, check if they have any vision-capable options available
-		const hasApiKey = hasVisionCapableApiKey(settingsState.settingsOfProvider, currentModelSel);
-		const ollamaAccessible = await isOllamaAccessible();
-		const hasOllamaVision = ollamaAccessible && await hasOllamaVisionModel();
-
-		if (!hasApiKey && !hasOllamaVision) {
-			// Show notification with option to open Ollama setup
+		if (!selectedIsVision) {
 			const notificationService = accessor.get('INotificationService');
 			const commandService = accessor.get('ICommandService');
-
 			notificationService.notify({
-				severity: 2, // Severity.Warning
-				message: 'No vision-capable models available. Please set up an API key (Anthropic, OpenAI, or Gemini) or install an Ollama vision model (e.g., llava, bakllava).',
+				severity: 1, // Severity.Info
+				message: 'The currently selected model may not support images. Switch to a vision-capable model (Claude, GPT-4, Gemini, or an Ollama vision model like llava) to use the attached image.',
 				actions: {
 					primary: [{
 						id: 'vibe.vision.setup',
-						label: 'Setup Ollama Vision Models',
+						label: 'Open settings',
 						tooltip: '',
 						class: undefined,
 						enabled: true,
@@ -4258,11 +4280,7 @@ export const SidebarChat = () => {
 					}],
 				},
 			});
-			return;
 		}
-
-		// User has vision support available but not selected, proceed anyway (they might switch models)
-		await addImagesRaw(files);
 	}, [addImagesRaw, settingsState, accessor]);
 
 	// Compute isDisabled - ensure it's reactive to settings changes
@@ -4286,6 +4304,8 @@ export const SidebarChat = () => {
 		// use subscribed state - currentThread.id is already from subscribed state
 		const threadId = currentThread.id
 
+		// hoisted: used both inside the @-resolver try-block and later in vision/PDF validation
+		const notificationService = accessor.get('INotificationService')
 
 		// send message to LLM
 		const userMessage = _forceSubmit || textAreaRef.current?.value || ''
@@ -4298,7 +4318,6 @@ export const SidebarChat = () => {
 				const editorService = accessor.get('IEditorService')
 				const languageService = accessor.get('ILanguageService')
 				const historyService = accessor.get('IHistoryService')
-				const notificationService = accessor.get('INotificationService')
 				const fileService = accessor.get('IFileService')
 				let outlineService: any = undefined
 				try { outlineService = accessor.get('IOutlineModelService') } catch {}
@@ -4532,22 +4551,21 @@ export const SidebarChat = () => {
 
 			// In auto mode, check if user has any vision-capable models available
 			if (currentModelSel.providerName === 'auto' && currentModelSel.modelName === 'auto') {
-				// Images require vision-capable models (no fallback)
+				// Images need vision-capable models — warn but don't block (the provider will surface its own error if it can't process the image)
 				if (images.length > 0) {
-					const hasApiKey = hasVisionCapableApiKey(settingsState.settingsOfProvider, currentModelSel);
+					const hasApiKey = hasVisionCapableApiKey(settingsState.settingsOfProvider, currentModelSel, settingsState.overridesOfModel);
 					const ollamaAccessible = await isOllamaAccessible();
 					const hasOllamaVision = ollamaAccessible && await hasOllamaVisionModel();
 
 					if (!hasApiKey && !hasOllamaVision) {
-						notificationService.error('No vision-capable models available. Please set up an API key (Anthropic, OpenAI, or Gemini) or install an Ollama vision model (e.g., llava, bakllava) to use images.');
-						return;
+						notificationService.warn('No vision-capable models detected. The image will be sent, but the model may not be able to read it. Set up an API key (Claude, GPT-4, Gemini) or an Ollama vision model (llava, bakllava) for proper image support.');
 					}
 				}
 				// PDFs can work with non-vision models via text extraction, so we allow them even without vision-capable models
 				// If vision-capable models are available, router will select appropriate model
 			} else {
 				// For non-auto mode, check if the selected model is vision-capable
-				let isVisionCapable = isSelectedModelVisionCapable(currentModelSel, settingsState.settingsOfProvider);
+				let isVisionCapable = isSelectedModelVisionCapable(currentModelSel, settingsState.settingsOfProvider, settingsState.overridesOfModel);
 
 				// If Ollama, check via API
 				if (!isVisionCapable && currentModelSel.providerName === 'ollama') {
@@ -4557,18 +4575,15 @@ export const SidebarChat = () => {
 					}
 				}
 
-				// If not vision-capable, show error
-				if (!isVisionCapable) {
-					const hasApiKey = hasVisionCapableApiKey(settingsState.settingsOfProvider, currentModelSel);
-					const ollamaAccessible = await isOllamaAccessible();
-					const hasOllamaVision = ollamaAccessible && await hasOllamaVisionModel();
-
-					if (!hasApiKey && !hasOllamaVision) {
-						notificationService.error('The selected model does not support images or PDFs. Please select a vision-capable model (e.g., Claude, GPT-4, Gemini, or an Ollama vision model like llava).');
-						return;
-					} else {
-						notificationService.warn('The selected model may not support images or PDFs. Consider switching to a vision-capable model for better results.');
-					}
+				// Hard-block when an image is attached to a non-vision model — silently dropping
+				// images and continuing causes the model to hallucinate "what it sees" based on
+				// the system prompt. PDFs are extracted to text upstream, so they keep flowing.
+				if (!isVisionCapable && images.length > 0) {
+					notificationService.error(`Выбранная модель (${currentModelSel.providerName}/${currentModelSel.modelName}) не поддерживает изображения. Переключитесь на vision-модель (Claude, GPT-4o/4.1/5, Gemini, vision-модель OpenRouter или Ollama llava/bakllava) либо удалите вложение.`);
+					return;
+				}
+				if (!isVisionCapable && pdfs.length > 0) {
+					notificationService.warn('Выбранная модель может не поддерживать PDF. Текст из PDF будет извлечён и отправлен — для PDF с большим количеством картинок выберите vision-модель.');
 				}
 			}
 		}
@@ -4655,17 +4670,32 @@ export const SidebarChat = () => {
 	// Don't show when idle/undefined to prevent duplicate messages and never-ending loading
 	// Only show stop button when actively running (LLM, tool, preparing), not when idle
 	const isActivelyStreaming = isRunning === 'LLM' || isRunning === 'tool' || isRunning === 'preparing'
-	const currStreamingMessageHTML = isActivelyStreaming && (reasoningSoFar || displayContentSoFar) ?
-		<ChatBubble
-			key={'curr-streaming-msg'}
-			currCheckpointIdx={currCheckpointIdx}
-			chatMessage={streamingChatMessage}
-			messageIdx={streamingChatIdx}
-			isCommitted={false}
-			chatIsRunning={isRunning}
-			threadId={threadId}
-			_scrollToBottom={null}
-		/> : null
+	const isWaitingForModelSentinel = isActivelyStreaming
+		&& displayContentSoFar === WAITING_FOR_MODEL_RESPONSE_SENTINEL
+		&& !reasoningSoFar
+	const currStreamingMessageHTML = isWaitingForModelSentinel ?
+		<ProseWrapper key={'curr-streaming-msg'}>
+			<div
+				className="flex items-center gap-2 loading-state-transition"
+				role="status"
+				aria-live="polite"
+				aria-atomic="true"
+			>
+				<IconLoading state="thinking" />
+				<span className="text-sm text-vibe-fg-2 opacity-80">Waiting for model response</span>
+			</div>
+		</ProseWrapper>
+		: isActivelyStreaming && (reasoningSoFar || displayContentSoFar) ?
+			<ChatBubble
+				key={'curr-streaming-msg'}
+				currCheckpointIdx={currCheckpointIdx}
+				chatMessage={streamingChatMessage}
+				messageIdx={streamingChatIdx}
+				isCommitted={false}
+				chatIsRunning={isRunning}
+				threadId={threadId}
+				_scrollToBottom={null}
+			/> : null
 
 
 	// the tool currently being generated
@@ -4692,6 +4722,15 @@ export const SidebarChat = () => {
 		{/* previous messages */}
 		{previousMessagesHTML}
 		{currStreamingMessageHTML}
+
+		{/* Stall recovery banner — shown when the LLM watchdog detects no new tokens within EARLY_STALL_MS */}
+		{currThreadStreamState?.isRunning === 'LLM' && currThreadStreamState.stallInfo ? (
+			<StallBanner
+				stalledAt={currThreadStreamState.stallInfo.stalledAt}
+				onAbort={() => { chatThreadsService.abortRunning(threadId) }}
+				onRetry={() => { chatThreadsService.retryStalledStream(threadId) }}
+			/>
+		) : null}
 
 		{/* Generating tool */}
 		{generatingTool}
@@ -4884,7 +4923,6 @@ export const SidebarChat = () => {
 				</>
 			) : null
 		}
-		onImagePaste={addImages}
 		onImageDrop={addImages}
 		onPDFDrop={addPDFs}
 		pdfAttachments={
@@ -4918,6 +4956,12 @@ export const SidebarChat = () => {
 			ref={textAreaRef}
 			fnsRef={textAreaFnsRef}
 			multiline={true}
+			onPasteFiles={(files) => {
+				const images = files.filter(f => f.type.startsWith('image/'))
+				const pdfs = files.filter(f => f.type === 'application/pdf')
+				if (images.length > 0) addImages(images)
+				if (pdfs.length > 0) addPDFs(pdfs)
+			}}
 		/>
 
 		{/* Context chips for current selections */}
