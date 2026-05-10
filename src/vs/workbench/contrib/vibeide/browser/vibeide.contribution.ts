@@ -366,6 +366,12 @@ import '../common/vibeProviderStatusService.js'
 // VibeIDE: @web/@docs context service (DuckDuckGo search)
 import '../common/vibeWebContextService.js'
 
+// VibeIDE: @search context service (workspace literal grep, no LLM)
+import '../common/vibeSearchContextService.js'
+
+// VibeIDE: Session memory per chat thread (DI wrapper over sessionMemoryPerThread.ts)
+import '../common/vibeSessionMemoryService.js'
+
 // VibeIDE: @diagram mention + picker + LLM context injection (§ F roadmap @diagram)
 import './vibeDiagramContextContribution.js'
 
