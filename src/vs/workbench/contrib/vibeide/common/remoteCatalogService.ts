@@ -350,18 +350,6 @@ export class RemoteCatalogService implements IRemoteCatalogService {
 		return this.fetchOpenAICompatibleModelsCatalog('https://api.deepseek.com/v1/models', apiKey);
 	}
 
-	/**
-	 * OpenRouter models whose `architecture.input_modalities` advertises image support
-	 * but the upstream provider silently drops the image and returns text-only completion
-	 * (typically free-tier endpoints). Force `supportsVision = false` so the hard-block engages.
-	 *
-	 * Add a model id here only after confirming the user reports system-prompt-derived
-	 * hallucinations rather than image-grounded answers. Keep entries narrow.
-	 */
-	private static readonly OPENROUTER_VISION_BLACKLIST: ReadonlySet<string> = new Set([
-		'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free',
-	]);
-
 	private async fetchOpenRouterCatalog(apiKey: string | undefined): Promise<RemoteModelInfo[]> {
 		const headers: IHeaders = {};
 		if (apiKey?.trim()) {
@@ -375,9 +363,7 @@ export class RemoteCatalogService implements IRemoteCatalogService {
 			// Older snapshots used `modalities` — keep as legacy fallback so cached/older payloads still resolve.
 			const arch = (model as { architecture?: { input_modalities?: string[]; output_modalities?: string[]; modalities?: string[] } }).architecture;
 			const inputMods = arch?.input_modalities ?? arch?.modalities;
-			const supportsVision = RemoteCatalogService.OPENROUTER_VISION_BLACKLIST.has(id)
-				? false
-				: inputMods?.includes('image');
+			const supportsVision = inputMods?.includes('image');
 			return {
 				id,
 				name: nameStr,
