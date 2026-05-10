@@ -25,6 +25,8 @@ import { IHostService } from '../../../services/host/browser/host.js';
 import { IFolderToOpen, IWorkspaceToOpen } from '../../../../platform/window/common/window.js';
 import { IVibeProjectsEntry, IVibeProjectsService } from './vibeProjectsService.js';
 import { URI } from '../../../../base/common/uri.js';
+import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
+import { isLinux } from '../../../../base/common/platform.js';
 
 const $ = DOM.$;
 const ROW_TEMPLATE = 'vibeProjects.row';
@@ -45,6 +47,8 @@ class VibeProjectsListDelegate implements IListVirtualDelegate<IVibeProjectsEntr
 class VibeProjectsListRenderer implements IListRenderer<IVibeProjectsEntry, IRowTemplate> {
 	readonly templateId = ROW_TEMPLATE;
 
+	constructor(private readonly _getActivePath: () => string | undefined) { }
+
 	renderTemplate(container: HTMLElement): IRowTemplate {
 		const row = DOM.append(container, $('.vibe-projects-slot-row'));
 		const primary = DOM.append(row, $('span.vibe-projects-slot-label'));
@@ -54,10 +58,25 @@ class VibeProjectsListRenderer implements IListRenderer<IVibeProjectsEntry, IRow
 	renderElement(entry: IVibeProjectsEntry, _index: number, data: IRowTemplate): void {
 		data.primary.textContent = entry.label;
 		data.primary.title = entry.target.fsPath || entry.target.toString(true);
+		const row = data.primary.parentElement;
+		if (!row) {
+			return;
+		}
+		const active = this._getActivePath();
+		const candidate = normalizePath(entry.target.fsPath || entry.target.path);
+		row.classList.toggle('active', !!active && candidate === active);
 	}
 
 	disposeTemplate(_data: IRowTemplate): void {
 	}
+}
+
+function normalizePath(p: string): string {
+	const folded = p.replace(/\\/g, '/').replace(/\/+$/, '');
+	const stripped = (folded.length > 1 && folded[0] === '/' && /^\/[a-zA-Z]:/.test(folded))
+		? folded.slice(1)
+		: folded;
+	return isLinux ? stripped : stripped.toLowerCase();
 }
 
 export class VibeProjectsViewPane extends ViewPane {
@@ -80,9 +99,19 @@ export class VibeProjectsViewPane extends ViewPane {
 		@IHoverService hoverService: IHoverService,
 		@IVibeProjectsService private readonly _registry: IVibeProjectsService,
 		@IHostService private readonly _host: IHostService,
+		@IWorkspaceContextService private readonly _workspaceContextService: IWorkspaceContextService,
 	) {
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
 		this._register(this.onDidChangeViewWelcomeState(() => this._syncRosterHostVisibility()));
+		this._register(this._workspaceContextService.onDidChangeWorkspaceFolders(() => void this._paint()));
+	}
+
+	private _activeWorkspacePath(): string | undefined {
+		const folders = this._workspaceContextService.getWorkspace().folders;
+		if (folders.length === 0) {
+			return undefined;
+		}
+		return normalizePath(folders[0].uri.fsPath);
 	}
 
 	override shouldShowWelcome(): boolean {
@@ -100,7 +129,7 @@ export class VibeProjectsViewPane extends ViewPane {
 		this._bodyDom = DOM.append(container, $('.vibe-projects-body'));
 		this._syncRosterHostVisibility();
 		const delegate = new VibeProjectsListDelegate();
-		const renderer = new VibeProjectsListRenderer();
+		const renderer = new VibeProjectsListRenderer(() => this._activeWorkspacePath());
 		const listOptions: IWorkbenchListOptions<IVibeProjectsEntry> = {
 			identityProvider: { getId: e => e.id },
 			multipleSelectionSupport: false,

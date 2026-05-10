@@ -677,3 +677,9 @@ body.monaco-workbench,
 .monaco-workbench .codicon-vibeide-neon-editor-glow-off::before {
 	font-weight: 900 !important;
 }
+
+/* Active workspace highlight in Vibe Projects pane */
+.vibe-projects-slot-row.active .vibe-projects-slot-label {
+	color: var(--vscode-charts-green);
+	font-weight: 600;
+}
