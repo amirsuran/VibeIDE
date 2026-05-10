@@ -660,7 +660,13 @@ export const ModelDump = ({ filteredProviders }: { filteredProviders?: ProviderN
 			const q = (modelSearchByProvider[providerName] ?? '').trim().toLowerCase();
 			const models = q.length === 0
 				? afterActive
-				: afterActive.filter(m => m.modelName.toLowerCase().includes(q));
+				: afterActive.filter(m => {
+					if (m.modelName.toLowerCase().includes(q)) return true;
+					// Modality from catalog override (e.g. "text+image->text") — matches "image", "audio", "video", "text".
+					const modality = settingsState.overridesOfModel?.[providerName]?.[m.modelName]?.modality;
+					if (typeof modality === 'string' && modality.toLowerCase().includes(q)) return true;
+					return false;
+				});
 			const expanded = expandedByProvider[providerName] ?? false;
 			const providerTitle = displayInfoOfProviderName(providerName).title;
 			const countInParens = q.length > 0
