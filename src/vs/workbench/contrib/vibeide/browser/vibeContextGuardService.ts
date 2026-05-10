@@ -8,8 +8,36 @@ import { Emitter, Event } from '../../../../base/common/event.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { registerSingleton, InstantiationType } from '../../../../platform/instantiation/common/extensions.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+import { Registry } from '../../../../platform/registry/common/platform.js';
+import { IConfigurationRegistry, Extensions as ConfigurationExtensions } from '../../../../platform/configuration/common/configurationRegistry.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { localize } from '../../../../nls.js';
+
+// ── Configuration ─────────────────────────────────────────────────────────────
+// Surface the context-guard thresholds in VS Code's Settings UI. Without this
+// block both keys read below by the constructor exist only via the `??`
+// defaults (75% / 90%), so users never see them in the editor and can't tune
+// when the warning/critical events fire. Defaults match the in-code fallbacks.
+
+Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({
+	id: 'vibeide',
+	properties: {
+		'vibeide.context.warningThresholdPercent': {
+			type: 'number',
+			default: 75,
+			minimum: 50,
+			maximum: 95,
+			description: localize('vibeide.context.warningThresholdPercent', 'Процент заполнения контекстного окна, при котором показывается non-blocking warning о приближающемся лимите. По умолчанию 75%. Должен быть ниже `criticalThresholdPercent`.'),
+		},
+		'vibeide.context.criticalThresholdPercent': {
+			type: 'number',
+			default: 90,
+			minimum: 60,
+			maximum: 99,
+			description: localize('vibeide.context.criticalThresholdPercent', 'Процент заполнения контекстного окна, при котором mid-task поднимается blocking-диалог "compact / continue / cancel + снапшот". По умолчанию 90%. Должен быть выше `warningThresholdPercent`.'),
+		},
+	},
+});
 
 export type ContextLimitAction = 'compact' | 'continue' | 'cancel';
 

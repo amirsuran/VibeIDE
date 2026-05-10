@@ -8,7 +8,27 @@ import { Emitter, Event } from '../../../../base/common/event.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { registerSingleton, InstantiationType } from '../../../../platform/instantiation/common/extensions.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+import { Registry } from '../../../../platform/registry/common/platform.js';
+import { IConfigurationRegistry, Extensions as ConfigurationExtensions } from '../../../../platform/configuration/common/configurationRegistry.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
+import { localize } from '../../../../nls.js';
+
+// ── Configuration ─────────────────────────────────────────────────────────────
+// Surface the ambient-agent master flag in VS Code's Settings UI. Without this
+// block the key read by the service exists only via `?? false` fallback, so
+// users never see it in the editor and can't opt in to background monitoring
+// without editing settings.json by hand.
+
+Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({
+	id: 'vibeide',
+	properties: {
+		'vibeide.ambientAgent.enabled': {
+			type: 'boolean',
+			default: false,
+			description: localize('vibeide.ambientAgent.enabled', 'Включить ambient agent — фоновый мониторинг workspace (file changes, build errors, missing tests, outdated dependencies) с автоматическими подсказками. Off-by-default — фоновая аналитика и автоматические notification расцениваются как opt-in поведение.'),
+		},
+	},
+});
 
 export interface AmbientSuggestion {
 	type: 'missing_test' | 'high_complexity' | 'security_issue' | 'outdated_dep';

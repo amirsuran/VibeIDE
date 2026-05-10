@@ -8,9 +8,41 @@ import { Emitter, Event } from '../../../../base/common/event.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { registerSingleton, InstantiationType } from '../../../../platform/instantiation/common/extensions.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+import { Registry } from '../../../../platform/registry/common/platform.js';
+import { IConfigurationRegistry, Extensions as ConfigurationExtensions } from '../../../../platform/configuration/common/configurationRegistry.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { localize } from '../../../../nls.js';
 import { IVibeAgentTaskQueueService } from './vibeAgentTaskQueueService.js';
+
+// ── Configuration ─────────────────────────────────────────────────────────────
+// Surface the token-budget safety knobs in VS Code's Settings UI. Without this
+// block all three keys read below by the constructor exist only via the `??`
+// defaults, so users never see them in the editor and can't adjust the
+// per-session token cap without editing settings.json by hand. Defaults match
+// the in-code fallbacks (and `DEFAULT_TOKEN_LIMIT` below).
+
+Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({
+	id: 'vibeide',
+	properties: {
+		'vibeide.safety.sessionTokenLimitEnabled': {
+			type: 'boolean',
+			default: true,
+			description: localize('vibeide.safety.sessionTokenLimitEnabled', 'Включить per-session лимит токенов как safety guard. При превышении агентский запрос блокируется до явного reset через action в warning toast. Отключение полностью снимает session-level token gate (per-task split всё ещё применяется, если включён).'),
+		},
+		'vibeide.safety.sessionTokenLimit': {
+			type: 'number',
+			default: 500_000,
+			minimum: 10_000,
+			maximum: 100_000_000,
+			description: localize('vibeide.safety.sessionTokenLimit', 'Максимум input+output токенов на одну chat-сессию (default 500 000 ≈ $20 при усреднённой стоимости). Применяется только когда `sessionTokenLimitEnabled` = true.'),
+		},
+		'vibeide.safety.taskQueueTokenSplitEnabled': {
+			type: 'boolean',
+			default: false,
+			description: localize('vibeide.safety.taskQueueTokenSplitEnabled', 'Делить session-лимит между активными задачами очереди (`IVibeAgentTaskQueueService`) пропорционально, чтобы одна задача не съела весь budget. Off-by-default: для одно-таскового флоу не нужен.'),
+		},
+	},
+});
 
 export interface TokenBudgetStatus {
 	sessionTokensUsed: number;

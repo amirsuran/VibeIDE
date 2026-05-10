@@ -8,6 +8,26 @@ import { createDecorator } from '../../../../platform/instantiation/common/insta
 import { registerSingleton, InstantiationType } from '../../../../platform/instantiation/common/extensions.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+import { Registry } from '../../../../platform/registry/common/platform.js';
+import { IConfigurationRegistry, Extensions as ConfigurationExtensions } from '../../../../platform/configuration/common/configurationRegistry.js';
+import { localize } from '../../../../nls.js';
+
+// ── Configuration ─────────────────────────────────────────────────────────────
+// Surface the autocomplete explainability flag in VS Code's Settings UI.
+// Without this block the key read by `isEnabled()` exists only via `?? false`
+// fallback, so users never see it in the editor and can't opt in to «why
+// suggested» hover overlays without editing settings.json by hand.
+
+Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({
+	id: 'vibeide',
+	properties: {
+		'vibeide.autocomplete.explainability': {
+			type: 'boolean',
+			default: false,
+			description: localize('vibeide.autocomplete.explainability', 'Включить «почему предложено» hover для autocomplete-подсказок: при наведении на suggestion показывается, какой контекст и какие сигналы повлияли на ранжирование. Off-by-default — добавляет вычислительный overhead на каждое предложение.'),
+		},
+	},
+});
 
 export const IVibeAutocompleteExplainService = createDecorator<IVibeAutocompleteExplainService>('vibeAutocompleteExplainService');
 

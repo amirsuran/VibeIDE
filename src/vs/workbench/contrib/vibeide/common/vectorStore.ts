@@ -6,7 +6,41 @@
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { registerSingleton, InstantiationType } from '../../../../platform/instantiation/common/extensions.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+import { Registry } from '../../../../platform/registry/common/platform.js';
+import { IConfigurationRegistry, Extensions as ConfigurationExtensions } from '../../../../platform/configuration/common/configurationRegistry.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
+import { localize } from '../../../../nls.js';
+
+// ── Configuration ─────────────────────────────────────────────────────────────
+// Surface vector-store / RAG settings in VS Code's Settings UI. Without this
+// block both keys read by `VectorStoreService` and the per-provider classes
+// exist only via `||` fallbacks, so users never see them in the editor and
+// can't switch from the built-in JS implementation to qdrant/chroma without
+// editing settings.json by hand. Enum values must stay aligned with the
+// `getValue<...>` literal type below.
+
+Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({
+	id: 'vibeide',
+	properties: {
+		'vibeide.rag.vectorStore': {
+			type: 'string',
+			enum: ['built-in', 'none', 'qdrant', 'chroma'],
+			enumDescriptions: [
+				localize('vibeide.rag.vectorStore.builtIn', 'Встроенный JS-cosine vector store без внешних зависимостей. ~50k чанков; для большинства проектов достаточно. Рекомендуется.'),
+				localize('vibeide.rag.vectorStore.none', 'Отключить semantic search полностью. Поиск работает только через `@search` (literal grep) и `@file`.'),
+				localize('vibeide.rag.vectorStore.qdrant', 'Внешний Qdrant сервер. Требует поднятого инстанса (default URL `http://localhost:6333`); масштабируется на крупные monorepo.'),
+				localize('vibeide.rag.vectorStore.chroma', 'Внешний Chroma сервер. Требует поднятого инстанса (default URL `http://localhost:8000`).'),
+			],
+			default: 'built-in',
+			description: localize('vibeide.rag.vectorStore', 'Backend для semantic search / RAG. `built-in` (default) — JS cosine, без сетевых зависимостей; `qdrant`/`chroma` — внешние векторные БД для крупных проектов; `none` — полное отключение RAG-pipeline.'),
+		},
+		'vibeide.rag.vectorStoreUrl': {
+			type: 'string',
+			default: '',
+			description: localize('vibeide.rag.vectorStoreUrl', 'Endpoint внешнего vector store (актуально только для `vectorStore: qdrant | chroma`). Пустая строка — использовать per-provider default (qdrant: `http://localhost:6333`, chroma: `http://localhost:8000`).'),
+		},
+	},
+});
 
 export interface VectorDocument {
 	id: string; // Unique document ID (e.g., file path + chunk index)

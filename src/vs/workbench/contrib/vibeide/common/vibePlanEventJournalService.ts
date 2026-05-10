@@ -9,9 +9,29 @@ import { createDecorator } from '../../../../platform/instantiation/common/insta
 import { IFileService } from '../../../../platform/files/common/files.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+import { Registry } from '../../../../platform/registry/common/platform.js';
+import { IConfigurationRegistry, Extensions as ConfigurationExtensions } from '../../../../platform/configuration/common/configurationRegistry.js';
 import { joinPath } from '../../../../base/common/resources.js';
 import { VSBuffer } from '../../../../base/common/buffer.js';
 import { URI } from '../../../../base/common/uri.js';
+import { localize } from '../../../../nls.js';
+
+// ── Configuration ─────────────────────────────────────────────────────────────
+// Surface the plan-events journal master flag in VS Code's Settings UI.
+// Without this block the key read by `append()` exists only via `?? true`
+// fallback, so users never see it in the editor and can't opt out of writing
+// plan-step events to disk without editing settings.json by hand.
+
+Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({
+	id: 'vibeide',
+	properties: {
+		'vibeide.planEventsJournal.enable': {
+			type: 'boolean',
+			default: true,
+			description: localize('vibeide.planEventsJournal.enable', 'Писать append-only JSONL журнал plan-step событий (`plan_started`, `plan_step_completed`, `plan_failed`, `plan_resumed`) в `.vibe/plan-events.jsonl`. On-by-default — нужен для resume после reload и для runbook-сценариев; отключение полностью убирает запись на диск.'),
+		},
+	},
+});
 
 export const IVibePlanEventJournalService = createDecorator<IVibePlanEventJournalService>('vibePlanEventJournalService');
 

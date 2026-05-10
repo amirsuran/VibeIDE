@@ -210,6 +210,13 @@ export type ModelOverrides = Pick<
 >
 
 
+// Heuristic free-tier detection — programmatic signals only, no network.
+// 1) Pollinations is free by design.
+// 2) `:free` suffix is the OpenRouter convention; LM Router preserves it when it proxies OpenRouter ids.
+export const isFreeModel = (providerName: ProviderName, modelName: string): boolean => {
+	if (providerName === 'pollinations') { return true; }
+	return modelName.toLowerCase().endsWith(':free');
+};
 
 
 type ProviderReasoningIOSettings = {

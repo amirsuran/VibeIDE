@@ -8,7 +8,28 @@ import { Emitter, Event } from '../../../../base/common/event.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { registerSingleton, InstantiationType } from '../../../../platform/instantiation/common/extensions.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+import { Registry } from '../../../../platform/registry/common/platform.js';
+import { IConfigurationRegistry, Extensions as ConfigurationExtensions } from '../../../../platform/configuration/common/configurationRegistry.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
+import { localize } from '../../../../nls.js';
+
+// ── Configuration ─────────────────────────────────────────────────────────────
+// Surface the stealth-mode master flag in VS Code's Settings UI. Without this
+// block the key read by `isEnabled()` exists only via `?? false` fallback, so
+// users never see it in the editor and can't toggle privacy-strict mode
+// without editing settings.json by hand. Also read by `vibeVoiceInputService`
+// as a privacy gate; registration here is the single source of truth.
+
+Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({
+	id: 'vibeide',
+	properties: {
+		'vibeide.stealthMode.enabled': {
+			type: 'boolean',
+			default: false,
+			description: localize('vibeide.stealthMode.enabled', 'Privacy-strict режим: блокирует облачные запросы (LLM-провайдеры с remote endpoint, embedding API, web search), embeddings считаются только локально, audit log не пишет cloud-paths. Off-by-default — явный opt-in для privacy-чувствительных сценариев.'),
+		},
+	},
+});
 
 export const IVibeStealthModeService = createDecorator<IVibeStealthModeService>('vibeStealthModeService');
 

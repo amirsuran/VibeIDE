@@ -7,7 +7,27 @@ import { Disposable } from '../../../../base/common/lifecycle.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { registerSingleton, InstantiationType } from '../../../../platform/instantiation/common/extensions.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+import { Registry } from '../../../../platform/registry/common/platform.js';
+import { IConfigurationRegistry, Extensions as ConfigurationExtensions } from '../../../../platform/configuration/common/configurationRegistry.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
+import { localize } from '../../../../nls.js';
+
+// ── Configuration ─────────────────────────────────────────────────────────────
+// Surface the structured-output mode flag in VS Code's Settings UI. Without
+// this block the key read by `_updateConfiguration` exists only via `?? false`
+// fallback, so users never see it in the editor and can't pipe agent events
+// to a SIEM / observability stack without editing settings.json by hand.
+
+Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({
+	id: 'vibeide',
+	properties: {
+		'vibeide.output.structuredMode': {
+			type: 'boolean',
+			default: false,
+			description: localize('vibeide.output.structuredMode', 'Эмитить каждое агентское действие как newline-delimited JSON event в stdout — формат, готовый для SIEM/Splunk/Datadog и custom observability-dashboard. Off-by-default: предназначен для headless/CI и observability-сценариев, не для интерактивного использования.'),
+		},
+	},
+});
 
 export interface StructuredAgentEvent {
 	timestamp: string;

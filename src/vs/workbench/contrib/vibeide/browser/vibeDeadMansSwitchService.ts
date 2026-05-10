@@ -8,8 +8,29 @@ import { Emitter, Event } from '../../../../base/common/event.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { registerSingleton, InstantiationType } from '../../../../platform/instantiation/common/extensions.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+import { Registry } from '../../../../platform/registry/common/platform.js';
+import { IConfigurationRegistry, Extensions as ConfigurationExtensions } from '../../../../platform/configuration/common/configurationRegistry.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { localize } from '../../../../nls.js';
+
+// ── Configuration ─────────────────────────────────────────────────────────────
+// Surface the dead-man's-switch timeout in VS Code's Settings UI. Without this
+// block the key read by the constructor exists only via the `?? DMS_DEFAULT_TIMEOUT_MINUTES`
+// fallback, so users never see it in the editor and can't tune (or disable)
+// the agent timeout without editing settings.json by hand.
+
+Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({
+	id: 'vibeide',
+	properties: {
+		'vibeide.safety.deadMansSwitchMinutes': {
+			type: 'number',
+			default: 5,
+			minimum: 0,
+			maximum: 60,
+			description: localize('vibeide.safety.deadMansSwitchMinutes', 'Таймаут dead-mans switch в минутах: запущенная агентская сессия без явного Approve в течение этого окна автоматически приостанавливается. `0` отключает DMS целиком; значения <1 (но >0) runtime приводит к минимуму 1 мин (`DMS_MIN_TIMEOUT_MINUTES`). Default 5 мин.'),
+		},
+	},
+});
 
 export const IVibeDeadMansSwitchService = createDecorator<IVibeDeadMansSwitchService>('vibeDeadMansSwitchService');
 

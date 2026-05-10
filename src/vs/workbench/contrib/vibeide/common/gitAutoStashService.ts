@@ -7,6 +7,8 @@ import { Disposable } from '../../../../base/common/lifecycle.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { registerSingleton, InstantiationType } from '../../../../platform/instantiation/common/extensions.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+import { Registry } from '../../../../platform/registry/common/platform.js';
+import { IConfigurationRegistry, Extensions as ConfigurationExtensions } from '../../../../platform/configuration/common/configurationRegistry.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { IAuditLogService } from './auditLogService.js';
 import { INotificationService } from '../../../../platform/notification/common/notification.js';
@@ -15,6 +17,35 @@ import Severity from '../../../../base/common/severity.js';
 import { IExtensionService } from '../../../services/extensions/common/extensions.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { AutoStashSetting, decodeAutoStashSetting } from './autoStashPolicy.js';
+
+// ── Configuration ─────────────────────────────────────────────────────────────
+// Surface the auto-stash settings in VS Code's Settings UI. Without this block
+// the keys read below by `_updateConfiguration` exist only via the `??` default,
+// so users never see them in the editor and `decodeAutoStashSetting` quietly
+// receives `undefined` on every load. Enum values must stay aligned with
+// `AutoStashSetting` in `autoStashPolicy.ts`.
+
+Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({
+	id: 'vibeide',
+	properties: {
+		'vibeide.safety.autostash.enable': {
+			type: 'boolean',
+			default: true,
+			description: localize('vibeide.safety.autostash.enable', 'Создавать автоматический git stash перед агентскими правками файлов. Отключение полностью выключает auto-stash независимо от режима.'),
+		},
+		'vibeide.safety.autostash.mode': {
+			type: 'string',
+			enum: ['always', 'dirty-only', 'never'],
+			enumDescriptions: [
+				localize('vibeide.safety.autostash.mode.always', 'Стэшить всегда перед каждой группой правок, даже на чистом дереве.'),
+				localize('vibeide.safety.autostash.mode.dirty-only', 'Стэшить только если в целевых файлах есть несохранённые изменения (рекомендуется).'),
+				localize('vibeide.safety.autostash.mode.never', 'Никогда не стэшить автоматически (исключение: файлы с per-file политикой "agent-protected" — для них stash принудительный).'),
+			],
+			default: 'dirty-only',
+			description: localize('vibeide.safety.autostash.mode', 'Когда выполнять автоматический git stash перед агентскими правками. См. references/v1/git-autostash-contract.md для взаимодействия с partial rollback и checkpoint.'),
+		},
+	},
+});
 
 export const IGitAutoStashService = createDecorator<IGitAutoStashService>('gitAutoStashService');
 

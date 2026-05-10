@@ -11,11 +11,38 @@ import { ITextModelService } from '../../../../editor/common/services/resolverSe
 import { URI } from '../../../../base/common/uri.js';
 import { joinPath } from '../../../../base/common/resources.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+import { Registry } from '../../../../platform/registry/common/platform.js';
+import { IConfigurationRegistry, Extensions as ConfigurationExtensions } from '../../../../platform/configuration/common/configurationRegistry.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { IAuditLogService } from './auditLogService.js';
 import { VSBuffer } from '../../../../base/common/buffer.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { IVibeCheckpointCoordinator } from './vibeCheckpointCoordinatorService.js';
+import { localize } from '../../../../nls.js';
+
+// ── Configuration ─────────────────────────────────────────────────────────────
+// Surface rollback-snapshot settings in VS Code's Settings UI. Without this
+// block both keys read by `_updateConfiguration` exist only via the `??`
+// defaults, so users never see them in the editor and can't enable the
+// snapshot/rollback safety net without editing settings.json by hand.
+
+Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({
+	id: 'vibeide',
+	properties: {
+		'vibeide.safety.rollback.enable': {
+			type: 'boolean',
+			default: false,
+			description: localize('vibeide.safety.rollback.enable', 'Включить snapshot/rollback safety net перед агентскими правками. Off-by-default: снапшоты пишутся в `.vibe/snapshots/` и могут занимать заметный объём — включение требует явного согласия.'),
+		},
+		'vibeide.safety.rollback.maxSnapshotBytes': {
+			type: 'number',
+			default: 5_000_000,
+			minimum: 100_000,
+			maximum: 100_000_000,
+			description: localize('vibeide.safety.rollback.maxSnapshotBytes', 'Soft-cap размера одного снапшота в байтах (default 5 МБ). Файлы крупнее не включаются в snapshot — backed off с warning, чтобы `.vibe/snapshots/` не вырос неконтролируемо.'),
+		},
+	},
+});
 
 export interface FileSnapshot {
 	path: string;

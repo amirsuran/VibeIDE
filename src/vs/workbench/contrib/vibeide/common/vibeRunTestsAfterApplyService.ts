@@ -10,6 +10,7 @@ import { registerSingleton, InstantiationType } from '../../../../platform/insta
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { ITerminalService } from '../../../contrib/terminal/browser/terminal.js';
+import { IAuditLogService } from './auditLogService.js';
 
 export interface TestRunResult {
 	command: string;
@@ -48,6 +49,7 @@ class VibeRunTestsAfterApplyService extends Disposable implements IVibeRunTestsA
 		@IConfigurationService private readonly _configurationService: IConfigurationService,
 		@ITerminalService private readonly _terminalService: ITerminalService,
 		@ILogService private readonly _logService: ILogService,
+		@IAuditLogService private readonly _auditLogService: IAuditLogService,
 	) {
 		super();
 	}
@@ -63,6 +65,16 @@ class VibeRunTestsAfterApplyService extends Disposable implements IVibeRunTestsA
 		this._logService.info(`[VibeIDE RunTests] Running: ${command}`);
 
 		const start = Date.now();
+		// Audit on start so the user has a record even if Phase 1 fire-and-forget
+		// terminates without an exit code path.
+		if (this._auditLogService.isEnabled()) {
+			void this._auditLogService.append({
+				ts: start,
+				action: 'run_tests:start',
+				ok: true,
+				meta: { command },
+			});
+		}
 		try {
 			// Create or reuse terminal and run command
 			const terminal = await this._terminalService.createTerminal({
@@ -80,10 +92,29 @@ class VibeRunTestsAfterApplyService extends Disposable implements IVibeRunTestsA
 				durationMs: Date.now() - start,
 			};
 
+			if (this._auditLogService.isEnabled()) {
+				void this._auditLogService.append({
+					ts: Date.now(),
+					action: 'run_tests:complete',
+					ok: true,
+					latencyMs: result.durationMs,
+					meta: { command, exitCode: result.exitCode, passed: result.passed },
+				});
+			}
+
 			this._onTestsCompleted.fire(result);
 			return result;
 		} catch (e) {
 			this._logService.error('[VibeIDE RunTests] Failed to run tests:', e);
+			if (this._auditLogService.isEnabled()) {
+				void this._auditLogService.append({
+					ts: Date.now(),
+					action: 'run_tests:complete',
+					ok: false,
+					latencyMs: Date.now() - start,
+					meta: { command, error: String(e) },
+				});
+			}
 			return null;
 		}
 	}

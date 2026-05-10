@@ -9,12 +9,54 @@ import { registerSingleton, InstantiationType } from '../../../../platform/insta
 import { IFileService } from '../../../../platform/files/common/files.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+import { Registry } from '../../../../platform/registry/common/platform.js';
+import { ConfigurationScope, IConfigurationRegistry, Extensions as ConfigurationExtensions } from '../../../../platform/configuration/common/configurationRegistry.js';
 import { IEnvironmentService } from '../../../../platform/environment/common/environment.js';
 import { URI } from '../../../../base/common/uri.js';
 import { joinPath } from '../../../../base/common/resources.js';
 import { VSBuffer } from '../../../../base/common/buffer.js';
 import { RunOnceScheduler } from '../../../../base/common/async.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
+import { localize } from '../../../../nls.js';
+
+// ── Configuration ─────────────────────────────────────────────────────────────
+// Surface audit-log settings in VS Code's Settings UI. Without this block the
+// keys read below by `_updateConfiguration` (and `vibeide.audit.encryptLogs`
+// read by `vibeAuditEncryptionService.ts`) exist only via the `??` default,
+// so users never see them in the editor and can't toggle audit logging without
+// editing settings.json by hand. Defaults match the in-code fallbacks.
+
+Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({
+	id: 'vibeide',
+	properties: {
+		'vibeide.audit.enable': {
+			type: 'boolean',
+			default: false,
+			scope: ConfigurationScope.APPLICATION,
+			description: localize('vibeide.audit.enable', 'Включить локальный audit log агентских действий (prompts/replies/apply/undo/snapshot/git stash/MCP/subagent/plan-events). Off-by-default; включение требует явного согласия пользователя.'),
+		},
+		'vibeide.audit.path': {
+			type: 'string',
+			default: '',
+			scope: ConfigurationScope.APPLICATION,
+			description: localize('vibeide.audit.path', 'Абсолютный путь к каталогу audit log. Пустая строка — использовать managed userdata путь по умолчанию (рекомендуется). При указании кастомного пути файл создаётся под выбранным каталогом.'),
+		},
+		'vibeide.audit.rotationSizeMB': {
+			type: 'number',
+			default: 10,
+			minimum: 1,
+			maximum: 1000,
+			scope: ConfigurationScope.APPLICATION,
+			description: localize('vibeide.audit.rotationSizeMB', 'Порог ротации audit log в мегабайтах. При превышении текущий файл переименовывается с timestamp суффиксом и стартует новый. Значения вне [1..1000] игнорируются runtime-ом.'),
+		},
+		'vibeide.audit.encryptLogs': {
+			type: 'boolean',
+			default: false,
+			scope: ConfigurationScope.APPLICATION,
+			description: localize('vibeide.audit.encryptLogs', 'Шифровать audit log через Electron safeStorage (per-user OS keychain). Замедляет запись; полезно если каталог логов синхронизируется в облако или подразумевается shared машина.'),
+		},
+	},
+});
 
 export interface AuditEvent {
 	ts: number;
@@ -26,7 +68,8 @@ export interface AuditEvent {
 		| 'browser_run_proposed'
 		| 'mcp_sampling_request'
 		| 'background_job_budget_exceeded'
-		| 'job_pr_creation';
+		| 'job_pr_creation'
+		| 'run_tests:start' | 'run_tests:complete';
 	files?: string[];
 	diffStats?: { linesAdded: number; linesRemoved: number; hunks: number };
 	model?: string;

@@ -8,7 +8,29 @@ import { Emitter, Event } from '../../../../base/common/event.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { registerSingleton, InstantiationType } from '../../../../platform/instantiation/common/extensions.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+import { Registry } from '../../../../platform/registry/common/platform.js';
+import { IConfigurationRegistry, Extensions as ConfigurationExtensions } from '../../../../platform/configuration/common/configurationRegistry.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
+import { localize } from '../../../../nls.js';
+
+// ── Configuration ─────────────────────────────────────────────────────────────
+// Surface the loop-detector threshold in VS Code's Settings UI. Without this
+// block the key read by the constructor exists only via the `?? 3` fallback,
+// so users never see it in the editor and can't tune sensitivity without
+// editing settings.json by hand.
+
+Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({
+	id: 'vibeide',
+	properties: {
+		'vibeide.safety.loopDetectorThreshold': {
+			type: 'number',
+			default: 3,
+			minimum: 2,
+			maximum: 20,
+			description: localize('vibeide.safety.loopDetectorThreshold', 'Сколько повторений одинакового `(type, target)` действия (или цикла `A→B→A`) подряд триггерят auto-pause агентской сессии. Минимум 2 (1 не имеет смысла как loop). Default 3.'),
+		},
+	},
+});
 
 export interface AgentAction {
 	type: string;       // Action type: 'write_file', 'run_command', 'read_file', etc.

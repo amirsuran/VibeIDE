@@ -70,6 +70,29 @@ export class VibeideGlobalSettingsConfigurationContribution extends Disposable i
 					description: localize('vibeide.skills.implicitDescriptionMaxChars', 'Максимум символов на описание скилла в блоке неявных keyword-подсказок. 0 = без ограничений.'),
 					scope: ConfigurationScope.RESOURCE,
 				},
+				'vibeide.skills.workspaceDiscoveryHint': {
+					type: 'boolean',
+					default: true,
+					description: localize('vibeide.skills.workspaceDiscoveryHint', 'Показывать info-уведомление при первом открытии workspace с непустой `.vibe/skills/` директорией, чтобы пользователь знал о доступных проектных скиллах. On-by-default; уведомление показывается один раз на workspace.'),
+					scope: ConfigurationScope.RESOURCE,
+				},
+			},
+		});
+
+		// `vibeide.global.*` — user-wide preferences read from `vibeideSettingsService`.
+		// Source of truth: VS Code configuration; the in-memory `globalSettings.localFirstAI`
+		// mirrors this key via a config-change listener.
+		registry.registerConfiguration({
+			id: 'vibeide.global',
+			title: localize('vibeide.global.title', 'VibeIDE — Глобальные'),
+			type: 'object',
+			properties: {
+				'vibeide.global.localFirstAI': {
+					type: 'boolean',
+					default: false,
+					description: localize('vibeide.global.localFirstAI', 'Предпочитать локальные LLM-провайдеры (Ollama, LM Studio, vLLM) поверх облачных при routing-выборе модели. Off-by-default (cloud-first); включение разворачивает порядок: сначала локальные, при их отсутствии — облако.'),
+					scope: ConfigurationScope.APPLICATION,
+				},
 			},
 		});
 	}

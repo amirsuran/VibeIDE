@@ -296,6 +296,12 @@ import '../common/vibeAiProvenanceConfiguration.js'
 // VibeIDE: Agent response language setting + helper
 import '../common/vibeAgentResponseLanguageConfiguration.js'
 
+// VibeIDE: Agent behaviour knobs (preferJsonToolArguments / terminalOutputAwareness / thinkingOutLoud)
+import '../common/vibeAgentBehaviorConfiguration.js'
+
+// VibeIDE: Project Commands audit privacy flags (vibeide.commands.audit{,Stdout})
+import '../common/commandsAuditPrivacyConfiguration.js'
+
 // VibeIDE: Persisted plan resume (scan .vibe/plans/ on startup, offer to continue interrupted plans)
 import './vibePersistedPlanResumeContribution.js'
 import './vibePersistedPlanDiskEditContribution.js'
