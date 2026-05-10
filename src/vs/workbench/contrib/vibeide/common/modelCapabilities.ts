@@ -145,7 +145,8 @@ export type VibeideStaticModelInfo = { // not stateful
 	supportsSystemMessage: false | 'system-role' | 'developer-role' | 'separated'; // typically you should use 'system-role'. 'separated' means the system message is passed as a separate field (e.g. anthropic)
 	specialToolFormat?: 'openai-style' | 'anthropic-style' | 'gemini-style', // typically you should use 'openai-style'. null means "can't call tools by default", and asks the LLM to output XML in agent mode
 	supportsFIM: boolean; // whether the model was specifically designed for autocomplete or "FIM" ("fill-in-middle" format)
-	supportsVision?: boolean; // image input. Optional — undefined falls back to provider heuristics. Catalog-driven providers (OpenRouter, etc.) populate this from `arch.modalities`.
+	supportsVision?: boolean; // image input. Optional — undefined falls back to provider heuristics. Catalog-driven providers (OpenRouter, etc.) populate this from `architecture.input_modalities`.
+	modality?: string; // display-only literal from catalog (e.g. "text+image->text"). Not used for routing — purely informational, surfaced in the model list UI.
 
 	additionalOpenAIPayload?: { [key: string]: string } // additional payload in the message body for requests that are openai-compatible (ollama, vllm, openai, openrouter, etc)
 
@@ -189,6 +190,7 @@ export const modelOverrideKeys = [
 	'specialToolFormat',
 	'supportsFIM',
 	'supportsVision',
+	'modality',
 	'reasoningCapabilities',
 	'additionalOpenAIPayload'
 ] as const

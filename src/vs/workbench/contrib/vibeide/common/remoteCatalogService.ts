@@ -23,6 +23,8 @@ export interface RemoteModelInfo {
 	supportsVision?: boolean;
 	supportsPDF?: boolean;
 	supportsCode?: boolean;
+	/** OpenRouter-style display literal e.g. "text->text" / "text+image->text" / "text+image+audio+video->text". Display-only. */
+	modality?: string;
 	cost?: {
 		input: number;
 		output: number;
@@ -361,9 +363,10 @@ export class RemoteCatalogService implements IRemoteCatalogService {
 			const nameStr = String((model as { name?: string }).name ?? id);
 			// OpenRouter's current schema is `architecture.input_modalities` (array of "text"|"image"|"audio"|"video"|"file").
 			// Older snapshots used `modalities` — keep as legacy fallback so cached/older payloads still resolve.
-			const arch = (model as { architecture?: { input_modalities?: string[]; output_modalities?: string[]; modalities?: string[] } }).architecture;
+			const arch = (model as { architecture?: { input_modalities?: string[]; output_modalities?: string[]; modalities?: string[]; modality?: string } }).architecture;
 			const inputMods = arch?.input_modalities ?? arch?.modalities;
 			const supportsVision = inputMods?.includes('image');
+			const modality = typeof arch?.modality === 'string' && arch.modality.length > 0 ? arch.modality : undefined;
 			return {
 				id,
 				name: nameStr,
@@ -372,6 +375,7 @@ export class RemoteCatalogService implements IRemoteCatalogService {
 				supportsVision,
 				supportsPDF: inputMods?.includes('file'),
 				supportsCode: nameStr.toLowerCase().includes('code') || nameStr.toLowerCase().includes('coder'),
+				modality,
 				cost: (model as { pricing?: { prompt?: number; completion?: number } }).pricing ? {
 					input: (model as { pricing: { prompt?: number } }).pricing.prompt || 0,
 					output: (model as { pricing: { completion?: number } }).pricing.completion || 0,

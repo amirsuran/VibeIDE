@@ -568,12 +568,18 @@ export const ModelDump = ({ filteredProviders }: { filteredProviders?: ProviderN
 			: type === 'custom' ?
 				<Asterisk size={14} className="inline-block align-text-top brightness-115 stroke-[2] text-[var(--vscode-textLink-foreground)]" data-tooltip-id='vibe-tooltip' data-tooltip-place='right' data-tooltip-content={modelsS.tooltipCustomModel} />
 				: undefined;
-		const hasOverrides = !!settingsState.overridesOfModel?.[providerName]?.[modelName];
+		const overrides = settingsState.overridesOfModel?.[providerName]?.[modelName];
+		const hasOverrides = !!overrides;
+		const modality = typeof overrides?.modality === 'string' ? overrides.modality : undefined;
 		return <div key={`${modelName}${providerName}`}
 			className={`flex items-center justify-between gap-4 hover:bg-[var(--vscode-list-hoverBackground)] py-1 px-3 rounded-xl overflow-hidden cursor-default truncate group`}
 		>
-			<div className={`flex flex-grow items-center gap-4`}>
+			<div className={`flex flex-grow items-center gap-4 min-w-0`}>
 				<span className='w-fit max-w-[400px] truncate'>{modelName}</span>
+				{modality && <>
+					<span className='text-vibe-fg-3 opacity-50 select-none'>·</span>
+					<span className='text-vibe-fg-3 opacity-60 text-xs truncate font-mono'>{modality}</span>
+				</>}
 			</div>
 			<div className="flex items-center gap-2 w-fit">
 				<div className="w-5 flex items-center justify-center">

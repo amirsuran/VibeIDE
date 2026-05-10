@@ -265,6 +265,10 @@ export class RefreshModelService extends Disposable implements IRefreshModelServ
 				if (typeof m.supportsVision === 'boolean') {
 					partial.supportsVision = m.supportsVision;
 				}
+				// Display-only modality literal (e.g. "text+image->text") surfaced in the model list UI.
+				if (typeof m.modality === 'string' && m.modality.length > 0) {
+					partial.modality = m.modality;
+				}
 				if (Object.keys(partial).length) {
 					overrideUpdates[id] = partial;
 				}
