@@ -3,15 +3,19 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { Disposable } from '../../../../base/common/lifecycle.js';
 import { relative } from '../../../../base/common/path.js';
 import { URI } from '../../../../base/common/uri.js';
 import { match as globMatch } from '../../../../base/common/glob.js';
 import { joinPath } from '../../../../base/common/resources.js';
+import { VSBuffer } from '../../../../base/common/buffer.js';
 import { IFileService } from '../../../../platform/files/common/files.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
+import { ILifecycleService } from '../../../services/lifecycle/common/lifecycle.js';
+import { decodeAgentLocks, filterLocksForDisposal } from '../common/agentLockDisposal.js';
 
 /** Conflicting advisory territorial locks for a candidate write path */
 export interface IAgentTerritorialLockConflict {
@@ -29,14 +33,27 @@ export const IVibeAgentTerritorialLockService = createDecorator<IVibeAgentTerrit
 
 type LockEntry = { holder?: unknown; paths?: unknown; until?: unknown };
 
-export class VibeAgentTerritorialLockService implements IVibeAgentTerritorialLockService {
+export class VibeAgentTerritorialLockService extends Disposable implements IVibeAgentTerritorialLockService {
 	declare readonly _serviceBrand: undefined;
 
 	constructor(
 		@IFileService private readonly _fileService: IFileService,
 		@IWorkspaceContextService private readonly _workspaceContextService: IWorkspaceContextService,
 		@ILogService private readonly _logService: ILogService,
-	) { }
+		@ILifecycleService private readonly _lifecycleService: ILifecycleService,
+	) {
+		super();
+		// Fire-and-forget: never block service activation on a locks-file scan.
+		void this._cleanupStaleLocks();
+
+		// Cross-window holder cleanup needs a session-id we don't track here yet — see
+		// roadmap §"agent-locks dispose" for the full per-thread hookup. For now we
+		// only run startup TTL cleanup; this listener stays as a registration hook so
+		// future revisions can release "ours" without reshuffling lifecycle.
+		this._register(this._lifecycleService.onWillShutdown(() => {
+			// no-op: see comment above
+		}));
+	}
 
 	async evaluateWrite(uri: URI): Promise<IAgentTerritorialLockConflict | undefined> {
 		const folder = this._workspaceContextService.getWorkspaceFolder(uri);
@@ -122,6 +139,63 @@ export class VibeAgentTerritorialLockService implements IVibeAgentTerritorialLoc
 			return false;
 		}
 		return t >= nowMs;
+	}
+
+	/**
+	 * One-shot cleanup of TTL-expired locks at service init. Releases entries whose
+	 * `until` is in the past; never touches non-expired locks (those need a separate
+	 * holder-based release path — see roadmap §"agent-locks dispose").
+	 *
+	 * Skips silently when the file is absent, has the legacy `{ locks: [...] }` /
+	 * single-object shape (helper expects the canonical flat array), or is malformed.
+	 */
+	private async _cleanupStaleLocks(): Promise<void> {
+		const folders = this._workspaceContextService.getWorkspace().folders;
+		if (folders.length === 0) {
+			return;
+		}
+		const locksUri = joinPath(folders[0].uri, '.vibe', 'agent-locks.json');
+		let raw: string;
+		try {
+			const buf = await this._fileService.readFile(locksUri);
+			raw = buf.value.toString();
+		} catch {
+			return;
+		}
+		let data: unknown;
+		try {
+			data = JSON.parse(raw);
+		} catch (e) {
+			this._logService.warn('[VibeIDE] agent-locks.json: invalid JSON, skip TTL cleanup', e);
+			return;
+		}
+		const decoded = decodeAgentLocks(data);
+		if (decoded === null) {
+			// Legacy `{ locks: [...] }` or single-object — not the canonical helper shape.
+			// Don't risk rewriting; surface so the user can normalise via `vibe doctor`.
+			this._logService.warn('[VibeIDE] agent-locks.json: non-canonical shape, skip TTL cleanup');
+			return;
+		}
+		const result = filterLocksForDisposal({
+			locks: decoded,
+			disposedHolders: new Set<string>(),
+			now: Date.now(),
+		});
+		if (result.release.length === 0) {
+			return;
+		}
+		for (const r of result.release) {
+			this._logService.info(`[VibeIDE] agent-lock released (${r.reason}): holder=${r.entry.holder} paths=${r.entry.paths.join(',')}`);
+		}
+		try {
+			await this._fileService.writeFile(
+				locksUri,
+				VSBuffer.fromString(JSON.stringify(result.keep, null, 2) + '\n'),
+				{ atomic: { postfix: '.vibe-tmp' } },
+			);
+		} catch (e) {
+			this._logService.warn('[VibeIDE] agent-locks.json: TTL cleanup write failed', e);
+		}
 	}
 }
 
