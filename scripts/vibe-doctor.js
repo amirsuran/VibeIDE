@@ -17,6 +17,7 @@ const path = require('path');
 const { execSync } = require('child_process');
 const projectCommandsAudit = require('./lib/project-commands-audit.cjs');
 const npmCliAlignment = require('./lib/npm-cli-alignment-check.cjs');
+const knowledgeMdStaleness = require('./lib/knowledge-md-staleness.cjs');
 
 const args = process.argv.slice(2);
 const MODE = {
@@ -27,6 +28,7 @@ const MODE = {
 	i18n: args.includes('--i18n'),
 	network: args.includes('--network'),
 	selfCheck: args.includes('--self-check'),
+	knowledge: args.includes('--knowledge'),
 };
 
 const results = [];
@@ -730,6 +732,61 @@ if (MODE.network) {
 	console.log('\nThis report does NOT prove a build is offline-clean — it lists what could be');
 	console.log('reached. The .github/workflows/privacy-verify.yml backlog item adds the runtime');
 	console.log('sniffer that actually confirms strict mode.');
+	process.exit(0);
+}
+
+if (MODE.knowledge) {
+	// `vibe doctor --knowledge` — flag stale docs/knowledge.md against drift in
+	// contrib/vibeide/common/* (roadmap §M.0 L1092). Exits 0; warn-only.
+	const cwd = process.cwd();
+	const knowledgePath = path.join(cwd, 'docs', 'knowledge.md');
+	const commonDir = path.join(cwd, 'src', 'vs', 'workbench', 'contrib', 'vibeide', 'common');
+
+	let fileExists = false;
+	let fileMtimeMs = null;
+	try {
+		const st = fs.statSync(knowledgePath);
+		fileExists = true;
+		fileMtimeMs = st.mtimeMs;
+	} catch {
+		// silent: knowledge.md is opt-in
+	}
+
+	const commonServiceFiles = [];
+	function walkCommon(dir, rel) {
+		let entries;
+		try {
+			entries = fs.readdirSync(dir, { withFileTypes: true });
+		} catch {
+			return;
+		}
+		for (const ent of entries) {
+			const full = path.join(dir, ent.name);
+			const relPath = rel ? `${rel}/${ent.name}` : ent.name;
+			if (ent.isDirectory()) {
+				walkCommon(full, relPath);
+			} else if (ent.isFile() && /\.ts$/.test(ent.name) && !/\.test\.ts$/.test(ent.name)) {
+				try {
+					const st = fs.statSync(full);
+					commonServiceFiles.push({ path: relPath, mtimeMs: st.mtimeMs });
+				} catch { /* ignore */ }
+			}
+		}
+	}
+	walkCommon(commonDir, '');
+
+	const decision = knowledgeMdStaleness.decideKnowledgeStaleness({
+		fileExists,
+		fileMtimeMs,
+		commonServiceFiles,
+		nowMs: Date.now(),
+	});
+
+	if (MODE.json) {
+		console.log(JSON.stringify(decision, null, 2));
+	} else {
+		console.log(knowledgeMdStaleness.renderKnowledgeStaleness(decision));
+	}
 	process.exit(0);
 }
 
