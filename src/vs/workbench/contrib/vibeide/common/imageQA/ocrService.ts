@@ -64,12 +64,14 @@ export class TesseractOCRService implements IOCRService {
 		if (this.workerInitialized && this.tesseractWorker) return;
 
 		try {
-			// Dynamic import to avoid bundle bloat
-			// tesseract.js is an optional dependency - ignore TypeScript error if not installed
-			// @ts-expect-error - tesseract.js may not be installed yet
-			const tesseractModule = await import('tesseract.js').catch(() => null);
+			// Dynamic import to avoid bundle bloat — kept guarded in case the package fails to load at runtime.
+			// The previous .catch swallowed the real reason silently; surface it once so failures can be diagnosed.
+			let importError: unknown = null;
+			const tesseractModule = await import('tesseract.js').catch((err) => { importError = err; return null; });
 			if (!tesseractModule) {
-				throw new Error('tesseract.js not installed. Run: npm install tesseract.js');
+				const reason = importError instanceof Error ? importError.message : String(importError);
+				console.warn('[OCR] tesseract.js dynamic import failed:', reason);
+				throw new Error(`tesseract.js failed to load: ${reason}`);
 			}
 			const { createWorker } = tesseractModule;
 			this.tesseractWorker = await createWorker('eng');
