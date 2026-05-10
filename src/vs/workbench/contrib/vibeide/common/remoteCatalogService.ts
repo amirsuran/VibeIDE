@@ -181,11 +181,31 @@ export class RemoteCatalogService implements IRemoteCatalogService {
 			headers['Authorization'] = `Bearer ${apiKey.trim()}`;
 		}
 		const data = await this.getJson<{ data?: Record<string, unknown>[] }>(modelsUrl, headers, 'openaiCompatModels');
-		return (data.data || []).map((model) => ({
-			id: String(model.id ?? ''),
-			name: String(model.id ?? model.name ?? ''),
-			contextWindow: this.contextWindowFromOpenAICompatibleModel(model),
-		})).filter(m => m.id.length > 0);
+		return (data.data || []).map((model) => {
+			// LiteLLM proxy and similar gateways extend OpenAI's /v1/models with capability fields.
+			// Stock OpenAI/Mistral/Groq/etc. omit these — readers below tolerate undefined.
+			const supportsVision = typeof (model as { supports_vision?: unknown }).supports_vision === 'boolean'
+				? (model as { supports_vision: boolean }).supports_vision
+				: undefined;
+			const supportsPDF = typeof (model as { supports_pdf_input?: unknown }).supports_pdf_input === 'boolean'
+				? (model as { supports_pdf_input: boolean }).supports_pdf_input
+				: undefined;
+			const pricing = (model as { input_cost_per_token?: unknown; output_cost_per_token?: unknown });
+			const cost = typeof pricing.input_cost_per_token === 'number' || typeof pricing.output_cost_per_token === 'number'
+				? {
+					input: typeof pricing.input_cost_per_token === 'number' ? pricing.input_cost_per_token : 0,
+					output: typeof pricing.output_cost_per_token === 'number' ? pricing.output_cost_per_token : 0,
+				}
+				: undefined;
+			return {
+				id: String(model.id ?? ''),
+				name: String(model.id ?? model.name ?? ''),
+				contextWindow: this.contextWindowFromOpenAICompatibleModel(model),
+				supportsVision,
+				supportsPDF,
+				cost,
+			};
+		}).filter(m => m.id.length > 0);
 	}
 
 	private async fetchFromProvider(providerName: ProviderName): Promise<RemoteModelInfo[]> {
@@ -339,13 +359,17 @@ export class RemoteCatalogService implements IRemoteCatalogService {
 		return (data.data || []).map((model) => {
 			const id = String(model.id ?? '');
 			const nameStr = String((model as { name?: string }).name ?? id);
-			const arch = (model as { architecture?: { modalities?: string[] } }).architecture;
+			// OpenRouter's current schema is `architecture.input_modalities` (array of "text"|"image"|"audio"|"video"|"file").
+			// Older snapshots used `modalities` — keep as legacy fallback so cached/older payloads still resolve.
+			const arch = (model as { architecture?: { input_modalities?: string[]; output_modalities?: string[]; modalities?: string[] } }).architecture;
+			const inputMods = arch?.input_modalities ?? arch?.modalities;
 			return {
 				id,
 				name: nameStr,
 				description: typeof (model as { description?: string }).description === 'string' ? (model as { description: string }).description : undefined,
 				contextWindow: this.contextWindowFromOpenAICompatibleModel(model),
-				supportsVision: arch?.modalities?.includes('image'),
+				supportsVision: inputMods?.includes('image'),
+				supportsPDF: inputMods?.includes('file'),
 				supportsCode: nameStr.toLowerCase().includes('code') || nameStr.toLowerCase().includes('coder'),
 				cost: (model as { pricing?: { prompt?: number; completion?: number } }).pricing ? {
 					input: (model as { pricing: { prompt?: number } }).pricing.prompt || 0,
