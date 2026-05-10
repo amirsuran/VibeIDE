@@ -348,6 +348,9 @@ export const modelsS = {
 	modelsOnlyActiveLabel: 'активные',
 	modelsOnlyActiveTitle:
 		'Показывать в списке только модели, включённые переключателем (видимые в списках выбора модели).',
+	/** Inline pill rendered next to free models (Pollinations + `:free`-suffixed ids). */
+	freeBadgeLabel: 'free',
+	freeBadgeTooltip: 'Бесплатная модель',
 } as const;
 
 export const providersS = {

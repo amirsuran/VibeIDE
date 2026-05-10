@@ -98,4 +98,31 @@ suite('i18nUnwrappedScanner', () => {
 		const r = scanUnwrappedLiterals(src);
 		assert.strictEqual(r.findings.length, 0);
 	});
+
+	test('skips brand-allowlist entries (proper nouns / product names)', () => {
+		// All of these are in BRAND_ALLOWLIST and must NOT be flagged.
+		const src = `
+			title: 'LM Studio'
+			title: 'LM Router'
+			title: 'Grok (xAI)'
+			title: 'Google Vertex AI'
+			title: 'Microsoft Azure OpenAI'
+			title: 'AWS Bedrock'
+			title: 'OpenCode Zen'
+			title: 'OpenCode Go'
+			title: 'Pollinations'
+		`;
+		const r = scanUnwrappedLiterals(src);
+		assert.strictEqual(r.findings.length, 0, 'brand allowlist must filter all 9 entries');
+	});
+
+	test('still flags non-brand RU labels even alongside brands', () => {
+		const src = `
+			title: 'LM Studio'
+			title: 'Ключ API'
+		`;
+		const r = scanUnwrappedLiterals(src);
+		assert.strictEqual(r.findings.length, 1);
+		assert.match(r.findings[0].snippet, /Ключ API/);
+	});
 });

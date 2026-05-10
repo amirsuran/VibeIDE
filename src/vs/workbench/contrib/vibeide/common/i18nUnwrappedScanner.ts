@@ -39,6 +39,36 @@ const CALL_PATTERNS: ReadonlyArray<{ regex: RegExp; kind: UnwrappedFinding['call
 	{ regex: /\btooltip:\s*(['"`])([^'"`]+?)\1/g, kind: 'tooltip' },
 ];
 
+// Proper nouns / product names that legitimately should NOT be localized — they
+// are brand identifiers, the same in every locale. Adding a literal here removes
+// it from the unwrapped-scan findings without forcing a `localize()` wrap that
+// would just round-trip the same string.
+//
+// Rule of thumb: include only names a user would expect to read verbatim in
+// every language (provider brands, vendor names). Do NOT add freeform RU/EN
+// labels here — those should be wrapped via `localize()` properly.
+export const BRAND_ALLOWLIST: ReadonlySet<string> = new Set([
+	'Anthropic',
+	'AWS Bedrock',
+	'DeepSeek',
+	'Gemini',
+	'Google Vertex AI',
+	'Grok (xAI)',
+	'Groq',
+	'LiteLLM',
+	'LM Router',
+	'LM Studio',
+	'Microsoft Azure OpenAI',
+	'Mistral',
+	'Ollama',
+	'OpenAI',
+	'OpenCode Go',
+	'OpenCode Zen',
+	'OpenRouter',
+	'Pollinations',
+	'vLLM',
+]);
+
 /**
  * Scan TypeScript / TSX source for user-facing literal arguments that should
  * be localized but are passed as raw strings (no `localize()` / `l10n.t()` wrap).
@@ -91,6 +121,8 @@ function isUserFacingLiteral(s: string): boolean {
 	if (/^[a-zA-Z0-9_.-]+$/.test(trimmed)) { return false; }
 	// URL or path — not localizable.
 	if (/^(https?:\/\/|\.{0,2}\/|[a-zA-Z]:[\\/])/.test(trimmed)) { return false; }
+	// Brand / product names — same in every locale, not localizable.
+	if (BRAND_ALLOWLIST.has(trimmed)) { return false; }
 	// Must contain at least one whitespace OR a non-ASCII letter (Cyrillic etc.).
 	return /\s/.test(trimmed) || /[^\x00-\x7f]/.test(trimmed);
 }

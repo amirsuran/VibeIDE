@@ -19,7 +19,7 @@ import { os } from '../../../../common/helpers/systemInfo.js'
 import { IconLoading } from '../sidebar-tsx/SidebarChat.js'
 import { ToolApprovalType, toolApprovalTypes } from '../../../../common/toolsServiceTypes.js'
 import Severity from '../../../../../../../base/common/severity.js'
-import { getModelCapabilities, modelOverrideKeys, ModelOverrides } from '../../../../common/modelCapabilities.js';
+import { getModelCapabilities, isFreeModel, modelOverrideKeys, ModelOverrides } from '../../../../common/modelCapabilities.js';
 import { TransferEditorType, TransferFilesInfo } from '../../../extensionTransferTypes.js';
 import { MCPServer } from '../../../../common/mcpServiceTypes.js';
 import { useMCPServiceState } from '../util/services.js';
@@ -597,6 +597,16 @@ export const ModelDump = ({ filteredProviders }: { filteredProviders?: ProviderN
 					<span className='text-vibe-fg-3 opacity-50 select-none'>·</span>
 					<span className='text-vibe-fg-3 opacity-60 text-xs truncate font-mono'>{modality}</span>
 				</>}
+				{isFreeModel(providerName, modelName) && (
+					<span
+						className='shrink-0 text-[10px] font-mono uppercase tracking-wide px-1.5 py-px rounded border border-current text-[var(--vscode-charts-green)] opacity-80 select-none'
+						data-tooltip-id='vibe-tooltip'
+						data-tooltip-place='right'
+						data-tooltip-content={modelsS.freeBadgeTooltip}
+					>
+						{modelsS.freeBadgeLabel}
+					</span>
+				)}
 			</div>
 			<div className="flex items-center gap-2 w-fit">
 				<div className="w-5 flex items-center justify-center">
@@ -696,7 +706,9 @@ export const ModelDump = ({ filteredProviders }: { filteredProviders?: ProviderN
 					const name = m.modelName.toLowerCase();
 					const modality = settingsState.overridesOfModel?.[providerName]?.[m.modelName]?.modality;
 					const modalityLower = typeof modality === 'string' ? modality.toLowerCase() : '';
-					return tokens.every(t => name.includes(t) || modalityLower.includes(t));
+					// Virtual `free` token: matches Pollinations + `:free`-suffixed ids even if the literal "free" is not in id.
+					const freeTag = isFreeModel(providerName, m.modelName) ? 'free' : '';
+					return tokens.every(t => name.includes(t) || modalityLower.includes(t) || (freeTag && freeTag.includes(t)));
 				});
 			const expanded = expandedByProvider[providerName] ?? false;
 			const providerTitle = displayInfoOfProviderName(providerName).title;
