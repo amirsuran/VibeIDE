@@ -15,6 +15,7 @@ import { chat_userMessageContent, isABuiltinToolName } from '../common/prompt/pr
 import { AnthropicReasoning, getErrorMessage, RawToolCallObj, RawToolParamsObj } from '../common/sendLLMMessageTypes.js';
 import { generateUuid } from '../../../../base/common/uuid.js';
 import { ChatMode, FeatureName, ModelSelection, ModelSelectionOptions, ProviderName } from '../common/vibeideSettingsTypes.js';
+import { isVisionByNameHeuristic } from '../common/modelVisionHeuristics.js';
 import { IVibeideSettingsService } from '../common/vibeideSettingsService.js';
 import { approvalTypeOfBuiltinToolName, BuiltinToolCallParams, BuiltinToolResultType, ToolCallParams, ToolName, ToolResult } from '../common/toolsServiceTypes.js';
 import { IToolsService } from './toolsService.js';
@@ -906,11 +907,12 @@ class ChatThreadService extends Disposable implements IChatThreadService {
 		if (provider === 'ollama' || provider === 'vllm') {
 			return name.includes('llava') || name.includes('bakllava') || name.includes('vision');
 		}
-		// Aggregators / OpenAI-compatible — without a catalog flag, fall back to common vision-model name patterns.
-		// Conservative: only return true on well-known vision substrings; anything else stays false to avoid sending
-		// images into a text-only model and getting hallucinated descriptions of the system prompt.
+		// Aggregators / OpenAI-compatible — without a catalog flag, fall back to the shared
+		// substring whitelist (single source of truth in common/modelVisionHeuristics.ts).
+		// Conservative: only well-known vision markers — anything else stays false to avoid
+		// sending images into a text-only model and getting hallucinated descriptions.
 		if (provider === 'openrouter' || provider === 'opencode' || provider === 'opencodezen' || provider === 'openaicompatible' || provider === 'litellm' || provider === 'pollinations') {
-			if (name.includes('vision') || name.includes('-vl') || name.includes('vl-') || name.includes('llava') || name.includes('pixtral') || name.includes('claude-3') || name.includes('claude-4') || name.includes('claude-sonnet') || name.includes('claude-opus') || name.includes('gpt-4o') || name.includes('gpt-4.1') || name.includes('gpt-5') || name.includes('gemini') || name.includes('qwen2-vl') || name.includes('qwen2.5-vl') || name.includes('qwen3-vl')) return true;
+			if (isVisionByNameHeuristic(modelSelection.modelName)) return true;
 		}
 
 		return false;

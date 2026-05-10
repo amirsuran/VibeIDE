@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------*/
 
 import { SettingsOfProvider, ModelSelection, ProviderName, OverridesOfModel } from '../../../../common/vibeideSettingsTypes.js';
+import { isVisionByNameHeuristic } from '../../../../common/modelVisionHeuristics.js';
 
 /**
  * Vision-capable providers that require API keys.
@@ -18,37 +19,10 @@ const VISION_PROVIDERS: ProviderName[] = ['anthropic', 'openAI', 'gemini', 'poll
  */
 const AGGREGATOR_PROVIDERS: ProviderName[] = ['openRouter', 'openCode', 'openCodeZen', 'openAICompatible', 'liteLLM'];
 
-/**
- * Conservative substring set used as fallback when the catalog hasn't been refreshed yet
- * OR when the upstream catalog (e.g. OpenCode at https://opencode.ai/zen/v1/models) returns
- * only `{id, object, created, owned_by}` with no capability metadata to read.
- *
- * Only well-known vision-model markers — anything else stays false to avoid silently sending
- * images into a text-only model. If a future text-only model includes one of these tokens
- * in its id, an explicit `supportsVision: false` override on the model entry can suppress this.
- */
-const VISION_NAME_SUBSTRINGS = [
-	'vision', '-vl', 'vl-', 'llava', 'bakllava', 'pixtral',
-	'claude-3', 'claude-4', 'claude-sonnet', 'claude-opus',
-	'gpt-4o', 'gpt-4.1', 'gpt-5', 'gemini',
-	'qwen2-vl', 'qwen2.5-vl', 'qwen3-vl',
-	// extended coverage for OpenCode / OpenRouter / openAICompatible catalogs that don't surface modality metadata
-	'omni',          // nvidia nemotron-*-omni, qwen3-omni — currently always multimodal
-	'multimodal',
-	'minimax-vl',
-	'glm-4v', 'glm-4.5v',
-	'kimi-vl',
-	'internvl', 'cogvlm',
-	'phi-3.5-vision', 'phi-4-vision',
-	'nova-pro', 'nova-lite',
-	'step-1v',
-];
-
 const heuristicWarnedSet = new Set<string>();
 
 function aggregatorVisionHeuristic(providerName: ProviderName, modelName: string): boolean {
-	const lower = modelName.toLowerCase();
-	const matched = VISION_NAME_SUBSTRINGS.some(s => lower.includes(s));
+	const matched = isVisionByNameHeuristic(modelName);
 	if (matched) {
 		const key = `${providerName}/${modelName}`;
 		if (!heuristicWarnedSet.has(key)) {
