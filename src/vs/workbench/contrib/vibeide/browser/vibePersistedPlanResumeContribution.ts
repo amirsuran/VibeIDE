@@ -164,9 +164,9 @@ export class VibePersistedPlanResumeContribution extends Disposable implements I
 				foreignLease = true;
 			}
 			if (staleLease) {
-				leaseNote = '\n\n' + localize('vibeide.planResume.staleLease', 'Execution lease expired or missing — you can take over or discard this run.');
+				leaseNote = '\n\n' + localize('vibeide.planResume.staleLease', 'Срок действия лизы выполнения истёк или она отсутствует — можно перехватить или сбросить запуск.');
 			} else if (foreignLease) {
-				leaseNote = '\n\n' + localize('vibeide.planResume.foreignLease', 'Another window may still hold an active execution lease.');
+				leaseNote = '\n\n' + localize('vibeide.planResume.foreignLease', 'Другое окно ещё может удерживать активную лизу выполнения.');
 			}
 		}
 
@@ -177,12 +177,12 @@ export class VibePersistedPlanResumeContribution extends Disposable implements I
 		const baseMessage = hasExistingThread
 			? localize(
 				'vibeide.planResume.hasThread',
-				'VibeIDE: Agent plan interrupted. "{0}" — continue where you left off?',
+				'VibeIDE: Выполнение плана прервано. «{0}» — продолжить с прерванного места?',
 				shortSummary,
 			)
 			: localize(
 				'vibeide.planResume.noThread',
-				'VibeIDE: Interrupted plan found: "{0}". Original chat thread is gone — restore plan in a new thread?',
+				'VibeIDE: Найден прерванный план: «{0}». Исходный поток чата утерян — восстановить план в новом потоке?',
 				shortSummary,
 			);
 
@@ -192,7 +192,7 @@ export class VibePersistedPlanResumeContribution extends Disposable implements I
 			? [
 				{
 					id: `vibeide.planResume.takeOver.${plan.planId}`,
-					label: localize('vibeide.planResume.takeOver', 'Take over'),
+					label: localize('vibeide.planResume.takeOver', 'Перехватить'),
 					tooltip: '',
 					class: undefined,
 					enabled: true,
@@ -205,7 +205,7 @@ export class VibePersistedPlanResumeContribution extends Disposable implements I
 				},
 				{
 					id: `vibeide.planResume.discardRun.${plan.planId}`,
-					label: localize('vibeide.planResume.discardRun', 'Discard run'),
+					label: localize('vibeide.planResume.discardRun', 'Сбросить запуск'),
 					tooltip: '',
 					class: undefined,
 					enabled: true,
@@ -220,7 +220,7 @@ export class VibePersistedPlanResumeContribution extends Disposable implements I
 			: [
 				{
 					id: `vibeide.planResume.continue.${plan.planId}`,
-					label: localize('vibeide.planResume.continueBtn', 'Continue Plan'),
+					label: localize('vibeide.planResume.continueBtn', 'Продолжить план'),
 					tooltip: '',
 					class: undefined,
 					enabled: true,
@@ -228,7 +228,7 @@ export class VibePersistedPlanResumeContribution extends Disposable implements I
 				},
 				{
 					id: `vibeide.planResume.dismiss.${plan.planId}`,
-					label: localize('vibeide.planResume.dismissBtn', 'Dismiss'),
+					label: localize('vibeide.planResume.dismissBtn', 'Отклонить'),
 					tooltip: '',
 					class: undefined,
 					enabled: true,
