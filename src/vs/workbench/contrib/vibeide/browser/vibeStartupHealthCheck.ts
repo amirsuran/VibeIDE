@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See LICENSE.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { localize } from '../../../../nls.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
 import { IFileService } from '../../../../platform/files/common/files.js';
@@ -65,7 +66,7 @@ export class VibeStartupHealthCheckContribution extends Disposable implements IW
 			this._logService.warn(`[VibeIDE HealthCheck] .vibe/ schema issues:\n${issues.join('\n')}`);
 			this._notificationService.notify({
 				severity: Severity.Warning,
-				message: `VibeIDE: .vibe/ configuration may need migration (${issues.length} issue(s)). Run \`vibe doctor --repair\` to fix.`,
+				message: localize('vibeide.startupHealthCheck.migrationNeeded', 'VibeIDE: .vibe/ configuration may need migration ({0} issue(s)). Run `vibe doctor --repair` to fix.', issues.length),
 			});
 		}
 	}
