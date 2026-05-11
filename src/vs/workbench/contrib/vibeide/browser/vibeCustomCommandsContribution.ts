@@ -41,6 +41,7 @@ import { describeUnresolvedPlaceholders } from '../common/projectCommandSecretsR
 import { commandIdToRegistryId, formatProjectCommandKeybindingLabel } from '../common/projectCommandsRegistryId.js';
 import { allocateDefaultChords } from '../common/projectCommandsKeybindings.js';
 import { importTasksJson } from '../common/vscodeTasksJsonImporter.js';
+import { sanitizeProjectCommand, describeIssue } from '../common/projectCommandsSanitizer.js';
 import { decodeProjectCommandsFile, ProjectCommandsFile } from '../common/projectCommandsTypes.js';
 import { KeybindingsRegistry, KeybindingWeight } from '../../../../platform/keybinding/common/keybindingsRegistry.js';
 import { KeyMod, KeyCode } from '../../../../base/common/keyCodes.js';
@@ -204,8 +205,35 @@ CommandsRegistry.registerCommand({
 			return;
 		}
 
+		// L332 sanitiser gate: refuse imports with zero-width / Bidi / control /
+		// shell-metachar issues before they reach the Quick Pick. User sees a
+		// warn-notification listing each unsafe command + its first issue.
+		const unsafe: { name: string; reason: string }[] = [];
+		const safeImports = preview.imported.filter(({ command }) => {
+			const sanResult = sanitizeProjectCommand(command);
+			if (!sanResult.ok) {
+				unsafe.push({ name: command.name, reason: describeIssue(sanResult.issues[0]) });
+				return false;
+			}
+			return true;
+		});
+		if (unsafe.length > 0) {
+			notifications.notify({
+				severity: Severity.Warning,
+				message: localize(
+					'vibeide.commands.importTasksJson.unsafe',
+					'Отклонено {0} команд из-за небезопасного содержимого: {1}',
+					unsafe.length,
+					unsafe.slice(0, 3).map(u => `${u.name} (${u.reason})`).join('; ') + (unsafe.length > 3 ? '…' : ''),
+				),
+			});
+		}
+		if (safeImports.length === 0) {
+			return;
+		}
+
 		// Quick Pick lets user de-select tasks they don't want.
-		const items = preview.imported.map(({ command, sourceLabel }) => ({
+		const items = safeImports.map(({ command, sourceLabel }) => ({
 			label: command.name,
 			description: command.id,
 			detail: `${command.command}${command.args && command.args.length > 0 ? ` ${command.args.join(' ')}` : ''}`,
@@ -254,6 +282,71 @@ CommandsRegistry.registerCommand({
 		});
 	},
 });
+
+// Pin / Unpin palette commands. Flip `pinned: true|false` in-place inside
+// `.vibe/commands.json` for the picked command id. Triggers `reload()` so the
+// status-bar + chord allocator see the updated set immediately.
+function registerPinTogglePalette(targetPinned: boolean): void {
+	const paletteId = targetPinned ? PROJECT_COMMANDS_PALETTE_IDS.pin : PROJECT_COMMANDS_PALETTE_IDS.unpin;
+	CommandsRegistry.registerCommand({
+		id: paletteId,
+		handler: async (accessor: ServicesAccessor) => {
+			const commands = accessor.get(IVibeCustomCommandsService);
+			const quickInput = accessor.get(IQuickInputService);
+			const workspace = accessor.get(IWorkspaceContextService);
+			const fileService = accessor.get(IFileService);
+			const notifications = accessor.get(INotificationService);
+
+			const list = commands.getCommands();
+			// When pinning: show non-pinned. When unpinning: show currently-pinned.
+			const candidates = list.filter(c => (c.pinned === true) !== targetPinned);
+			if (candidates.length === 0) {
+				notifications.notify({
+					severity: Severity.Info,
+					message: targetPinned
+						? localize('vibeide.commands.pin.nothing', 'Все команды уже закреплены.')
+						: localize('vibeide.commands.unpin.nothing', 'Нет закреплённых команд.'),
+				});
+				return;
+			}
+			const picked = await quickInput.pick(
+				candidates.map(c => ({ label: c.name, description: c.id, commandId: c.id })),
+				{ placeHolder: targetPinned
+					? localize('vibeide.commands.pin.placeholder', 'Выберите команду, чтобы закрепить')
+					: localize('vibeide.commands.unpin.placeholder', 'Выберите команду, чтобы открепить'),
+				},
+			);
+			if (!picked) {
+				return;
+			}
+
+			const folder = workspace.getWorkspace().folders[0];
+			if (!folder) return;
+			const commandsUri = joinPath(folder.uri, '.vibe', 'commands.json');
+			let raw: ProjectCommandsFile | null = null;
+			try {
+				const buf = await fileService.readFile(commandsUri);
+				const decoded = decodeProjectCommandsFile(JSON.parse(buf.value.toString()));
+				if (decoded.ok) raw = decoded.value;
+			} catch { /* fallthrough */ }
+			if (raw === null) {
+				notifications.notify({
+					severity: Severity.Warning,
+					message: localize('vibeide.commands.pin.noFile', 'Команда видна только из глобального источника — изменить `pinned` нельзя без локального .vibe/commands.json.'),
+				});
+				return;
+			}
+			const next: ProjectCommandsFile = {
+				vibeVersion: raw.vibeVersion,
+				commands: raw.commands.map(c => c.id === picked.commandId ? { ...c, pinned: targetPinned } : c),
+			};
+			await fileService.writeFile(commandsUri, VSBuffer.fromString(JSON.stringify(next, null, '\t') + '\n'));
+			await commands.reload();
+		},
+	});
+}
+registerPinTogglePalette(true);
+registerPinTogglePalette(false);
 
 /**
  * Workbench contribution responsible for two side-effects:
