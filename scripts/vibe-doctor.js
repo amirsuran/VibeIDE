@@ -22,6 +22,7 @@ const perfGuardrails = require('./lib/perf-guardrails-aggregator.cjs');
 const snapshotIntegrity = require('./lib/snapshot-integrity-check.cjs');
 const memoryLayerRouter = require('./lib/memory-layer-router.cjs');
 const completionStats = require('./lib/completion-outcome-stats.cjs');
+const i18nDoctorReport = require('./lib/i18n-doctor-report.cjs');
 
 const args = process.argv.slice(2);
 const MODE = {
@@ -523,6 +524,22 @@ checkWarning('agent-locks-stale', () => {
 // SUB-REPORTS (--i18n / --network) — separate from the standard checks output
 // ──────────────────────────────────────────────────────────
 
+function readI18nSyncStateMap() {
+	// Optional sidecar: `.vibe/i18n-sync-state.json` — written by `vibe sync`
+	// when a Crowdin/cloud round-trip finishes successfully. Shape:
+	//   { "ru": { "lastSyncAtMs": <ms>, "staleKeyCount": <int> }, ... }
+	// Absent file → empty map (we fall back to bundle mtime for lastSyncAtMs).
+	const p = path.join(process.cwd(), '.vibe', 'i18n-sync-state.json');
+	if (!fs.existsSync(p)) return {};
+	try {
+		const raw = JSON.parse(fs.readFileSync(p, 'utf-8'));
+		if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+			return raw;
+		}
+	} catch { /* malformed → empty map */ }
+	return {};
+}
+
 function buildI18nReport() {
 	const ROOT = process.cwd();
 	const VIBE_SRC = path.join(ROOT, 'src', 'vs', 'workbench', 'contrib', 'vibeide');
@@ -559,15 +576,19 @@ function buildI18nReport() {
 	const totalKeys = sourceMessages.size;
 
 	// Locate locale bundles.
+	const syncState = readI18nSyncStateMap();
 	const locales = [];
 	if (fs.existsSync(NLS_DIR)) {
 		for (const ent of fs.readdirSync(NLS_DIR, { withFileTypes: true })) {
 			if (!ent.isFile()) continue;
 			const m = ent.name.match(/^vibeide\.nls\.([a-zA-Z0-9_-]+)\.json$/);
 			if (!m) continue;
+			const bundlePath = path.join(NLS_DIR, ent.name);
 			let bundle = {};
+			let bundleMtimeMs = null;
 			try {
-				bundle = JSON.parse(fs.readFileSync(path.join(NLS_DIR, ent.name), 'utf-8'));
+				bundle = JSON.parse(fs.readFileSync(bundlePath, 'utf-8'));
+				bundleMtimeMs = fs.statSync(bundlePath).mtimeMs;
 			} catch { /* unreadable bundle counts as 0% */ }
 			let translated = 0;
 			let needsTranslation = 0;
@@ -592,9 +613,16 @@ function buildI18nReport() {
 					missing.push(key);
 				}
 			}
+			const state = syncState[m[1]];
+			const lastSyncAtMs = (state && typeof state.lastSyncAtMs === 'number' && Number.isFinite(state.lastSyncAtMs))
+				? state.lastSyncAtMs
+				: bundleMtimeMs;
+			const staleKeyCount = (state && typeof state.staleKeyCount === 'number' && Number.isFinite(state.staleKeyCount))
+				? state.staleKeyCount
+				: stale;
 			locales.push({
 				locale: m[1],
-				bundle: path.relative(ROOT, path.join(NLS_DIR, ent.name)),
+				bundle: path.relative(ROOT, bundlePath),
 				totalKeys,
 				translated,
 				needsTranslation,
@@ -602,11 +630,26 @@ function buildI18nReport() {
 				missing: missing.length,
 				missingKeys: missing.slice(0, 10), // first 10 for display
 				coveragePercent: totalKeys === 0 ? 100 : Math.round((translated / totalKeys) * 100),
+				lastSyncAtMs,
+				staleKeyCount,
 			});
 		}
 	}
 
-	return { totalKeys, locales };
+	// Freshness section (roadmap §L514) — delegate to common/i18nDoctorReport.ts
+	// via its CJS mirror. Slavic plural + ✓/✗ markers + clock-skew clamp live there.
+	const freshness = i18nDoctorReport.buildI18nDoctorReport({
+		nowMs: Date.now(),
+		snapshots: locales.map(l => ({
+			localeTag: l.locale,
+			translatedCount: l.translated,
+			totalMetadataCount: l.totalKeys,
+			lastSyncAtMs: l.lastSyncAtMs ?? undefined,
+			staleKeyCount: l.staleKeyCount ?? 0,
+		})),
+	});
+
+	return { totalKeys, locales, freshness };
 }
 
 function buildNetworkReport() {
@@ -694,6 +737,13 @@ if (MODE.i18n) {
 		console.log('\nNo locale bundles found under out/nls/. Run `node scripts/vibe-i18n-migrate.js --apply` first.');
 		process.exit(0);
 	}
+
+	// Freshness section (roadmap §L514) — coverage % + sync age + stale-key flag.
+	if (report.freshness && report.freshness.markdown) {
+		console.log('');
+		console.log(report.freshness.markdown);
+	}
+
 	for (const l of report.locales) {
 		console.log(`\n  [${l.locale}] ${l.bundle}`);
 		console.log(`    coverage:           ${l.coveragePercent}% (${l.translated}/${l.totalKeys})`);

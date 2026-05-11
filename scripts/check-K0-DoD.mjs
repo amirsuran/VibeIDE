@@ -55,15 +55,22 @@ function classifyItem(line) {
 	const body = m[2];
 	const commitMatch = COMMIT_RE.exec(body);
 	const commit = commitMatch ? commitMatch[1] : null;
+	const looksBlocked = BLOCKER_HINT_RE.test(body);
 
 	if (mark === 'x' || mark === '~') {
 		if (commit) {
 			return { state: 'pass', mark, commit, summary: extractTitle(body) };
 		}
+		// `[~]` is for partial-impl; if the body carries a blocker hint
+		// (EV cert, sponsors approval, marketing launch) the item is still in
+		// "infrastructure landed, awaiting external action" — treat as BLOCKED.
+		if (mark === '~' && looksBlocked) {
+			return { state: 'blocked', mark, commit: null, summary: extractTitle(body) };
+		}
 		return { state: 'missing-commit', mark, commit: null, summary: extractTitle(body) };
 	}
 	// mark === ' '
-	if (BLOCKER_HINT_RE.test(body)) {
+	if (looksBlocked) {
 		return { state: 'blocked', mark, commit: null, summary: extractTitle(body) };
 	}
 	return { state: 'open', mark, commit: null, summary: extractTitle(body) };

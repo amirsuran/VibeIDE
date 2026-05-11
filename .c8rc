@@ -1,0 +1,16 @@
+{
+	"reporter": ["text", "lcov", "json-summary"],
+	"include": ["out/vs/workbench/contrib/vibeide/**"],
+	"exclude": [
+		"out/vs/workbench/contrib/vibeide/**/react/**",
+		"out/vs/workbench/contrib/vibeide/test/**",
+		"**/*.test.js"
+	],
+	"all": true,
+	"lines": 60,
+	"functions": 55,
+	"branches": 50,
+	"statements": 60,
+	"report-dir": "./.build/coverage",
+	"temp-dir": "./.build/.nyc_output"
+}

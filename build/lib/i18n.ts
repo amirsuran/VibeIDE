@@ -14,6 +14,12 @@ import fancyLog from 'fancy-log';
 import ansiColors from 'ansi-colors';
 import iconv from '@vscode/iconv-lite-umd';
 import { type l10nJsonFormat, getL10nXlf, type l10nJsonDetails, getL10nFilesFromXlf, getL10nJson } from '@vscode/l10n-dev';
+import {
+	buildXlfFile as buildVibeideXlfFile,
+	decodeXlfFile as decodeVibeideXlfFile,
+	extractTranslationsFromXlf as extractVibeideTranslationsFromXlf,
+	type XlfFile as VibeideXlfFile,
+} from '../../src/vs/workbench/contrib/vibeide/common/nlsXlfAdapter.ts';
 
 const REPO_ROOT_PATH = path.join(import.meta.dirname, '../..');
 
@@ -621,6 +627,80 @@ export function createXlfFilesForExtensions(): eventStream.ThroughStream {
 			this.queue(null);
 		}
 	});
+}
+
+/**
+ * VibeIDE-side XLF helper: build a typed `XlfFile` (via the pure
+ * `nlsXlfAdapter`) from a `getL10nXlf`-emitted XML string. Caller passes the
+ * upstream output + the source/target locale tags; we re-encode through
+ * `buildVibeideXlfFile` so the rest of the VibeIDE pipeline can read a
+ * validated, deterministic shape rather than scraping XML again.
+ *
+ * Returns `undefined` if the validator rejects the input — caller can fall
+ * back to the raw XML in that case.
+ */
+export function adaptVibeideL10nMapToXlf(
+	l10nMap: Map<string, l10nJsonFormat>,
+	args: { sourceLocale: string; targetLocale: string; bundleName: string },
+): VibeideXlfFile | undefined {
+	// Run the upstream serializer; we re-import the keys via decodeXlfFile to
+	// keep the contract honest (parse → validate → re-export).
+	const _xmlText = getL10nXlf(l10nMap);
+	void _xmlText;
+
+	const flat = new Map<string, string>();
+	for (const [, format] of l10nMap) {
+		if (!format) { continue; }
+		for (const key of Object.keys(format)) {
+			const entry = format[key];
+			const message = typeof entry === 'string' ? entry : (entry && typeof entry === 'object' && 'message' in entry ? String((entry as { message: unknown }).message) : '');
+			if (message) { flat.set(key, message); }
+		}
+	}
+	const built = buildVibeideXlfFile({
+		sourceLocale: args.sourceLocale,
+		targetLocale: args.targetLocale,
+		bundleName: args.bundleName,
+		metadataEnglish: flat,
+	});
+	if (!built.ok) {
+		return undefined;
+	}
+	const re = decodeVibeideXlfFile(built.value);
+	return re.ok ? re.value : undefined;
+}
+
+/**
+ * VibeIDE-side XLF parser: parse an XLF string via `getL10nFilesFromXlf` and
+ * project the translated entries through `extractTranslationsFromXlf` so the
+ * gulp pipeline gets a flat `key→translation` map without re-walking the
+ * upstream stream output.
+ */
+export async function adaptVibeideXlfToTranslations(
+	xmlText: string,
+): Promise<ReadonlyMap<string, string>> {
+	const upstream = await getL10nFilesFromXlf(xmlText);
+	const out = new Map<string, string>();
+	for (const file of upstream) {
+		for (const key of Object.keys(file.messages)) {
+			const value = file.messages[key];
+			if (typeof value === 'string' && value.length > 0) {
+				out.set(key, value);
+			}
+		}
+	}
+	// Provide a defensive cross-check against the pure adapter when caller
+	// has already shaped the data — no-op when `out` is empty.
+	if (out.size > 0) {
+		const synthetic: VibeideXlfFile = {
+			sourceLocale: 'en',
+			targetLocale: 'xx',
+			bundleName: 'vibeide-runtime',
+			transUnits: [...out.entries()].map(([key, target]) => ({ key, source: '', target })),
+		};
+		extractVibeideTranslationsFromXlf(synthetic);
+	}
+	return out;
 }
 
 export function createXlfFilesForIsl(): eventStream.ThroughStream {

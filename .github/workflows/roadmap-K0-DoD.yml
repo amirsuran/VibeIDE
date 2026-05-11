@@ -1,0 +1,50 @@
+name: Roadmap K.0 DoD
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'docs/roadmap.md'
+      - 'scripts/check-K0-DoD.mjs'
+      - '.github/workflows/roadmap-K0-DoD.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'docs/roadmap.md'
+      - 'scripts/check-K0-DoD.mjs'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  check-K0-DoD:
+    runs-on: ubuntu-latest
+    name: Verify K.0 (псевдо-готовность) DoD
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run K.0 DoD checker (strict)
+        id: check
+        run: node scripts/check-K0-DoD.mjs --strict --json > k0-dod.json
+
+      - name: Summarise to step output
+        if: always()
+        run: |
+          if [ -f k0-dod.json ]; then
+            echo '### Roadmap K.0 DoD' >> $GITHUB_STEP_SUMMARY
+            jq -r '
+              .summary as $s
+              | "- total: \($s.total)  pass: \($s.pass)  blocked: \($s.blocked)  open: \($s.open)  missing-commit: \($s.missingCommit)"
+            ' k0-dod.json >> $GITHUB_STEP_SUMMARY
+            if [ "$(jq '.violations | length' k0-dod.json)" != "0" ]; then
+              echo '' >> $GITHUB_STEP_SUMMARY
+              echo '**Violations:**' >> $GITHUB_STEP_SUMMARY
+              jq -r '.violations[] | "- [\(.state)] \(.summary)"' k0-dod.json >> $GITHUB_STEP_SUMMARY
+            fi
+          fi

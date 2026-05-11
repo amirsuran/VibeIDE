@@ -4,42 +4,30 @@
  *--------------------------------------------------------------------------------------------*/
 
 /**
- * VibeIDE language-pack VSIX builder — shapes + sentinel skeleton
- * (roadmap §"Pack VSIX → собственный VSIX `vibeide-language-pack-<locale>`",
- * §"Структура VSIX", §"Канал поставки", §"Gulp-таск
- * extract-vibeide-locale-strings", §"Gulp-таск build-vibeide-language-packs",
- * §"Привязка к релизу: release-windows.ps1").
+ * VibeIDE language-pack VSIX builder — pure shapes + IO orchestrator.
  *
- * This module is the **pure data-shape skeleton**. The actual gulp tasks +
- * VSIX zip emission live in `build/` and the release pipeline; until they
- * land, callers see a `LanguagePackNotImplementedError` sentinel they can
- * catch and route to "this needs work" UX. The shapes here are stable so
- * the gulp authoring + CLI wrapper can build against them today.
+ * Pure module: no direct fs/node imports. The orchestrator helpers
+ * (`writeLanguagePackLayout`, `injectLanguagePackIntoProductJson`) accept
+ * injected IO callbacks so the gulp pipeline / release-windows.ps1
+ * wrapper does the actual writes while this module stays unit-testable.
  *
- * What this skeleton DOES provide (pure):
- *   - typed shapes for the VSIX `package.json` `contributes.localizations`
- *     entry that VS Code reads on startup
- *   - typed shape for the per-locale on-disk layout
- *   - typed shape for the GitHub release asset filename + manifest entry
- *   - validators for each shape (decoder + duplicate-id guard)
- *   - sentinel error for the "not yet built" runtime path
- *
- * What this skeleton does NOT provide (waits for runtime):
- *   - actual file emission (gulp pipeline, vsce zip, vsix bundling)
- *   - `npm run build-language-packs` script registration
- *   - hook into `release-windows.ps1` to build pack before main build
- *   - `product.json:builtInExtensions` injection
+ * Runtime callers:
+ *   - build/gulpfile.vibeide-i18n.ts                — gulp tasks (extract +
+ *                                                     build VSIX zip).
+ *   - bin/vibe-language-pack-build.mjs              — Node CLI for
+ *                                                     `npm run build-language-packs`.
+ *   - scripts/release-windows.ps1 (steps 0/0b)      — pre-build hook.
  */
 
 const SUPPORTED_LOCALE_TAG_PATTERN = /^[a-z]{2,3}(?:-[a-z]{2,4})?$/i;
+const SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
 
 export class LanguagePackNotImplementedError extends Error {
 	constructor(operation: string) {
 		super(
-			`VibeIDE language-pack runtime is not yet implemented (operation: ${operation}). ` +
-			`Skeleton landed in src/vs/workbench/contrib/vibeide/common/i18nLanguagePackBuilder.ts; ` +
-			`gulp tasks (extract-vibeide-locale-strings + build-vibeide-language-packs) and ` +
-			`release-windows.ps1 hook are the next runtime steps. See roadmap §"Pack VSIX".`,
+			`VibeIDE language-pack input rejected (operation: ${operation}). ` +
+			`See src/vs/workbench/contrib/vibeide/common/i18nLanguagePackBuilder.ts ` +
+			`and roadmap §"Pack VSIX".`,
 		);
 		this.name = 'LanguagePackNotImplementedError';
 	}
@@ -59,11 +47,6 @@ export type DecodeResult<T> =
 	| { readonly ok: true; readonly value: T }
 	| { readonly ok: false; readonly reason: string };
 
-/**
- * Decode the `contributes.localizations[i]` shape from a VSIX manifest.
- * Pure — caller has already JSON.parse'd the manifest. Refuses unknown
- * locale-tag formats so a typo doesn't ship.
- */
 export function decodeLanguagePackContribution(raw: unknown): DecodeResult<LanguagePackContribution> {
 	if (!raw || typeof raw !== 'object') return { ok: false, reason: 'not-an-object' };
 	const o = raw as Record<string, unknown>;
@@ -100,16 +83,10 @@ export function decodeLanguagePackContribution(raw: unknown): DecodeResult<Langu
 
 export interface LanguagePackLayout {
 	readonly localeTag: string;
-	/** Mirrors `src/vs/workbench/contrib/vibeide/` keyed by relative file. */
 	readonly mainBundles: Readonly<Record<string, ReadonlyMap<string, string>>>;
-	/** Per-extension `package.i18n.json` keyed by extension folder name. */
 	readonly extensionPackageBundles: Readonly<Record<string, ReadonlyMap<string, string>>>;
 }
 
-/**
- * Build the canonical layout for a locale. Pure — no IO. Caller has
- * already loaded the per-file translations into Maps.
- */
 export function buildLanguagePackLayout(input: {
 	readonly localeTag: string;
 	readonly mainBundleEntries: ReadonlyArray<readonly [string, ReadonlyMap<string, string>]>;
@@ -134,13 +111,6 @@ export function buildLanguagePackLayout(input: {
 // GitHub release asset shape (roadmap line 490)
 // -----------------------------------------------------------------------------
 
-/**
- * Build the GitHub release asset filename for a language pack VSIX:
- *   `vibeide-language-pack-<locale>-<vibeVersion>.vsix`
- *
- * Pure — refuses malformed inputs early so a release build cannot ship a
- * file with an unparseable tag.
- */
 export function buildLanguagePackAssetName(localeTag: string, vibeVersion: string): string {
 	if (typeof localeTag !== 'string' || !SUPPORTED_LOCALE_TAG_PATTERN.test(localeTag)) {
 		throw new LanguagePackNotImplementedError(`buildLanguagePackAssetName(invalid-locale=${String(localeTag)})`);
@@ -154,32 +124,183 @@ export function buildLanguagePackAssetName(localeTag: string, vibeVersion: strin
 }
 
 // -----------------------------------------------------------------------------
-// Sentinel runtime hooks (roadmap lines 495 + 496 + 498)
+// File-write orchestrator (roadmap line 488)
 // -----------------------------------------------------------------------------
 
-/**
- * Stub for the gulp task `extract-vibeide-locale-strings` (roadmap line 495).
- * Throws the sentinel — caller (gulp authoring side) replaces this with the
- * real extraction wired to `build/lib/i18n.ts:getL10nXlf`.
- */
-export function extractVibeideLocaleStrings(_input: { srcRoot: string; outFile: string }): never {
-	throw new LanguagePackNotImplementedError('extractVibeideLocaleStrings');
+export interface LanguagePackWriteIO {
+	readonly mkdirRecursive: (dirAbsPath: string) => void;
+	readonly writeFileUtf8: (fileAbsPath: string, content: string) => void;
+	readonly joinPath: (...segments: string[]) => string;
+}
+
+export interface LanguagePackWriteResult {
+	readonly localeTag: string;
+	readonly rootDir: string;
+	readonly writtenFiles: readonly string[];
 }
 
 /**
- * Stub for the gulp task `build-vibeide-language-packs` (roadmap line 496).
- * Throws the sentinel — caller replaces with the actual VSIX zip emission
- * (vsce or equivalent).
+ * Materialise a `LanguagePackLayout` to disk under `outDir/<localeTag>/`.
+ * Pure logic — fs calls go through the injected `io` so the helper stays
+ * unit-testable.
+ *
+ * Emits files:
+ *   <outDir>/<locale>/translations/main/<mainBundlePath>
+ *   <outDir>/<locale>/translations/extensions/<extName>/package.i18n.json
+ *
+ * Returns the absolute paths of every file written (stable sort) so the
+ * caller can hand them to the VSIX packer or verify the manifest.
  */
-export function buildVibeideLanguagePacks(_input: { metadataPath: string; localesDir: string; outDir: string }): never {
-	throw new LanguagePackNotImplementedError('buildVibeideLanguagePacks');
+export function writeLanguagePackLayout(
+	layout: LanguagePackLayout,
+	outDir: string,
+	io: LanguagePackWriteIO,
+): LanguagePackWriteResult {
+	if (!layout || typeof layout.localeTag !== 'string' || !SUPPORTED_LOCALE_TAG_PATTERN.test(layout.localeTag)) {
+		throw new LanguagePackNotImplementedError(`writeLanguagePackLayout(invalid-localeTag)`);
+	}
+	if (typeof outDir !== 'string' || outDir.length === 0) {
+		throw new LanguagePackNotImplementedError(`writeLanguagePackLayout(empty-outDir)`);
+	}
+
+	const rootDir = io.joinPath(outDir, layout.localeTag);
+	const translationsDir = io.joinPath(rootDir, 'translations');
+	io.mkdirRecursive(rootDir);
+	io.mkdirRecursive(translationsDir);
+
+	const written: string[] = [];
+
+	const mainDir = io.joinPath(translationsDir, 'main');
+	io.mkdirRecursive(mainDir);
+	const mainPaths = Object.keys(layout.mainBundles).sort();
+	for (const relPath of mainPaths) {
+		const map = layout.mainBundles[relPath];
+		const safeRel = relPath.replace(/^[/\\]+/, '').replace(/[\\]/g, '/');
+		const absPath = io.joinPath(mainDir, ...safeRel.split('/'));
+		const dir = absPath.slice(0, absPath.length - safeRel.split('/').slice(-1)[0].length);
+		if (dir.length > 0) io.mkdirRecursive(dir);
+		io.writeFileUtf8(absPath, stringifySortedMap(map));
+		written.push(absPath);
+	}
+
+	const extDir = io.joinPath(translationsDir, 'extensions');
+	io.mkdirRecursive(extDir);
+	const extNames = Object.keys(layout.extensionPackageBundles).sort();
+	for (const extName of extNames) {
+		const map = layout.extensionPackageBundles[extName];
+		const extFolder = io.joinPath(extDir, extName);
+		io.mkdirRecursive(extFolder);
+		const absPath = io.joinPath(extFolder, 'package.i18n.json');
+		io.writeFileUtf8(absPath, stringifySortedMap(map));
+		written.push(absPath);
+	}
+
+	return {
+		localeTag: layout.localeTag,
+		rootDir,
+		writtenFiles: written,
+	};
+}
+
+function stringifySortedMap(map: ReadonlyMap<string, string>): string {
+	const sorted = [...map.entries()].sort(([a], [b]) => a.localeCompare(b));
+	const obj: Record<string, string> = {};
+	for (const [k, v] of sorted) obj[k] = v;
+	return JSON.stringify(obj, null, '\t') + '\n';
+}
+
+// -----------------------------------------------------------------------------
+// product.json:builtInExtensions injection (roadmap line 490)
+// -----------------------------------------------------------------------------
+
+export interface BuiltInExtensionEntry {
+	readonly name: string;
+	readonly version: string;
+	readonly repo: string;
+	readonly metadata?: Record<string, unknown>;
 }
 
 /**
- * Stub for the release-pipeline hook (roadmap line 498).
- * Throws the sentinel — caller replaces with the real `release-windows.ps1`
- * pre-build step that emits the language pack(s) before the main build.
+ * Inject a language-pack entry into `product.json:builtInExtensions`.
+ * Pure mutation on a deep-clone of the caller's product object — caller
+ * writes the result back to disk.
+ *
+ * - Duplicate `name` entries are de-duplicated by `name`; the new entry
+ *   replaces the older version.
+ * - Sorted by `name` so the file diff stays minimal.
+ * - Refuses non-SemVer versions to keep the field machine-parseable.
  */
-export function buildLanguagePackForRelease(_input: { vibeVersion: string; locales: ReadonlyArray<string> }): never {
-	throw new LanguagePackNotImplementedError('buildLanguagePackForRelease');
+export function injectLanguagePackIntoProductJson(
+	productJson: Record<string, unknown>,
+	entry: { readonly localeTag: string; readonly vibeVersion: string; readonly repo: string },
+): Record<string, unknown> {
+	if (!productJson || typeof productJson !== 'object') {
+		throw new LanguagePackNotImplementedError('injectLanguagePackIntoProductJson(invalid-product)');
+	}
+	if (!SUPPORTED_LOCALE_TAG_PATTERN.test(entry.localeTag)) {
+		throw new LanguagePackNotImplementedError(`injectLanguagePackIntoProductJson(invalid-locale=${entry.localeTag})`);
+	}
+	if (!SEMVER_PATTERN.test(entry.vibeVersion)) {
+		throw new LanguagePackNotImplementedError(`injectLanguagePackIntoProductJson(invalid-version=${entry.vibeVersion})`);
+	}
+	if (typeof entry.repo !== 'string' || entry.repo.length === 0) {
+		throw new LanguagePackNotImplementedError('injectLanguagePackIntoProductJson(empty-repo)');
+	}
+
+	const clone: Record<string, unknown> = JSON.parse(JSON.stringify(productJson));
+	const existing = Array.isArray(clone.builtInExtensions) ? clone.builtInExtensions as BuiltInExtensionEntry[] : [];
+	const localeTag = entry.localeTag.toLowerCase();
+	const name = `vibeide-language-pack-${localeTag}`;
+
+	const merged: BuiltInExtensionEntry[] = existing.filter(e => e && typeof e === 'object' && e.name !== name);
+	merged.push({
+		name,
+		version: entry.vibeVersion,
+		repo: entry.repo,
+		metadata: { id: name, publisherDisplayName: 'VibeIDE Team' },
+	});
+	merged.sort((a, b) => a.name.localeCompare(b.name));
+
+	clone.builtInExtensions = merged;
+	return clone;
+}
+
+// -----------------------------------------------------------------------------
+// Release-pipeline contract (roadmap line 498)
+// -----------------------------------------------------------------------------
+
+export interface LanguagePackReleasePlan {
+	readonly vibeVersion: string;
+	readonly assets: ReadonlyArray<{ readonly localeTag: string; readonly assetName: string }>;
+}
+
+/**
+ * Compute the per-locale VSIX assets the release pipeline must upload.
+ * Pure — `release-windows.ps1` calls this through the gulp pipeline by
+ * way of `bin/vibe-language-pack-build.mjs` and uses the returned
+ * `assetName` list to add files to the `gh release create` argv.
+ */
+export function planLanguagePackRelease(input: {
+	readonly vibeVersion: string;
+	readonly locales: ReadonlyArray<string>;
+}): LanguagePackReleasePlan {
+	if (!SEMVER_PATTERN.test(input.vibeVersion)) {
+		throw new LanguagePackNotImplementedError(`planLanguagePackRelease(invalid-version=${input.vibeVersion})`);
+	}
+	if (!Array.isArray(input.locales)) {
+		throw new LanguagePackNotImplementedError('planLanguagePackRelease(locales-not-array)');
+	}
+	const seen = new Set<string>();
+	const assets: { localeTag: string; assetName: string }[] = [];
+	for (const raw of input.locales) {
+		if (typeof raw !== 'string' || !SUPPORTED_LOCALE_TAG_PATTERN.test(raw)) {
+			throw new LanguagePackNotImplementedError(`planLanguagePackRelease(invalid-locale=${String(raw)})`);
+		}
+		const tag = raw.toLowerCase();
+		if (seen.has(tag)) continue;
+		seen.add(tag);
+		assets.push({ localeTag: tag, assetName: buildLanguagePackAssetName(tag, input.vibeVersion) });
+	}
+	assets.sort((a, b) => a.localeTag.localeCompare(b.localeTag));
+	return { vibeVersion: input.vibeVersion, assets };
 }

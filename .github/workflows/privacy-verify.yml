@@ -1,74 +1,140 @@
-# Privacy verify — strict-mode outbound audit (L.5 / 1048)
+# Privacy verify — hard gate (L1045 / L1113).
 #
-# Static audit pass that fails when *new* fetch / http / https / net.connect
-# / dns lookup call sites are introduced under `src/vs/workbench/contrib/vibeide/`
-# without an accompanying entry in `references/v1/privacy-allowlist.md`. The
-# real e2e sniffer (run with `--privacy.strict=true` and a network-mock) is
-# blocked on Playwright in CI for this fork — this static gate is the
-# warning-only stand-in.
+# Two stages:
+#   1. static-audit  — scripts/privacy-ci-check.mjs (blocked domains in source +
+#      product.json; raw fetch() in React without @privacy-approved-fetch).
+#      Plus a diff-based check that surfaces NEW outbound call sites added to
+#      src/vs/workbench/contrib/vibeide/**.ts on this PR.
+#   2. playwright-sniffer — runs the network-mock spec
+#      `test/componentFixtures/playwright/tests/privacyNetworkSniffer.spec.ts`
+#      which fails the build if the component fixtures (rendered via the
+#      component-explorer server) make any outbound request to a blocked
+#      telemetry host or to an undeclared external host.
 #
-# To unblock a legitimate new outbound call site:
-#   1. Add the call to `references/v1/privacy-allowlist.md` with one-line
-#      justification (allowed services: Ollama localhost, registered MCP
-#      servers, GitHub release manifest).
-#   2. Either land the file in the same PR (preferred) or land it in main
-#      first and rebase — the workflow only checks the head commit's tree.
+# Both stages are required for the workflow to pass — this is the hard gate
+# referenced by roadmap L1045 (privacy strict-mode) and L1113 (sniffer
+# integration). The earlier warn-only mode is gone.
 #
-# Closes the warn-only side of L.5 / 1048. The Playwright + sniffer
-# integration that turns this into a hard gate remains a follow-up.
+# To allowlist a new external host, edit ALLOWED_EXTERNAL_HOSTS in
+# privacyNetworkSniffer.spec.ts. To allow a new outbound call site in source,
+# add it to references/v1/privacy-allowlist.md.
 
 name: privacy-verify
 
 on:
+  push:
+    branches: [main]
   pull_request:
-    paths:
-      - 'src/vs/workbench/contrib/vibeide/**/*.ts'
-      - 'references/v1/privacy-allowlist.md'
-      - '.github/workflows/privacy-verify.yml'
+    branches:
+      - main
+      - 'release/*'
 
 permissions:
   contents: read
 
+concurrency:
+  group: privacy-verify-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
 jobs:
   static-audit:
-    name: outbound call site audit
+    name: static source audit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Find new outbound call sites
-        id: find
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Run scripts/privacy-ci-check.mjs (hard gate)
+        run: node scripts/privacy-ci-check.mjs
+
+      - name: Diff-based check — flag new outbound call sites without allowlist entry
+        if: github.event_name == 'pull_request'
         shell: bash
         run: |
           set -euo pipefail
           BASE_SHA="${{ github.event.pull_request.base.sha }}"
           HEAD_SHA="${{ github.event.pull_request.head.sha }}"
-          # Lines added under contrib/vibeide that look like network calls.
           ADDED=$(git diff "$BASE_SHA..$HEAD_SHA" -- 'src/vs/workbench/contrib/vibeide/**/*.ts' \
             | awk '/^\+\+\+ /{ f=substr($0,7) } /^\+[^+]/ { print f ": " substr($0,2) }' \
             | grep -E 'fetch\(|http\.request\(|https\.request\(|net\.connect\(|dns\.lookup\(' || true)
           if [ -z "$ADDED" ]; then
-            echo "added=" >> "$GITHUB_OUTPUT"
+            echo "No new outbound call sites added."
             exit 0
           fi
-          {
-            echo 'added<<EOF'
-            echo "$ADDED"
-            echo 'EOF'
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Warn when allowlist is missing
-        if: steps.find.outputs.added != ''
-        shell: bash
-        run: |
-          set -euo pipefail
-          ADDED='${{ steps.find.outputs.added }}'
-          echo "::warning::PR introduces outbound call sites:"
-          echo "$ADDED"
           if [ ! -f references/v1/privacy-allowlist.md ]; then
-            echo "::warning::references/v1/privacy-allowlist.md does not exist; consider adding one with justifications for the new sites above."
+            echo "::error::PR introduces outbound call sites but references/v1/privacy-allowlist.md is missing:"
+            echo "$ADDED"
+            exit 1
           fi
-          # Soft gate by default. Flip to `exit 1` once Playwright sniffer lands.
-          exit 0
+          # If any added line is NOT mentioned in privacy-allowlist.md, fail.
+          MISSING=""
+          while IFS= read -r line; do
+            # crude heuristic: look for a token from the added line in the allowlist
+            token=$(echo "$line" | grep -oE 'fetch\(|http\.request\(|https\.request\(|net\.connect\(|dns\.lookup\(' | head -n1)
+            file=$(echo "$line" | sed -E 's/:.*//')
+            if ! grep -q "$file" references/v1/privacy-allowlist.md ; then
+              MISSING+="$line"$'\n'
+            fi
+          done <<<"$ADDED"
+          if [ -n "$MISSING" ]; then
+            echo "::error::New outbound call sites not declared in references/v1/privacy-allowlist.md:"
+            echo "$MISSING"
+            exit 1
+          fi
+          echo "All new outbound call sites are declared in references/v1/privacy-allowlist.md."
+
+  playwright-sniffer:
+    name: playwright network sniffer
+    runs-on: ubuntu-latest
+    needs: static-audit
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install build dependencies
+        run: npm ci
+        working-directory: build
+
+      - name: Install rspack dependencies
+        run: npm ci
+        working-directory: build/rspack
+
+      - name: Transpile source
+        run: npm run transpile-client
+
+      - name: Install Playwright test dependencies
+        run: npm ci
+        working-directory: test/componentFixtures/playwright
+
+      - name: Install Playwright Chromium
+        run: npx playwright install chromium
+        working-directory: test/componentFixtures/playwright
+
+      - name: Run privacy network-sniffer spec (hard gate)
+        run: npx playwright test tests/privacyNetworkSniffer.spec.ts
+        working-directory: test/componentFixtures/playwright
+
+      - name: Upload Playwright results on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: privacy-sniffer-results
+          path: test/componentFixtures/playwright/test-results/

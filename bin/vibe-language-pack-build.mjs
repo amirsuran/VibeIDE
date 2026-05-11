@@ -48,14 +48,37 @@ class LanguagePackBuildError extends Error {
 }
 
 function parseArgs(argv) {
-	const args = { locale: undefined, stagingOnly: false };
+	const args = { locale: undefined, stagingOnly: false, injectProductJson: false };
 	for (let i = 2; i < argv.length; i++) {
 		const a = argv[i];
 		if (a === '--locale' && argv[i + 1]) { args.locale = argv[++i]; continue; }
 		if (a === '--staging-only') { args.stagingOnly = true; continue; }
+		if (a === '--inject-product-json') { args.injectProductJson = true; continue; }
 		if (a === '--help' || a === '-h') { args.help = true; continue; }
 	}
 	return args;
+}
+
+function injectProductJson(locale, vibeVersion) {
+	// CLI-side duplicate of injectLanguagePackIntoProductJson from
+	// src/vs/workbench/contrib/vibeide/common/i18nLanguagePackBuilder.ts — kept
+	// minimal so the bin script stays zero-dep.
+	const productPath = path.join(ROOT, 'product.json');
+	const product = JSON.parse(fs.readFileSync(productPath, 'utf8'));
+	const existing = Array.isArray(product.builtInExtensions) ? product.builtInExtensions : [];
+	const name = `vibeide-language-pack-${locale}`;
+	const repo = 'https://github.com/borodatych/VibeIDE';
+	const filtered = existing.filter(e => e && typeof e === 'object' && e.name !== name);
+	filtered.push({
+		name,
+		version: vibeVersion,
+		repo,
+		metadata: { id: name, publisherDisplayName: 'VibeIDE Team' },
+	});
+	filtered.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+	product.builtInExtensions = filtered;
+	fs.writeFileSync(productPath, JSON.stringify(product, null, '\t') + '\n', 'utf8');
+	console.log(`[vibe-language-pack-build] injected ${name}@${vibeVersion} into product.json:builtInExtensions`);
 }
 
 function printHelp() {
@@ -180,6 +203,10 @@ async function main() {
 	}
 
 	await buildVsix(stageDir, locale, vibeVersion);
+
+	if (args.injectProductJson) {
+		injectProductJson(locale, vibeVersion);
+	}
 }
 
 main().catch(err => {

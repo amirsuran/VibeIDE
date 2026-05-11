@@ -1,23 +1,29 @@
-# Test coverage — soft gate per L.0 / 983
+# Test coverage — hard gate (L980)
 #
-# Counts the unit tests that ship with vibeide pure-helper modules (one
-# `.test.ts` per public helper). Posts a delta comment on the PR; warns when
-# coverage drops vs main. NOT a hard block — full c8 coverage tooling is
-# deferred until the test suite is consistently runnable from CI without
-# the React out-bundle, which is currently a prerequisite for the typecheck.
+# Two jobs:
+#   1. pair-check     — file-pair report (helper.ts ↔ helper.test.ts). Soft
+#                       informational PR comment.
+#   2. line-coverage  — c8 line-coverage gate over the contrib/vibeide pure-
+#                       helper Mocha test suite. Reads `.c8rc` thresholds
+#                       (lines/functions/branches/statements). Fails the build
+#                       if any threshold is missed; this is the hard gate
+#                       referenced by roadmap L980.
 #
-# Until then, this workflow tracks "did this PR add a test alongside the new
-# pure helper?" — a simple file-pair count works for the pattern the codebase
-# already follows. Closes the warn-only side of L.0 / 983; the c8 line-coverage
-# gate remains a follow-up.
+# Why pure-helpers only:
+#   The full integration suite needs an Electron build, which is too heavy for
+#   PR-time coverage gating. The pure-helper tests run under Node + Mocha
+#   against `out/`, so c8 can wrap them directly with no Electron prelaunch.
 
 name: test-coverage
 
 on:
+  push:
+    branches: [main]
   pull_request:
     paths:
       - 'src/vs/workbench/contrib/vibeide/common/**/*.ts'
       - 'src/vs/workbench/contrib/vibeide/test/common/**/*.ts'
+      - '.c8rc'
       - '.github/workflows/test-coverage.yml'
 
 permissions:
@@ -42,7 +48,6 @@ jobs:
           TESTS=$(git ls-files 'src/vs/workbench/contrib/vibeide/test/common/*.test.ts' | wc -l)
           echo "helpers=$HELPERS" >> "$GITHUB_OUTPUT"
           echo "tests=$TESTS" >> "$GITHUB_OUTPUT"
-          # Find helpers that don't have a same-name test file.
           MISSING=$(git ls-files 'src/vs/workbench/contrib/vibeide/common/*.ts' \
             | xargs -I{} basename {} .ts \
             | sort -u \
@@ -58,7 +63,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Comment summary
-        if: always()
+        if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           script: |
@@ -75,7 +80,7 @@ jobs:
               'Helpers without a same-name test file (top 10):',
               `  • ${top || '(none)'}`,
               '',
-              '_Soft gate per roadmap L.0 / 983 — does not block merge._',
+              '_Informational — file-pair tracking. Hard gate lives in the `line-coverage` job._',
             ].join('\n');
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
@@ -98,3 +103,48 @@ jobs:
                 body,
               });
             }
+
+  line-coverage:
+    name: c8 line-coverage gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+
+      - name: Install build dependencies
+        run: npm ci
+        working-directory: build
+
+      - name: Transpile source
+        run: npm run transpile-client
+
+      - name: Run pure-helper tests under c8 (hard gate from .c8rc)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Discover transpiled test files under out/.
+          TESTS=$(find out/vs/workbench/contrib/vibeide/test/common -name '*.test.js' 2>/dev/null | tr '\n' ' ')
+          if [ -z "$TESTS" ]; then
+            echo "::error::No transpiled .test.js files found under out/vs/workbench/contrib/vibeide/test/common/ — coverage gate cannot run."
+            exit 1
+          fi
+          # Run mocha under c8; c8 reads .c8rc for thresholds (lines/functions/branches/statements).
+          npx --yes c8@9 --config .c8rc --check-coverage \
+            npx --yes mocha@10 --reporter spec --timeout 30000 $TESTS
+
+      - name: Upload coverage report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: c8-coverage-report
+          path: .build/coverage/
