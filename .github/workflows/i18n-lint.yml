@@ -5,8 +5,11 @@
 # compile step required for the workflow). The unit tests on the .ts module
 # are the canonical regression coverage; the .mjs runner just walks the tree.
 #
-# Output as PR annotations, warning-only — adoption of localize() across the
-# vibeide tree is gradual and tracked in roadmap §K.4 line 478.
+# STRICT MODE (roadmap K.4 L520 enabled 2026-05-11):
+# Baseline is 0 findings on `main` since the May sweep wrapped all 25 prior
+# legacy strings or marked their host files with `@i18n-scan-skip-file`. Any
+# regression FAILS CI. To opt a pure CLI helper out, add the directive in its
+# header comment; that explicitly documents the trade-off in code review.
 
 name: i18n-lint
 
@@ -33,7 +36,7 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Scan for unwrapped user-facing strings
+      - name: Scan for unwrapped user-facing strings (strict — fail on any)
         shell: bash
         run: |
           set -euo pipefail
@@ -45,10 +48,12 @@ jobs:
               const data = JSON.parse(require('fs').readFileSync('/tmp/i18n-scan.json','utf8'));
               for (const { filePath, result } of data.perFile) {
                 for (const f of result.findings) {
-                  console.log('::warning file=' + filePath + ',line=' + f.line + ',col=' + f.column + '::Unwrapped user string (' + f.callsite + '): ' + f.snippet);
+                  console.log('::error file=' + filePath + ',line=' + f.line + ',col=' + f.column + '::Unwrapped user string (' + f.callsite + '): ' + f.snippet);
                 }
               }
             "
+            echo ""
+            echo "::error::i18n-lint: ${findings} unwrapped user-facing string(s). Wrap with localize() / l10n.t(), or add @i18n-scan-skip-file to the file header if it's a pure CLI helper (see common/standaloneDoctorEnv.ts for precedent)."
+            exit 1
           fi
-          # Warning-only: do not fail the job.
-          exit 0
+          echo "OK — no unwrapped user-facing literals."
