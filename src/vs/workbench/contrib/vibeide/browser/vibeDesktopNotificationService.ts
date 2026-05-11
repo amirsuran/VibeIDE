@@ -30,6 +30,7 @@ import { INotificationService, Severity } from '../../../../platform/notificatio
 import { Registry } from '../../../../platform/registry/common/platform.js';
 import { IConfigurationRegistry, Extensions as ConfigurationExtensions } from '../../../../platform/configuration/common/configurationRegistry.js';
 import { localize } from '../../../../nls.js';
+import { validateDesktopNotification } from '../common/desktopNotificationSpec.js';
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 
@@ -86,8 +87,9 @@ export interface IVibeDesktopNotificationService {
 class VibeDesktopNotificationService extends Disposable implements IVibeDesktopNotificationService {
 	declare readonly _serviceBrand: undefined;
 
-	/** Track last notification time per type to implement throttle */
 	private readonly _lastFiredAt = new Map<ApprovalEventType, number>();
+	/** Live OS notifications keyed by type so we can programmatically close them */
+	private readonly _activeOsNotifications = new Map<ApprovalEventType, Notification>();
 
 	constructor(
 		@ILogService private readonly _log: ILogService,
@@ -119,17 +121,56 @@ class VibeDesktopNotificationService extends Disposable implements IVibeDesktopN
 		this._lastFiredAt.set(notification.type, now);
 		this._log.info(`[VibeDesktopNotif] Firing approval notification: type=${notification.type} urgent=${notification.urgent}`);
 
-		// Phase MVP: INotificationService (in-IDE toast).
-		// Phase 3b: Electron Notification API for real OS-level toast when window unfocused.
-		this._notifications.notify({
-			severity: notification.urgent ? Severity.Warning : Severity.Info,
-			message: `${notification.title}\n${notification.body}`,
-		});
+		const draft = { title: notification.title, body: notification.body, urgency: notification.urgent ? 'critical' as const : 'normal' as const };
+		const validation = validateDesktopNotification(draft, this._getPlatform());
+		if (!validation.ok) {
+			this._log.warn(`[VibeDesktopNotif] Spec validation failed: ${validation.issues.join(', ')} — falling back to in-IDE toast`);
+			this._notifications.notify({ severity: Severity.Info, message: `${notification.title}\n${notification.body}` });
+			return;
+		}
+
+		// Use Electron's window.Notification when available and the window is not focused.
+		// Fallback to INotificationService (in-IDE toast) when the window is in front or
+		// the Notification API is absent (web context).
+		const windowFocused = typeof document !== 'undefined' && document.hasFocus();
+		const canUseOs = typeof window !== 'undefined'
+			&& typeof (window as any).Notification === 'function'
+			&& (window as any).Notification.permission === 'granted';
+
+		if (canUseOs && !windowFocused) {
+			try {
+				const prev = this._activeOsNotifications.get(notification.type);
+				prev?.close();
+				const osn = new (window as any).Notification(validation.spec.title, { body: validation.spec.body, silent: validation.spec.silent });
+				this._activeOsNotifications.set(notification.type, osn);
+				this._log.trace(`[VibeDesktopNotif] OS notification fired for type=${notification.type}`);
+			} catch (err) {
+				this._log.warn(`[VibeDesktopNotif] OS Notification threw: ${err} — falling back to in-IDE toast`);
+				this._notifications.notify({ severity: notification.urgent ? Severity.Warning : Severity.Info, message: `${notification.title}\n${notification.body}` });
+			}
+		} else {
+			this._notifications.notify({
+				severity: notification.urgent ? Severity.Warning : Severity.Info,
+				message: `${notification.title}\n${notification.body}`,
+			});
+		}
 	}
 
 	dismissForType(type: ApprovalEventType): void {
-		// Phase 3b: programmatically close the OS notification if API supports it.
-		this._log.trace(`[VibeDesktopNotif] Dismiss requested for type=${type}`);
+		const osn = this._activeOsNotifications.get(type);
+		if (osn) {
+			try { osn.close(); } catch { /* already closed */ }
+			this._activeOsNotifications.delete(type);
+		}
+		this._log.trace(`[VibeDesktopNotif] Dismissed type=${type}`);
+	}
+
+	private _getPlatform(): import('../common/desktopNotificationSpec.js').NotificationPlatform {
+		if (typeof process !== 'undefined' && typeof process.platform === 'string') {
+			const p = process.platform;
+			if (p === 'win32' || p === 'darwin' || p === 'linux') return p;
+		}
+		return 'unknown';
 	}
 }
 

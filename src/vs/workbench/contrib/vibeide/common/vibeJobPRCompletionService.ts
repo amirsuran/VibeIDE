@@ -26,6 +26,9 @@ import { createDecorator } from '../../../../platform/instantiation/common/insta
 import { registerSingleton, InstantiationType } from '../../../../platform/instantiation/common/extensions.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { IAuditLogService } from './auditLogService.js';
+import { IRequestService, asJson } from '../../../../platform/request/common/request.js';
+import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+import { CancellationToken } from '../../../../base/common/cancellation.js';
 
 export interface JobPRRequest {
 	jobId: string;
@@ -72,12 +75,20 @@ export interface IVibeJobPRCompletionService {
 	generatePRBody(jobId: string, steps: string[], tokensUsed: number): string;
 }
 
+interface GitHubPRResponse {
+	html_url?: string;
+	number?: number;
+	message?: string; // GitHub error message field
+}
+
 class VibeJobPRCompletionService extends Disposable implements IVibeJobPRCompletionService {
 	declare readonly _serviceBrand: undefined;
 
 	constructor(
 		@ILogService private readonly _log: ILogService,
 		@IAuditLogService private readonly _audit: IAuditLogService,
+		@IRequestService private readonly _request: IRequestService,
+		@IConfigurationService private readonly _config: IConfigurationService,
 	) {
 		super();
 	}
@@ -86,20 +97,60 @@ class VibeJobPRCompletionService extends Disposable implements IVibeJobPRComplet
 		const branchName = request.branchName ?? `vibeide-agent/${request.jobId.slice(0, 20)}`;
 		this._log.info(`[VibeJobPR] Creating PR for job ${request.jobId} on branch ${branchName}`);
 
-		// Phase 3b: create branch + commit + SCM provider PR API
-		// MVP: log and return placeholder result
-		this._audit.append({
-			ts: Date.now(),
-			action: 'job_pr_creation',
-			ok: true,
-			meta: { jobId: request.jobId, branchName, draft: request.draft ?? true },
-		});
+		const token = this._config.getValue<string>('vibeide.git.githubToken');
+		const repoSlug = this._config.getValue<string>('vibeide.git.repoSlug'); // "owner/repo"
+		const baseBranch = this._config.getValue<string>('vibeide.git.defaultBranch') ?? 'main';
 
-		return {
-			status: 'created',
-			branchName,
-			prUrl: undefined, // Phase 3b: actual PR URL from provider API
-		};
+		if (!token || !repoSlug) {
+			this._log.warn('[VibeJobPR] Missing vibeide.git.githubToken or vibeide.git.repoSlug — skipping GitHub PR creation');
+			this._audit.append({ ts: Date.now(), action: 'job_pr_creation', ok: false, meta: { jobId: request.jobId, reason: 'no-token-or-slug' } });
+			return { status: 'disabled', reason: 'github-token-or-repo-slug-not-configured', branchName };
+		}
+
+		const title = request.title ?? this.generatePRTitle(request.jobId, []);
+		const body = request.body ?? '';
+		const draft = request.draft ?? true;
+		const url = `https://api.github.com/repos/${repoSlug}/pulls`;
+
+		try {
+			const ctx = await this._request.request({
+				type: 'POST',
+				url,
+				data: JSON.stringify({ title, body, head: branchName, base: baseBranch, draft }),
+				headers: {
+					'Content-Type': 'application/json',
+					'Authorization': `Bearer ${token}`,
+					'Accept': 'application/vnd.github+json',
+					'X-GitHub-Api-Version': '2022-11-28',
+					'User-Agent': 'VibeIDE',
+				},
+				callSite: 'VibeJobPRCompletionService.createPRForJob',
+			}, CancellationToken.None);
+
+			const data = await asJson<GitHubPRResponse>(ctx);
+
+			if (ctx.res.statusCode === 422 && data?.message?.toLowerCase().includes('already exists')) {
+				this._audit.append({ ts: Date.now(), action: 'job_pr_creation', ok: true, meta: { jobId: request.jobId, branchName, status: 'already_exists' } });
+				return { status: 'already_exists', branchName };
+			}
+
+			if (!ctx.res.statusCode || ctx.res.statusCode >= 400) {
+				const reason = data?.message ?? `HTTP ${ctx.res.statusCode}`;
+				this._log.error(`[VibeJobPR] GitHub API error: ${reason}`);
+				this._audit.append({ ts: Date.now(), action: 'job_pr_creation', ok: false, meta: { jobId: request.jobId, reason } });
+				return { status: 'failed', reason, branchName };
+			}
+
+			const prUrl = data?.html_url;
+			this._log.info(`[VibeJobPR] PR created: ${prUrl}`);
+			this._audit.append({ ts: Date.now(), action: 'job_pr_creation', ok: true, meta: { jobId: request.jobId, branchName, prUrl, draft } });
+			return { status: 'created', branchName, prUrl };
+		} catch (err: unknown) {
+			const reason = err instanceof Error ? err.message : String(err);
+			this._log.error(`[VibeJobPR] Request failed: ${reason}`);
+			this._audit.append({ ts: Date.now(), action: 'job_pr_creation', ok: false, meta: { jobId: request.jobId, reason } });
+			return { status: 'failed', reason, branchName };
+		}
 	}
 
 	generatePRTitle(jobId: string, steps: string[]): string {

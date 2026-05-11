@@ -1,0 +1,165 @@
+# i18n README badge — auto-updates the i18n badge in README.md on every push to main.
+#
+# Reads vibeide.nls.<locale>.json bundles from the out/ directory,
+# computes per-locale coverage via formatI18nBadge (i18nDoctorReport.ts CJS mirror),
+# and rewrites the ![i18n badge](...) line in README.md.
+#
+# Shields.io colour rules (lowest coverage drives the badge):
+#   >= 95%  brightgreen | >= 80%  green | >= 50%  yellow | >= 25%  orange | < 25%  red
+#
+# (roadmap §L525 — CI README-replacement workflow)
+
+name: i18n-readme-badge
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'out/vibeide.nls.*.json'
+      - 'src/vs/workbench/contrib/vibeide/**/*.ts'
+      - '.github/workflows/i18n-readme-badge.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-badge:
+    name: Update i18n README badge
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # ── Build NLS metadata (needed for totalMetadataCount) ──────────────────
+      - name: Extract NLS metadata
+        run: |
+          set -euo pipefail
+          if [ -f "out/vibeide.nls.metadata.json" ]; then
+            echo "NLS metadata already present in out/"
+          else
+            echo "NLS metadata not found — skipping metadata-key count (will use bundle key count)"
+          fi
+
+      # ── Compute badge URL via inline Node script ─────────────────────────────
+      - name: Compute i18n badge
+        id: badge
+        run: |
+          set -euo pipefail
+          node - <<'EOF'
+          const fs = require('fs');
+          const path = require('path');
+
+          const outDir = path.join(process.cwd(), 'out');
+          const localePattern = /^vibeide\.nls\.([a-z]{2}(?:-[a-zA-Z]{2,8})*)\.json$/;
+
+          // Discover locale bundles.
+          let files = [];
+          try { files = fs.readdirSync(outDir); } catch (_) {}
+          const localeBundles = [];
+          for (const f of files) {
+            const m = f.match(localePattern);
+            if (!m) continue;
+            try {
+              const raw = JSON.parse(fs.readFileSync(path.join(outDir, f), 'utf8'));
+              localeBundles.push({ tag: m[1], bundle: raw });
+            } catch (_) {}
+          }
+
+          if (localeBundles.length === 0) {
+            console.log('No locale bundles found — badge unchanged');
+            fs.writeFileSync('/tmp/badge-url.txt', '');
+            process.exit(0);
+          }
+
+          // Determine total key count from metadata, fall back to largest bundle.
+          let totalKeys = 0;
+          try {
+            const meta = JSON.parse(fs.readFileSync(path.join(outDir, 'vibeide.nls.metadata.json'), 'utf8'));
+            for (const [, v] of Object.entries(meta)) {
+              if (v && Array.isArray(v.keys)) totalKeys += v.keys.length;
+            }
+          } catch (_) {}
+          if (totalKeys === 0) {
+            totalKeys = Math.max(...localeBundles.map(lb => Object.keys(lb.bundle).length));
+          }
+
+          // Build snapshots (staleKeyCount not available in CI — set to 0).
+          const snapshots = localeBundles.map(lb => ({
+            localeTag: lb.tag,
+            translatedCount: Object.values(lb.bundle).filter(v => typeof v === 'string' && v.length > 0 && !v.startsWith('[NEEDS_TRANSLATION]')).length,
+            totalMetadataCount: totalKeys,
+            staleKeyCount: 0,
+          }));
+
+          // Sort alphabetically.
+          snapshots.sort((a, b) => a.localeTag.localeCompare(b.localeTag));
+
+          // Compute coverage per locale.
+          function coveragePct(s) {
+            return s.totalMetadataCount > 0 ? (s.translatedCount / s.totalMetadataCount) * 100 : 0;
+          }
+
+          // Pick colour (lowest coverage drives badge).
+          const minPct = Math.min(...snapshots.map(coveragePct));
+          const colour = minPct >= 95 ? 'brightgreen'
+            : minPct >= 80 ? 'green'
+            : minPct >= 50 ? 'yellow'
+            : minPct >= 25 ? 'orange'
+            : 'red';
+
+          // Format badge message.
+          const parts = snapshots.map(s => `${s.localeTag} ${Math.round(coveragePct(s))}%`);
+          const message = parts.join(' / ');
+          const shieldsUrl = `https://img.shields.io/badge/i18n-${encodeURIComponent(message)}-${colour}`;
+
+          console.log(`Badge URL: ${shieldsUrl}`);
+          fs.writeFileSync('/tmp/badge-url.txt', shieldsUrl);
+          EOF
+
+      # ── Rewrite the i18n badge in README.md ─────────────────────────────────
+      - name: Update README badge
+        run: |
+          set -euo pipefail
+          BADGE_URL=$(cat /tmp/badge-url.txt)
+          if [ -z "$BADGE_URL" ]; then
+            echo "No badge URL computed — nothing to update"
+            exit 0
+          fi
+
+          README="README.md"
+          if [ ! -f "$README" ]; then
+            echo "README.md not found — skipping"
+            exit 0
+          fi
+
+          # Match lines containing the i18n badge (shields.io badge with "i18n" label or alt text).
+          # Pattern: ![i18n ...](https://img.shields.io/badge/i18n-...)
+          if grep -qE '!\[i18n[^]]*\]\(https://img\.shields\.io/badge/i18n-[^)]*\)' "$README"; then
+            sed -i -E "s|!\[i18n[^]]*\]\(https://img\.shields\.io/badge/i18n-[^)]*\)|![i18n](${BADGE_URL})|g" "$README"
+            echo "README badge updated"
+          else
+            echo "No i18n badge line found in README.md — no changes"
+            exit 0
+          fi
+
+      # ── Commit + push (only if README changed) ───────────────────────────────
+      - name: Commit and push badge update
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet README.md; then
+            echo "No changes to README.md — nothing to commit"
+          else
+            git add README.md
+            git commit -m "chore: update i18n README badge [skip ci]"
+            git push
+          fi
