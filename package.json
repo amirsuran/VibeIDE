@@ -41,6 +41,7 @@
     "transpile-client": "node build/next/index.ts transpile",
     "nls-extract": "npx tsx scripts/vibe-nls-extract.ts",
     "nls-extract:vibeide": "npx tsx scripts/vibe-nls-extract.ts --vibeide-only",
+    "nls-metadata-dump:vibeide": "node scripts/vibe-nls-metadata-dump.mjs",
     "sync-language-pack-ru": "node scripts/sync-vscode-loc-ru.mjs",
     "restore-branding": "python bin/restore-vibeide-branding.py",
     "watch-client-transpile": "node build/next/index.ts transpile --watch",

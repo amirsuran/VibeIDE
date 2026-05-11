@@ -5,6 +5,14 @@
 # compile step required for the workflow). The unit tests on the .ts module
 # are the canonical regression coverage; the .mjs runner just walks the tree.
 #
+# PATH EXCLUSION POLICY (roadmap L484, adopted 2026-05-11):
+# The scanner mirrors the rules in common/i18nExtractionPolicy.ts so that
+# skill-prompt templates, persona templates, workflow YAML, test fixtures,
+# snapshot files, build artefacts, docs-only Markdown, react/out bundles and
+# community-pack content NEVER produce lint findings. The same policy gates
+# the gulp `extract-vibeide-locale-strings` task — the two stay symmetric
+# so a path can't be excluded from translation while still being lint-noisy.
+#
 # STRICT MODE (roadmap K.4 L520 enabled 2026-05-11):
 # Baseline is 0 findings on `main` since the May sweep wrapped all 25 prior
 # legacy strings or marked their host files with `@i18n-scan-skip-file`. Any

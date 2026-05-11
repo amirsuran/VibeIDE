@@ -97,6 +97,36 @@ function trimSnippet(s) {
 // MUST stay in sync with I18N_SCAN_SKIP_DIRECTIVE in i18nUnwrappedScanner.ts.
 const I18N_SCAN_SKIP_DIRECTIVE = '@i18n-scan-skip-file';
 
+// MUST stay in sync with RULES in src/vs/workbench/contrib/vibeide/common/i18nExtractionPolicy.ts.
+// Used to keep i18n-lint findings symmetric with the gulp `extract-vibeide-locale-strings`
+// task: any path that the extractor refuses to scan must also be invisible to the lint pass,
+// otherwise reviewers see noise from files that will never produce a translatable key.
+// Reasons live as discriminated strings so JSON consumers can group findings later.
+const I18N_EXCLUSION_RULES = [
+	{ reason: 'skill-prompt-template', test: (p) => /(\.vibe[/\\])?skills[/\\][^/\\]+[/\\]SKILL\.md$/i.test(p) || /\.vibe[/\\]prompts[/\\][^/\\]+\.md$/i.test(p) },
+	{ reason: 'persona-template', test: (p) => /\.vibe[/\\]personas[/\\][^/\\]+[/\\]persona\.md$/i.test(p) },
+	{ reason: 'workflow-yaml', test: (p) => /\.vibe[/\\]workflows[/\\][^/\\]+\.ya?ml$/i.test(p) },
+	{ reason: 'react-out-bundle', test: (p) => /[\\/]react[\\/]out[\\/]/i.test(p) },
+	{ reason: 'test-fixture', test: (p) => /[\\/]test[\\/].*\.(test|fixture)\.(ts|tsx|js)$/i.test(p) },
+	{ reason: 'snapshot-file', test: (p) => /\.snap$|__snapshots__[\\/]/i.test(p) },
+	{ reason: 'build-artifact', test: (p) => /^(out[\\/]|\.build[\\/]|dist[\\/]|build[\\/]lib[\\/]|node_modules[\\/])/i.test(p) },
+	{ reason: 'docs-only', test: (p) => /^docs[\\/].*\.md$/i.test(p) || /^references[\\/].*\.md$/i.test(p) },
+	{ reason: 'community-pack-content', test: (p) => /\.vibe[/\\](skills|commands)[/\\].*[/\\](content|README)\.md$/i.test(p) },
+];
+
+function decideI18nExclusion(workspaceRelativePath) {
+	if (typeof workspaceRelativePath !== 'string' || workspaceRelativePath.length === 0) {
+		return { excluded: false };
+	}
+	const normalised = workspaceRelativePath.replace(/^[/\\]+/, '');
+	for (const rule of I18N_EXCLUSION_RULES) {
+		if (rule.test(normalised)) {
+			return { excluded: true, reason: rule.reason };
+		}
+	}
+	return { excluded: false };
+}
+
 function scanUnwrappedLiterals(source) {
 	if (typeof source !== 'string' || source.length === 0) {
 		return { findings: [], visitedSites: 0 };
@@ -139,6 +169,8 @@ function walkSources(root) {
 		}
 		if (!/\.(ts|tsx)$/.test(ent.name)) { continue; }
 		if (/\.test\.tsx?$/.test(ent.name) || /\.fixture\.tsx?$/.test(ent.name)) { continue; }
+		const rel = path.relative(ROOT, p).replace(/\\/g, '/');
+		if (decideI18nExclusion(rel).excluded) { continue; }
 		out.push(p);
 	}
 	return out;
