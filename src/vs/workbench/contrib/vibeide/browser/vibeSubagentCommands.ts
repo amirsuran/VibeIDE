@@ -66,7 +66,7 @@ registerAction2(class extends Action2 {
 				),
 			});
 		} catch (err) {
-			notifications.notify({ severity: Severity.Error, message: `Subagent error: ${err}` });
+			notifications.notify({ severity: Severity.Error, message: localize('vibeide.subagent.error', 'Subagent error: {0}', String(err)) });
 		}
 	}
 });
@@ -100,9 +100,9 @@ registerAction2(class extends Action2 {
 
 		await quickInput.pick(
 			allEntries.map((e: any) => ({
-				label: `${e.type} — ${e.status}`,
+				label: localize('vibeide.subagent.listItemLabel', '{0} — {1}', String(e.type), String(e.status)),
 				description: e.handoff.goal.slice(0, 80),
-				detail: `id: ${e.id} | parent: ${e.parentThreadId}`,
+				detail: localize('vibeide.subagent.listItemDetail', 'id: {0} | parent: {1}', String(e.id), String(e.parentThreadId)),
 			})),
 			{ title: localize('vibeide.subagent.listTitle', 'Active Subagents') }
 		);

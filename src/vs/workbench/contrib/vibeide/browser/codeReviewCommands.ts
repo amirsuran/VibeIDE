@@ -68,7 +68,7 @@ registerAction2(class extends Action2 {
 			},
 			async (progress: IProgress<IProgressStep>) => {
 				try {
-					progress.report({ message: 'Analyzing code...' });
+					progress.report({ message: localize('vibeide.codeReview.analyzing', 'Analyzing code…') });
 
 					// Perform review
 					const result = await codeReviewService.reviewFile(uri, cancellationTokenSource.token);
@@ -86,7 +86,7 @@ registerAction2(class extends Action2 {
 					const contribution = CodeReviewEditorContribution.get(editor);
 					if (contribution) {
 						contribution.setAnnotations(uri, result.annotations);
-						progress.report({ message: `Found ${result.annotations.length} issue(s)` });
+						progress.report({ message: localize('vibeide.codeReview.foundIssues', 'Found {0} issue(s)', result.annotations.length) });
 					}
 
 					// Show notification with summary

@@ -58,7 +58,7 @@ registerAction2(class extends Action2 {
 			},
 			async (progress: IProgress<IProgressStep>) => {
 				try {
-					progress.report({ message: 'Scanning for errors...' });
+					progress.report({ message: localize('vibeide.errorDetection.scanning', 'Scanning for errors…') });
 
 					// Detect errors
 					const errors = await errorDetectionService.detectErrorsInFile(uri, cancellationTokenSource.token);
@@ -71,7 +71,7 @@ registerAction2(class extends Action2 {
 					const contribution = ErrorDetectionEditorContribution.get(editor);
 					if (contribution) {
 						contribution.setErrors(uri, errors);
-						progress.report({ message: `Found ${errors.length} error(s)` });
+						progress.report({ message: localize('vibeide.errorDetection.foundErrors', 'Found {0} error(s)', errors.length) });
 					}
 
 					// Show notification with summary

@@ -740,7 +740,7 @@ registerAction2(class extends Action2 {
 
 		const items: (IQuickPickItem & { resource?: URI })[] = hits.map(h => ({
 			label: h.label,
-			description: `${(h.score * 100).toFixed(0)}% · ${h.preview}`,
+			description: localize('vibeidePlansFindSimilarItemDescription', '{0}% · {1}', (h.score * 100).toFixed(0), h.preview),
 			resource: h.uri,
 		}));
 
@@ -791,8 +791,8 @@ registerAction2(class extends Action2 {
 			defaultUri: roots[0].uri,
 			title: localize('vibeideAttachSpecDialogTitle', 'Select OpenAPI (YAML/JSON) or GraphQL schema'),
 			filters: [
-				{ name: 'API specs', extensions: ['yaml', 'yml', 'json', 'graphql', 'gql'] },
-				{ name: 'All files', extensions: ['*'] },
+				{ name: localize('vibeideAttachSpecFilterApiSpecs', 'API specs'), extensions: ['yaml', 'yml', 'json', 'graphql', 'gql'] },
+				{ name: localize('vibeideAttachSpecFilterAllFiles', 'All files'), extensions: ['*'] },
 			],
 		});
 		const uri = picked?.[0];

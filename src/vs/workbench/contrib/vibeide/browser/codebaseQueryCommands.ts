@@ -10,7 +10,7 @@ import { IQuickInputService, IQuickPickItem } from '../../../../platform/quickin
 import { IEditorService } from '../../../../workbench/services/editor/common/editorService.js';
 import { ILabelService } from '../../../../platform/label/common/label.js';
 import { URI } from '../../../../base/common/uri.js';
-import { localize2 } from '../../../../nls.js';
+import { localize, localize2 } from '../../../../nls.js';
 import { KeyMod, KeyCode } from '../../../../base/common/keyCodes.js';
 import { KeybindingWeight } from '../../../../platform/keybinding/common/keybindingsRegistry.js';
 import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
@@ -71,7 +71,7 @@ registerAction2(class extends Action2 {
 					const fullPath = labelService.getUriLabel(uri, { relative: false });
 
 					return {
-						label: `$(file) ${relativePath}`,
+						label: localize('vibeCodebaseQueryItemLabel', '$(file) {0}', relativePath),
 						description: fullPath,
 						uri,
 						alwaysShow: true,
