@@ -67,7 +67,7 @@ export class VibeTrainingPolicyStatusBarContribution extends Disposable implemen
 		if (!sel || sel.providerName === 'auto' && sel.modelName === 'auto') {
 			return {
 				name: localize('vibeTrainingPolicy', 'VibeIDE training policy'),
-				text: '📚 train: —',
+				text: localize('vibeTrainingPolicyTextNoModel', '📚 train: —'),
 				tooltip: localize('vibeTrainNoModel', 'Select a Chat model to see training / data-use hint from VibeIDE model catalog.'),
 				ariaLabel: localize('vibeTrainAriaNoModel', 'Training policy: not selected'),
 			};

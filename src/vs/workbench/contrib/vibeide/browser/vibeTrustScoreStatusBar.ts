@@ -75,7 +75,7 @@ export class VibeTrustScoreStatusBarContribution extends Disposable implements I
 			case 'manual':
 				return {
 					name: localize('vibeTrustScore', 'VibeIDE Trust Score'),
-					text: `🟢 Manual${budgetWarning}`,
+					text: localize('vibeTrustScoreTextManual', "🟢 Manual{0}", budgetWarning),
 					tooltip: localize('vibeTrustScoreManual', 'Trust Score: Manual — each action requires confirmation. Click to cycle. (Ctrl+Shift+T)'),
 					command: 'vibeide.trustScore.toggle',
 					ariaLabel: localize('vibeTrustScoreAriaManual', 'Trust Score: Manual'),
@@ -83,7 +83,7 @@ export class VibeTrustScoreStatusBarContribution extends Disposable implements I
 			case 'supervised':
 				return {
 					name: localize('vibeTrustScore', 'VibeIDE Trust Score'),
-					text: `🟡 Supervised${budgetWarning}`,
+					text: localize('vibeTrustScoreTextSupervised', "🟡 Supervised{0}", budgetWarning),
 					tooltip: localize('vibeTrustScoreSupervised', 'Trust Score: Supervised — notifications; auto-apply after timeout. Click to cycle. (Ctrl+Shift+T)'),
 					command: 'vibeide.trustScore.toggle',
 					ariaLabel: localize('vibeTrustScoreAriaSupervised', 'Trust Score: Supervised'),
@@ -91,7 +91,7 @@ export class VibeTrustScoreStatusBarContribution extends Disposable implements I
 			case 'auto':
 				return {
 					name: localize('vibeTrustScore', 'VibeIDE Trust Score'),
-					text: `🔴 Auto${budgetWarning}`,
+					text: localize('vibeTrustScoreTextAuto', "🔴 Auto{0}", budgetWarning),
 					tooltip: localize('vibeTrustScoreAuto', 'Trust Score: Auto — agent runs autonomously with budget limits. Click to cycle. (Ctrl+Shift+T)'),
 					command: 'vibeide.trustScore.toggle',
 					ariaLabel: localize('vibeTrustScoreAriaAuto', 'Trust Score: Auto'),

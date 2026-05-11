@@ -19,6 +19,7 @@
 
 import { Disposable } from '../../../../base/common/lifecycle.js';
 import { MutableDisposable } from '../../../../base/common/lifecycle.js';
+import { localize } from '../../../../nls.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
 import { IStatusbarEntryAccessor, IStatusbarService, StatusbarAlignment } from '../../../services/statusbar/browser/statusbar.js';
 import { IVibeCustomCommandsService } from './vibeCustomCommandsService.js';
@@ -60,7 +61,7 @@ export class VibeCustomCommandsStatusBarContribution extends Disposable implemen
 			return;
 		}
 		const props = {
-			name: 'VibeIDE Project Commands',
+			name: localize('vibeProjectCommandsStatusBarName', 'VibeIDE Project Commands'),
 			text: state.text,
 			ariaLabel: state.tooltip,
 			tooltip: state.tooltip,

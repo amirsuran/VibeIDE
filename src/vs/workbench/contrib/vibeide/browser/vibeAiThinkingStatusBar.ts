@@ -20,6 +20,7 @@
  */
 
 import { Disposable, MutableDisposable } from '../../../../base/common/lifecycle.js';
+import { localize } from '../../../../nls.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
 import { IStatusbarEntryAccessor, IStatusbarService, StatusbarAlignment } from '../../../services/statusbar/browser/statusbar.js';
 import { IChatThreadService } from './chatThreadService.js';
@@ -96,7 +97,7 @@ export class VibeAiThinkingStatusBarContribution extends Disposable implements I
 		}
 
 		const props = {
-			name: 'VibeIDE AI Thinking',
+			name: localize('vibeAiThinkingStatusBarName', 'VibeIDE AI Thinking'),
 			text: state.text,
 			ariaLabel: state.hint ?? state.text,
 			tooltip: state.hint,
