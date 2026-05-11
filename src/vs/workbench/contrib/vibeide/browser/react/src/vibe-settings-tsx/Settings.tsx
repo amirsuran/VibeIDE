@@ -26,7 +26,7 @@ import { useMCPServiceState } from '../util/services.js';
 import { OPT_OUT_KEY } from '../../../../common/storageKeys.js';
 import { StorageScope, StorageTarget } from '../../../../../../../platform/storage/common/storage.js';
 import { generateUuid } from '../../../../../../../base/common/uuid.js'
-import { nav, modelsS, providersS, generalS, ollamaS, miscS, toolApprovalLabel } from './vibeSettingsRu.js'
+import { nav, modelsS, providersS, generalS, ollamaS, miscS, toolApprovalLabel, safetyS } from './vibeSettingsRu.js'
 
 type Tab =
 	| 'models'
@@ -36,6 +36,7 @@ type Tab =
 	| 'mcp'
 	| 'workspace'
 	| 'general'
+	| 'safety'
 	| 'all';
 
 type AllSettingsGroupKey = Exclude<Tab, 'all'>;
@@ -2011,6 +2012,109 @@ const FeatureOptionsSettingsBody = () => {
 	);
 };
 
+// -----------------------------------------------------------------------------
+// Safety & Diagnostics panel (roadmap §L.6 L1055 / L1056) — radio for auto-stash
+// mode + skeleton entries for model-routing and Performance Guardrails.
+// -----------------------------------------------------------------------------
+
+const AUTOSTASH_MODES = ['always', 'dirty-only', 'never'] as const;
+type AutostashMode = typeof AUTOSTASH_MODES[number];
+const AUTOSTASH_KEY = 'vibeide.safety.autostash.mode';
+
+const SafetyPanel = () => {
+	const accessor = useAccessor()
+	const configService = accessor.get('IConfigurationService')
+	const commandService = accessor.get('ICommandService')
+	const notificationService = accessor.get('INotificationService')
+
+	const [mode, setMode] = useState<AutostashMode>(() => {
+		const raw = configService.getValue<AutostashMode>(AUTOSTASH_KEY);
+		return AUTOSTASH_MODES.includes(raw as AutostashMode) ? (raw as AutostashMode) : 'dirty-only';
+	});
+
+	useEffect(() => {
+		const d = configService.onDidChangeConfiguration(e => {
+			if (!e.affectsConfiguration(AUTOSTASH_KEY)) return;
+			const raw = configService.getValue<AutostashMode>(AUTOSTASH_KEY);
+			if (AUTOSTASH_MODES.includes(raw as AutostashMode)) {
+				setMode(raw as AutostashMode);
+			}
+		});
+		return () => d.dispose();
+	}, [configService]);
+
+	const onPick = useCallback(async (next: AutostashMode) => {
+		try {
+			await configService.updateValue(AUTOSTASH_KEY, next);
+		} catch (e: any) {
+			notificationService.notify({ severity: Severity.Error, message: `Auto-stash mode update failed: ${e?.message ?? e}` });
+		}
+	}, [configService, notificationService]);
+
+	const radio = (val: AutostashMode, label: string, hint: string) => (
+		<label className='flex items-start gap-x-3 my-2 cursor-pointer select-none'>
+			<input
+				type='radio'
+				name='vibe-autostash-mode'
+				checked={mode === val}
+				onChange={() => onPick(val)}
+				className='mt-1'
+			/>
+			<span className='flex flex-col'>
+				<span className='text-vibe-fg-1 text-sm'>{label}</span>
+				<span className='text-vibe-fg-3 text-xs'>{hint}</span>
+			</span>
+		</label>
+	);
+
+	return (
+		<div className='flex flex-col gap-12'>
+			<div>
+				<h2 className='text-3xl mb-2'>{safetyS.sectionTitle}</h2>
+				<h4 className='text-vibe-fg-3 mb-4'>{safetyS.sectionDesc}</h4>
+			</div>
+
+			<div className='max-w-[600px]'>
+				<h2 className='text-xl mb-2'>{safetyS.autostashTitle}</h2>
+				<h4 className='text-vibe-fg-3 mb-4'>{safetyS.autostashDesc}</h4>
+				<ErrorBoundary>
+					{radio('always', safetyS.autostashAlways, safetyS.autostashAlwaysHint)}
+					{radio('dirty-only', safetyS.autostashDirtyOnly, safetyS.autostashDirtyOnlyHint)}
+					{radio('never', safetyS.autostashNever, safetyS.autostashNeverHint)}
+				</ErrorBoundary>
+			</div>
+
+			<div className='max-w-[600px]'>
+				<h2 className='text-xl mb-2'>{safetyS.modelRoutingTitle}</h2>
+				<h4 className='text-vibe-fg-3 mb-4'>{safetyS.modelRoutingDesc}</h4>
+				<VibeButtonBgDarken
+					className='px-4 py-1 max-w-fit'
+					onClick={() => { commandService.executeCommand('workbench.action.files.openFileFolder'); }}
+				>
+					{safetyS.modelRoutingEditFile}
+				</VibeButtonBgDarken>
+			</div>
+
+			<div className='max-w-[600px]'>
+				<h2 className='text-xl mb-2'>{safetyS.perfGuardrailsTitle}</h2>
+				<h4 className='text-vibe-fg-3 mb-4'>{safetyS.perfGuardrailsDesc}</h4>
+				<div className='text-vibe-fg-3 text-xs mb-2'>{safetyS.perfGuardrailsBacklog}</div>
+				<VibeButtonBgDarken
+					className='px-4 py-1 max-w-fit'
+					onClick={() => {
+						notificationService.notify({
+							severity: Severity.Info,
+							message: 'Performance Guardrails: запустите `npx vibe doctor --perf` в терминале для просмотра агрегата.',
+						});
+					}}
+				>
+					{safetyS.perfGuardrailsOpen}
+				</VibeButtonBgDarken>
+			</div>
+		</div>
+	);
+};
+
 export const Settings = () => {
 	const isDark = useIsDark()
 	// --- sidebar nav ---
@@ -2024,6 +2128,7 @@ export const Settings = () => {
 		{ tab: 'providers', label: nav.providers },
 		{ tab: 'featureOptions', label: nav.featureOptions },
 		{ tab: 'general', label: nav.general },
+		{ tab: 'safety', label: nav.safety },
 		{ tab: 'mcp', label: nav.mcp },
 		{ tab: 'all', label: nav.all },
 	];
@@ -2455,6 +2560,23 @@ export const Settings = () => {
 							</div>
 
 
+
+							{/* Safety & Diagnostics section */}
+							<div className={shouldShowTab('safety') ? `` : 'hidden'}>
+								<ErrorBoundary>
+									{selectedSection === 'all' ? (
+										<AllSettingsFold
+											title={nav.safety}
+											open={!!allSettingsExpanded.safety}
+											onToggle={() => toggleAllSettingsGroup('safety')}
+										>
+											<SafetyPanel />
+										</AllSettingsFold>
+									) : (
+										<SafetyPanel />
+									)}
+								</ErrorBoundary>
+							</div>
 
 							{/* MCP section */}
 							<div className={shouldShowTab('mcp') ? `` : 'hidden'}>

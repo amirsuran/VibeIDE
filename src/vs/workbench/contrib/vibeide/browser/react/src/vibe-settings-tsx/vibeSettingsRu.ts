@@ -296,8 +296,32 @@ export const nav = {
 	providers: 'Облачные провайдеры',
 	featureOptions: 'Функции',
 	general: 'Общие',
+	safety: 'Безопасность',
 	mcp: 'MCP',
 	all: 'Все настройки',
+} as const;
+
+export const safetyS = {
+	sectionTitle: 'Безопасность и диагностика',
+	sectionDesc: 'Параметры авто-стэша, маршрутизации моделей по путям и дашборд Performance Guardrails.',
+
+	autostashTitle: 'Auto-stash перед агентским edit',
+	autostashDesc: 'Стэш незакоммиченных изменений перед массовыми правками агента. agent-protected target в `vibeide.constraints` всегда выигрывает над `never`.',
+	autostashAlways: 'Всегда стэшить',
+	autostashAlwaysHint: 'Стэшит даже на «чистом» дереве; гарантирует точку отката, но создаёт лишние stash entries.',
+	autostashDirtyOnly: 'Только при «грязном» дереве',
+	autostashDirtyOnlyHint: 'Стэш только если есть незакоммиченные изменения. Рекомендуемый default.',
+	autostashNever: 'Никогда',
+	autostashNeverHint: 'Отключает auto-stash. agent-protected target в constraints обходит этот выбор (защита от потери критических файлов).',
+
+	modelRoutingTitle: 'Per-file маршрутизация моделей',
+	modelRoutingDesc: 'Pure helper `modelRoutingByPath` уже принимает правила match→model. Live-редактор правил пока в backlog; используйте `.vibe/model-routing.json` напрямую.',
+	modelRoutingEditFile: 'Открыть .vibe/model-routing.json',
+
+	perfGuardrailsTitle: 'Performance Guardrails dashboard',
+	perfGuardrailsDesc: 'Сводка trip count / max / avg / threshold по каждому защитному правилу за текущую сессию. Live-агрегатор `perfGuardrailsAggregator` собирает данные; UI-просмотр откроется в Output channel.',
+	perfGuardrailsOpen: 'Открыть `vibe doctor --perf`',
+	perfGuardrailsBacklog: 'Live dashboard в Settings — backlog (нужны streaming hooks из Performance Guardrails service).',
 } as const;
 
 export const modelsS = {
