@@ -14,6 +14,7 @@ import { URI } from '../../../../base/common/uri.js';
 import { IChatThreadService } from './chatThreadService.js';
 import type { PlanMessage } from '../common/chatThreadServiceTypes.js';
 import { disposableTimeout } from '../../../../base/common/async.js';
+import { diffPlans, renderPlanDiffSummary, PlanLite, PlanStepLite } from '../common/planDiffComparator.js';
 
 /**
  * When `.vibe/plans/*.plan.md` changes on disk while the same persisted plan is executing in Agent chat,
@@ -82,11 +83,12 @@ export class VibePersistedPlanDiskEditContribution extends Disposable implements
 	}
 
 	private async _maybeNotifyExecutingMismatch(uri: URI): Promise<void> {
+		let diskText = '';
 		let diskPlanId = '';
 		try {
 			const file = await this._fileService.readFile(uri);
-			const text = file.value.toString();
-			const fm = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+			diskText = file.value.toString();
+			const fm = diskText.match(/^---\r?\n([\s\S]*?)\r?\n---/);
 			if (fm) {
 				const m = /^planId:\s*["']?([^"'\s]+)["']?/m.exec(fm[1]);
 				if (m) {
@@ -102,35 +104,62 @@ export class VibePersistedPlanDiskEditContribution extends Disposable implements
 		}
 
 		const threads = this._chatThreadService.state.allThreads;
-		const executing = new Set<string>();
+		let executingPlan: PlanMessage | undefined;
 		for (const tid of Object.keys(threads)) {
 			const thread = threads[tid];
-			if (!thread) {
-				continue;
-			}
+			if (!thread) continue;
 			for (const msg of thread.messages) {
-				if (msg.role !== 'plan') {
-					continue;
-				}
+				if (msg.role !== 'plan') continue;
 				const p = msg as PlanMessage;
 				if (p.persistedPlanId === diskPlanId && p.approvalState === 'executing') {
-					executing.add(tid);
+					executingPlan = p;
 					break;
 				}
 			}
+			if (executingPlan) break;
 		}
-		if (executing.size === 0) {
-			return;
-		}
+		if (!executingPlan) return;
+
+		const before: PlanLite = {
+			planId: diskPlanId,
+			title: executingPlan.summary,
+			steps: executingPlan.steps.map(s => ({
+				id: String(s.stepNumber),
+				title: `Step ${s.stepNumber}: ${s.description.split('\n')[0]}`,
+				description: s.description,
+				status: s.status,
+			} satisfies PlanStepLite)),
+		};
+		const after = this._parseDiskPlan(diskText, diskPlanId);
+
+		const diff = diffPlans(before, after);
+		const diffSummary = renderPlanDiffSummary(diff);
 
 		this._notificationService.notify({
 			severity: Severity.Info,
 			message: localize(
 				'vibeide.planEditedMidExecution',
-				'Persisted plan file changed on disk while plan `{0}` is executing. Review steps vs Markdown — subsequent agent turns follow hot-reload policy (.vibe/).',
+				'Plan `{0}` edited on disk while executing — {1}. Subsequent agent turns follow .vibe/ hot-reload policy.',
 				diskPlanId,
+				diffSummary,
 			),
 		});
+	}
+
+	private _parseDiskPlan(text: string, planId: string): PlanLite {
+		const steps: PlanStepLite[] = [];
+		const stepsMatch = text.match(/## Steps\r?\n([\s\S]*?)(?:\r?\n##|$)/);
+		if (stepsMatch) {
+			for (const line of stepsMatch[1].split(/\r?\n/)) {
+				const m = line.match(/^-\s+(?:~~)?(?:\[[ x]\]\s+)?Step\s+(\d+):\s*(.+?)(?:~~)?(?:\s*_\(skipped\)_\s*)?$/);
+				if (!m) continue;
+				const status = line.includes('[x]') ? 'succeeded' : line.startsWith('- ~~') ? 'skipped' : 'queued';
+				steps.push({ id: m[1], title: `Step ${m[1]}: ${m[2].trim()}`, status });
+			}
+		}
+		const summaryMatch = text.match(/## Summary\r?\n\r?\n([\s\S]*?)(?:\r?\n##|$)/);
+		const title = summaryMatch ? summaryMatch[1].trim() : undefined;
+		return { planId, title, steps };
 	}
 }
 
