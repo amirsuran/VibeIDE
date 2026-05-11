@@ -18,6 +18,7 @@ const { execSync } = require('child_process');
 const projectCommandsAudit = require('./lib/project-commands-audit.cjs');
 const npmCliAlignment = require('./lib/npm-cli-alignment-check.cjs');
 const knowledgeMdStaleness = require('./lib/knowledge-md-staleness.cjs');
+const perfGuardrails = require('./lib/perf-guardrails-aggregator.cjs');
 
 const args = process.argv.slice(2);
 const MODE = {
@@ -29,6 +30,7 @@ const MODE = {
 	network: args.includes('--network'),
 	selfCheck: args.includes('--self-check'),
 	knowledge: args.includes('--knowledge'),
+	perf: args.includes('--perf'),
 };
 
 const results = [];
@@ -732,6 +734,37 @@ if (MODE.network) {
 	console.log('\nThis report does NOT prove a build is offline-clean — it lists what could be');
 	console.log('reached. The .github/workflows/privacy-verify.yml backlog item adds the runtime');
 	console.log('sniffer that actually confirms strict mode.');
+	process.exit(0);
+}
+
+if (MODE.perf) {
+	// `vibe doctor --perf` — Performance Guardrails dashboard (roadmap L1056).
+	// Reads .vibe/perf-guardrails-events.jsonl (one JSON event per line). When
+	// the file is missing, renders an empty dashboard with a note so users see
+	// the helper is wired even before runtime persistence lands.
+	const eventsPath = path.join(process.cwd(), '.vibe', 'perf-guardrails-events.jsonl');
+	const events = [];
+	if (fs.existsSync(eventsPath)) {
+		const raw = fs.readFileSync(eventsPath, 'utf-8');
+		for (const line of raw.split(/\r?\n/)) {
+			const trimmed = line.trim();
+			if (!trimmed) continue;
+			try { events.push(JSON.parse(trimmed)); } catch { /* skip malformed line */ }
+		}
+	}
+	const now = Date.now();
+	const windowStart = now - 24 * 60 * 60 * 1000;
+	const dashboard = perfGuardrails.aggregatePerfGuardrails(events, windowStart, now);
+	if (MODE.json) {
+		console.log(JSON.stringify(dashboard, null, 2));
+	} else {
+		console.log(perfGuardrails.renderGuardrailDashboardMarkdown(dashboard));
+		if (!fs.existsSync(eventsPath)) {
+			console.log('');
+			console.log('Note: .vibe/perf-guardrails-events.jsonl not present — runtime persistence pending.');
+			console.log('When the IDE-side guardrails service ships, every trip will append a JSONL line.');
+		}
+	}
 	process.exit(0);
 }
 
