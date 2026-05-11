@@ -3,6 +3,7 @@
  *  Licensed under the Apache License, Version 2.0. See LICENSE.txt for more information.
  *--------------------------------------------------------------------------------------*/
 
+import { localize } from '../../../../../nls.js';
 import { IVibeideTelemetryService } from './telemetryService.js';
 import { RoutingDecisionEvent, ModelRanking, RoutingPattern, TaskType } from './telemetryTypes.js';
 
@@ -170,7 +171,7 @@ export class TelemetryAnalyticsService {
 			if (rejectionRate > 0.5) {
 				patterns.push({
 					pattern: 'local_vision_rejection',
-					description: `Local models are rejected ${(rejectionRate * 100).toFixed(0)}% of the time for vision tasks`,
+					description: localize('vibeide.telemetry.pattern.localVisionRejection', "Local models are rejected {0}% of the time for vision tasks", (rejectionRate * 100).toFixed(0)),
 					confidence: Math.min(1, localVisionEvents.length / 50),
 					recommendation: 'Consider routing vision tasks to cloud models by default'
 				});
@@ -192,7 +193,7 @@ export class TelemetryAnalyticsService {
 
 			patterns.push({
 				pattern: 'speculative_escalation',
-				description: `Speculative escalation precision: ${(precision * 100).toFixed(0)}%`,
+				description: localize('vibeide.telemetry.pattern.speculativeEscalation', "Speculative escalation precision: {0}%", (precision * 100).toFixed(0)),
 				confidence: Math.min(1, escalationEvents.length / 50),
 				recommendation: precision < 0.6
 					? 'Consider disabling speculative escalation (low precision)'
@@ -227,7 +228,7 @@ export class TelemetryAnalyticsService {
 				if (bestModel && bestScore > 0.7) {
 					patterns.push({
 						pattern: `best_model_${taskType}`,
-						description: `${bestModel} performs best for ${taskType} tasks (quality: ${(bestScore * 100).toFixed(0)}%)`,
+						description: localize('vibeide.telemetry.pattern.bestModel', "{0} performs best for {1} tasks (quality: {2}%)", bestModel, taskType, (bestScore * 100).toFixed(0)),
 						confidence: Math.min(1, taskEvents.length / 100),
 						recommendation: `Prefer ${bestModel} for ${taskType} tasks`
 					});

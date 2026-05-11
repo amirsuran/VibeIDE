@@ -131,19 +131,19 @@ class VibeBinaryDiffPolicyService extends Disposable implements IVibeBinaryDiffP
 
 		if (IMAGE_EXTENSIONS.has(ext)) {
 			if (visionPassthrough) {
-				return { treatment: 'image_vision', label: `🖼 Image (${this._fmtSize(sizeBytes)})`, omitContent: false };
+				return { treatment: 'image_vision', label: localize('vibeide.binaryDiff.label.imageVision', "🖼 Image ({0})", this._fmtSize(sizeBytes)), omitContent: false };
 			}
-			return { treatment: 'binary_omit', label: `⊘ Image file — ${this._fmtSize(sizeBytes)} (.${ext})`, omitContent: true };
+			return { treatment: 'binary_omit', label: localize('vibeide.binaryDiff.label.imageOmit', "⊘ Image file — {0} (.{1})", this._fmtSize(sizeBytes), ext), omitContent: true };
 		}
 
 		if (BINARY_EXTENSIONS.has(ext) || hasBinaryBytes) {
-			return { treatment: 'binary_omit', label: `⊘ Binary file — ${this._fmtSize(sizeBytes)} (.${ext || 'bin'})`, omitContent: true };
+			return { treatment: 'binary_omit', label: localize('vibeide.binaryDiff.label.binaryOmit', "⊘ Binary file — {0} (.{1})", this._fmtSize(sizeBytes), ext || 'bin'), omitContent: true };
 		}
 
 		if (sizeBytes > sizeLimitBytes) {
 			return {
 				treatment: 'truncated_text',
-				label: `⚠ Large file (${this._fmtSize(sizeBytes)}) — showing first lines only`,
+				label: localize('vibeide.binaryDiff.label.largeFile', "⚠ Large file ({0}) — showing first lines only", this._fmtSize(sizeBytes)),
 				omitContent: false,
 			};
 		}

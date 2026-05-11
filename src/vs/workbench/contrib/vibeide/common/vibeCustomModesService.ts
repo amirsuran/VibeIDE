@@ -5,6 +5,7 @@
 
 import { Disposable } from '../../../../base/common/lifecycle.js';
 import { Emitter, Event } from '../../../../base/common/event.js';
+import { localize } from '../../../../nls.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { registerSingleton, InstantiationType } from '../../../../platform/instantiation/common/extensions.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
@@ -24,7 +25,7 @@ const BUILTIN_MODES: CustomMode[] = [
 	{
 		id: 'architect',
 		name: 'Architect',
-		description: 'High-level design and planning mode',
+		description: localize('vibeide.customModes.architect.desc', 'High-level design and planning mode'),
 		systemPromptExtension: 'You are in Architect mode. Focus on high-level design, architecture decisions, and planning. Avoid implementing details. Ask clarifying questions about requirements.',
 		allowedTools: ['read_file', 'ls_dir', 'web_search'],
 		trustScore: 'supervised',
@@ -33,7 +34,7 @@ const BUILTIN_MODES: CustomMode[] = [
 	{
 		id: 'coder',
 		name: 'Coder',
-		description: 'Implementation and coding mode',
+		description: localize('vibeide.customModes.coder.desc', 'Implementation and coding mode'),
 		systemPromptExtension: 'You are in Coder mode. Focus on implementing code efficiently. Write clean, well-tested code. Follow existing patterns.',
 		allowedTools: undefined, // All tools
 		trustScore: 'auto',
@@ -42,7 +43,7 @@ const BUILTIN_MODES: CustomMode[] = [
 	{
 		id: 'debugger',
 		name: 'Debugger',
-		description: 'Bug investigation and fixing mode',
+		description: localize('vibeide.customModes.debugger.desc', 'Bug investigation and fixing mode'),
 		systemPromptExtension: 'You are in Debugger mode. Focus on identifying root causes. Start by reading relevant code, then propose minimal targeted fixes. Explain your reasoning.',
 		allowedTools: ['read_file', 'ls_dir', 'run_command'],
 		trustScore: 'manual',

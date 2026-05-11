@@ -3,6 +3,7 @@
  *  Licensed under the Apache License, Version 2.0. See LICENSE.txt for more information.
  *--------------------------------------------------------------------------------------*/
 
+import { localize } from '../../../../nls.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { IMarkerService, MarkerSeverity } from '../../../../platform/markers/common/markers.js';
 import { ILanguageFeaturesService } from '../../../../editor/common/services/languageFeatures.js';
@@ -205,7 +206,7 @@ class ErrorDetectionService extends Disposable implements IErrorDetectionService
 				return {
 					uri,
 					edits: allEdits,
-					description: `Fix ${quickFixErrors.length} error(s) using quick fixes`,
+					description: localize('vibeide.errorDetection.quickFixDesc', "Fix {0} error(s) using quick fixes", quickFixErrors.length),
 				};
 			}
 		}
@@ -366,7 +367,7 @@ class ErrorDetectionService extends Disposable implements IErrorDetectionService
 			return {
 				uri,
 				edits: [], // Would parse SEARCH/REPLACE blocks into TextEdits
-				description: `LLM-generated fix for ${errors.length} error(s)`,
+				description: localize('vibeide.errorDetection.llmFixDesc', "LLM-generated fix for {0} error(s)", errors.length),
 			};
 		} catch (error) {
 			console.error('[ErrorDetectionService] Error generating LLM fix:', error);

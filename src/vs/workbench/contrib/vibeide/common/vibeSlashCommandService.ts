@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Disposable } from '../../../../base/common/lifecycle.js';
+import { localize } from '../../../../nls.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { registerSingleton, InstantiationType } from '../../../../platform/instantiation/common/extensions.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
@@ -47,37 +48,37 @@ export interface IVibeSlashCommandService {
 const BUILTIN_COMMANDS: SlashCommand[] = [
 	{
 		name: 'fix',
-		description: 'Fix the current error or issue',
+		description: localize('vibeide.slash.fix.desc', 'Fix the current error or issue'),
 		category: 'builtin',
 		execute: (args) => `Fix the following issue: ${args || 'Fix all errors in the current file'}. Explain what was wrong and how you fixed it.`,
 	},
 	{
 		name: 'tests',
-		description: 'Write tests for the current code',
+		description: localize('vibeide.slash.tests.desc', 'Write tests for the current code'),
 		category: 'builtin',
 		execute: (args) => `Write comprehensive tests for ${args || 'the current file'}. Include happy path, edge cases, and error cases.`,
 	},
 	{
 		name: 'explain',
-		description: 'Explain the current code',
+		description: localize('vibeide.slash.explain.desc', 'Explain the current code'),
 		category: 'builtin',
 		execute: (args) => `Explain ${args || 'the current file'} in clear language. Describe what it does, how it works, and any important patterns.`,
 	},
 	{
 		name: 'refactor',
-		description: 'Refactor for clarity and performance',
+		description: localize('vibeide.slash.refactor.desc', 'Refactor for clarity and performance'),
 		category: 'builtin',
 		execute: (args) => `Refactor ${args || 'this code'} for clarity, performance, and maintainability. Follow best practices. Explain your changes.`,
 	},
 	{
 		name: 'review',
-		description: 'Code review with suggestions',
+		description: localize('vibeide.slash.review.desc', 'Code review with suggestions'),
 		category: 'builtin',
 		execute: (args) => `Review ${args || 'this code'} for bugs, security issues, performance problems, and style. Provide actionable suggestions.`,
 	},
 	{
 		name: 'docs',
-		description: 'Add documentation/comments',
+		description: localize('vibeide.slash.docs.desc', 'Add documentation/comments'),
 		category: 'builtin',
 		execute: (args) => `Add clear documentation and comments to ${args || 'this code'}. Use the appropriate doc format (JSDoc, docstring, etc.).`,
 	},

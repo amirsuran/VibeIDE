@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Disposable } from '../../../../base/common/lifecycle.js';
+import { localize } from '../../../../nls.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { registerSingleton, InstantiationType } from '../../../../platform/instantiation/common/extensions.js';
 import { IFileService, FileOperationError, FileOperationResult } from '../../../../platform/files/common/files.js';
@@ -229,12 +230,12 @@ class VibeConstraintsService extends Disposable implements IVibeConstraintsServi
 		this._logService.warn(`[VibeIDE Constraints] ${label} corrupt (${reason}) — using safe defaults`);
 		this._notificationService.notify({
 			severity: Severity.Warning,
-			message: `VibeIDE: ${label} повреждён (${reason}). Применены безопасные дефолты — откройте файл и исправьте JSON, иначе ограничения не действуют.`,
+			message: localize('vibeide.constraints.corruptConfig', "VibeIDE: {0} повреждён ({1}). Применены безопасные дефолты — откройте файл и исправьте JSON, иначе ограничения не действуют.", label, reason),
 			source: 'VibeIDE Constraints',
 			actions: {
 				primary: [{
 					id: 'vibeide.openCorruptConfig',
-					label: 'Открыть файл',
+					label: localize('vibeide.constraints.openFileAction', "Открыть файл"),
 					tooltip: '',
 					class: undefined,
 					enabled: true,

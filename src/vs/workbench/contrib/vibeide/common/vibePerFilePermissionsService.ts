@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Disposable } from '../../../../base/common/lifecycle.js';
+import { localize } from '../../../../nls.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { registerSingleton, InstantiationType } from '../../../../platform/instantiation/common/extensions.js';
 import { IFileService, FileOperationError, FileOperationResult } from '../../../../platform/files/common/files.js';
@@ -134,12 +135,12 @@ class VibePerFilePermissionsService extends Disposable implements IVibePerFilePe
 		this._logService.warn(`[VibeIDE Permissions] .vibe/permissions.json corrupt (${reason}) — using safe defaults (allow all)`);
 		this._notificationService.notify({
 			severity: Severity.Warning,
-			message: `VibeIDE: .vibe/permissions.json повреждён (${reason}). Применены безопасные дефолты — откройте файл и исправьте JSON, иначе per-file ограничения не действуют.`,
+			message: localize('vibeide.perFilePerms.corrupt', "VibeIDE: .vibe/permissions.json повреждён ({0}). Применены безопасные дефолты — откройте файл и исправьте JSON, иначе per-file ограничения не действуют.", reason),
 			source: 'VibeIDE Permissions',
 			actions: {
 				primary: [{
 					id: 'vibeide.openCorruptPermissions',
-					label: 'Открыть файл',
+					label: localize('vibeide.perFilePerms.openFileAction', "Открыть файл"),
 					tooltip: '',
 					class: undefined,
 					enabled: true,
