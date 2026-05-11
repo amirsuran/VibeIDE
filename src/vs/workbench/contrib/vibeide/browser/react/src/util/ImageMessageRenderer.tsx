@@ -7,6 +7,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { ChatImageAttachment } from '../../../../common/chatThreadServiceTypes.js';
 import { createImageDataUrl, revokeImageDataUrl, formatFileSize } from './imageUtils.js';
 import { ImageLightbox } from './ImageLightbox.js';
+import { attachmentsS } from '../vibe-settings-tsx/vibeSettingsRu.js';
 
 export interface ImageMessageRendererProps {
 	images: ChatImageAttachment[];
@@ -81,7 +82,7 @@ export const ImageMessageRenderer: React.FC<ImageMessageRendererProps> = ({
 						${gridCols === 3 ? 'grid-cols-3' : ''}
 					`}
 					role="group"
-					aria-label={`${images.length} image${images.length !== 1 ? 's' : ''}`}
+					aria-label={attachmentsS.imageGridAria(images.length)}
 				>
 					{images.map((img, index) => {
 						const previewUrl = previewUrls.get(img.id);
@@ -91,7 +92,7 @@ export const ImageMessageRenderer: React.FC<ImageMessageRendererProps> = ({
 									key={img.id}
 									className="aspect-square bg-vibe-bg-2-alt rounded-md flex items-center justify-center"
 								>
-									<span className="text-vibe-fg-3 text-sm">Loading...</span>
+									<span className="text-vibe-fg-3 text-sm">{attachmentsS.loading}</span>
 								</div>
 							);
 						}
@@ -109,11 +110,11 @@ export const ImageMessageRenderer: React.FC<ImageMessageRendererProps> = ({
 										handleImageClick(index);
 									}
 								}}
-								aria-label={`Image: ${img.filename}. Click to zoom.`}
+								aria-label={attachmentsS.imageClickToZoom(img.filename)}
 							>
 								<img
 									src={previewUrl}
-									alt={img.filename ? `${img.filename} (${img.width}×${img.height})` : `Image ${index + 1}`}
+									alt={img.filename ? `${img.filename} (${img.width}×${img.height})` : attachmentsS.imageFallbackAlt(index + 1)}
 									className={`
 										w-full rounded-md
 										object-cover

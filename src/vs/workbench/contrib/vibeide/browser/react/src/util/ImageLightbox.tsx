@@ -7,6 +7,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { X, ChevronLeft, ChevronRight } from 'lucide-react';
 import { ChatImageAttachment } from '../../../../common/chatThreadServiceTypes.js';
 import { formatFileSize } from './imageUtils.js';
+import { attachmentsS } from '../vibe-settings-tsx/vibeSettingsRu.js';
 
 export interface ImageLightboxProps {
 	images: ChatImageAttachment[];
@@ -214,7 +215,7 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
 			ref={containerRef}
 			role="dialog"
 			aria-modal="true"
-			aria-label={`Image ${currentIndex + 1} of ${images.length}: ${currentImage.filename}`}
+			aria-label={attachmentsS.lightboxDialogAria(currentIndex + 1, images.length, currentImage.filename)}
 			tabIndex={-1}
 			className="fixed inset-0 z-[9999] bg-black/90 flex items-center justify-center"
 			onClick={(e) => {
@@ -233,7 +234,7 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
 				type="button"
 				onClick={onClose}
 				className="absolute top-4 right-4 z-10 p-2 rounded-full bg-black/60 hover:bg-black/80 text-white transition-colors"
-				aria-label="Close lightbox"
+				aria-label={attachmentsS.lightboxClose}
 			>
 				<X size={24} />
 			</button>
@@ -244,7 +245,7 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
 					type="button"
 					onClick={handlePrev}
 					className="absolute left-4 top-1/2 -translate-y-1/2 z-10 p-2 rounded-full bg-black/60 hover:bg-black/80 text-white transition-colors"
-					aria-label="Previous image"
+					aria-label={attachmentsS.lightboxPrev}
 				>
 					<ChevronLeft size={24} />
 				</button>
@@ -256,7 +257,7 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
 					type="button"
 					onClick={handleNext}
 					className="absolute right-4 top-1/2 -translate-y-1/2 z-10 p-2 rounded-full bg-black/60 hover:bg-black/80 text-white transition-colors"
-					aria-label="Next image"
+					aria-label={attachmentsS.lightboxNext}
 				>
 					<ChevronRight size={24} />
 				</button>
@@ -277,7 +278,7 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
 				<img
 					ref={imageRef}
 					src={currentUrl}
-					alt={currentImage.filename || `Image ${currentIndex + 1}`}
+					alt={currentImage.filename || attachmentsS.imageFallbackAlt(currentIndex + 1)}
 					onDoubleClick={handleDoubleClick}
 					className="max-w-full max-h-full object-contain transition-transform duration-200"
 					style={{
@@ -293,7 +294,7 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
 				<div className="font-medium">{currentImage.filename}</div>
 				<div className="text-xs opacity-75">
 					{currentImage.width} × {currentImage.height} • {formatFileSize(currentImage.size)}
-					{images.length > 1 && ` • ${currentIndex + 1} of ${images.length}`}
+					{images.length > 1 && ` • ${attachmentsS.lightboxCountSuffix(currentIndex + 1, images.length)}`}
 				</div>
 			</div>
 
@@ -314,7 +315,7 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
 								${index === currentIndex ? 'bg-white' : 'bg-white/40'}
 								hover:bg-white/60
 							`}
-							aria-label={`Go to image ${index + 1}`}
+							aria-label={attachmentsS.lightboxGoTo(index + 1)}
 						/>
 					))}
 				</div>

@@ -7,6 +7,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { X, AlertCircle, Loader2 } from 'lucide-react';
 import { ChatImageAttachment } from '../../../../common/chatThreadServiceTypes.js';
 import { createImageDataUrl, revokeImageDataUrl, formatFileSize } from './imageUtils.js';
+import { attachmentsS } from '../vibe-settings-tsx/vibeSettingsRu.js';
 
 export interface ImageAttachmentChipProps {
 	attachment: ChatImageAttachment;
@@ -71,7 +72,7 @@ export const ImageAttachmentChip: React.FC<ImageAttachmentChipProps> = ({
 			ref={chipRef}
 			role="button"
 			tabIndex={0}
-			aria-label={`Image attachment: ${attachment.filename}, ${formatFileSize(attachment.size)}. ${isUploading ? 'Uploading' : isFailed ? 'Failed' : 'Ready'}`}
+			aria-label={attachmentsS.imageAttachmentAria(attachment.filename, formatFileSize(attachment.size), isUploading ? 'uploading' : isFailed ? 'failed' : 'ready')}
 			onFocus={onFocus}
 			onKeyDown={handleKeyDown}
 			className={`
@@ -113,7 +114,7 @@ export const ImageAttachmentChip: React.FC<ImageAttachmentChipProps> = ({
 									{Math.round(attachment.uploadProgress * 100)}%
 								</div>
 							) : (
-								<div className="text-xs text-white">Processing...</div>
+								<div className="text-xs text-white">{attachmentsS.processing}</div>
 							)}
 							{onCancel && (
 								<button
@@ -123,9 +124,9 @@ export const ImageAttachmentChip: React.FC<ImageAttachmentChipProps> = ({
 										onCancel();
 									}}
 									className="text-xs text-white/80 hover:text-white underline mt-1"
-									aria-label="Cancel upload"
+									aria-label={attachmentsS.cancelUpload}
 								>
-									Cancel
+									{attachmentsS.cancel}
 								</button>
 							)}
 						</div>
@@ -146,7 +147,7 @@ export const ImageAttachmentChip: React.FC<ImageAttachmentChipProps> = ({
 						e.stopPropagation();
 						onRemove();
 					}}
-					aria-label={`Remove ${attachment.filename}`}
+					aria-label={attachmentsS.removeAttachment(attachment.filename)}
 					className="absolute top-1 right-1 p-1 rounded-md bg-black/60 hover:bg-black/80 text-white transition-opacity z-10"
 					onMouseEnter={(e) => {
 						e.currentTarget.style.opacity = '1';
@@ -187,7 +188,7 @@ export const ImageAttachmentChip: React.FC<ImageAttachmentChipProps> = ({
 							}}
 							className="text-xs text-blue-500 hover:text-blue-400 mt-1"
 						>
-							Retry
+							{attachmentsS.retry}
 						</button>
 					)}
 				</div>

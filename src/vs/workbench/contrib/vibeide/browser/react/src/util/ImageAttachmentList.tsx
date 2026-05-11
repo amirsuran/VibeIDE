@@ -6,6 +6,7 @@
 import React, { useState, useCallback } from 'react';
 import { ImageAttachmentChip } from './ImageAttachmentChip.js';
 import { ChatImageAttachment } from '../../../../common/chatThreadServiceTypes.js';
+import { attachmentsS } from '../vibe-settings-tsx/vibeSettingsRu.js';
 
 export interface ImageAttachmentListProps {
 	attachments: ChatImageAttachment[];
@@ -45,7 +46,7 @@ export const ImageAttachmentList: React.FC<ImageAttachmentListProps> = ({
 		<div
 			className="flex flex-wrap gap-2 p-2 max-h-[300px] overflow-y-auto"
 			role="list"
-			aria-label={`${attachments.length} image attachment${attachments.length !== 1 ? 's' : ''}`}
+			aria-label={attachmentsS.listAria(attachments.length, 'image')}
 		>
 			{attachments.map((attachment, index) => (
 				<div

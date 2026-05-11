@@ -6,6 +6,7 @@
 import React, { useCallback } from 'react';
 import { FileText, X, AlertCircle, Loader2 } from 'lucide-react';
 import { ChatPDFAttachment } from '../../../../common/chatThreadServiceTypes.js';
+import { attachmentsS } from '../vibe-settings-tsx/vibeSettingsRu.js';
 
 const formatFileSize = (bytes: number): string => {
 	if (bytes < 1024) return `${bytes} B`;
@@ -51,7 +52,7 @@ export const PDFAttachmentList: React.FC<PDFAttachmentListProps> = ({
 		<div
 			className="flex flex-wrap gap-2 p-2 max-h-[300px] overflow-y-auto"
 			role="list"
-			aria-label={`${attachments.length} PDF attachment${attachments.length !== 1 ? 's' : ''}`}
+			aria-label={attachmentsS.listAria(attachments.length, 'pdf')}
 		>
 			{attachments.map((attachment, index) => {
 				const isUploading = attachment.uploadStatus === 'uploading' || attachment.uploadStatus === 'processing';
@@ -94,7 +95,7 @@ export const PDFAttachmentList: React.FC<PDFAttachmentListProps> = ({
 							{attachment.pagePreviews && attachment.pagePreviews.length > 0 ? (
 								<img
 									src={attachment.pagePreviews[0]}
-									alt={`Page 1 of ${attachment.filename}`}
+									alt={attachmentsS.pageOf(attachment.filename)}
 									className="w-full h-full object-contain"
 									loading="lazy"
 								/>
@@ -112,7 +113,7 @@ export const PDFAttachmentList: React.FC<PDFAttachmentListProps> = ({
 												{Math.round(attachment.uploadProgress * 100)}%
 											</div>
 										) : (
-											<div className="text-xs text-white">Processing...</div>
+											<div className="text-xs text-white">{attachmentsS.processing}</div>
 										)}
 										{onCancel && (
 											<button
@@ -122,9 +123,9 @@ export const PDFAttachmentList: React.FC<PDFAttachmentListProps> = ({
 													onCancel(attachment.id);
 												}}
 												className="text-xs text-white/80 hover:text-white underline mt-1"
-												aria-label="Cancel processing"
+												aria-label={attachmentsS.cancelProcessing}
 											>
-												Cancel
+												{attachmentsS.cancel}
 											</button>
 										)}
 									</div>
@@ -145,7 +146,7 @@ export const PDFAttachmentList: React.FC<PDFAttachmentListProps> = ({
 									e.stopPropagation();
 									onRemove(attachment.id);
 								}}
-								aria-label={`Remove ${attachment.filename}`}
+								aria-label={attachmentsS.removeAttachment(attachment.filename)}
 								className="absolute top-1 right-1 p-1 rounded-md bg-black/60 hover:bg-black/80 text-white transition-opacity z-10 opacity-0 group-hover:opacity-100"
 							>
 								<X size={14} />
@@ -159,7 +160,7 @@ export const PDFAttachmentList: React.FC<PDFAttachmentListProps> = ({
 							</div>
 							<div className="flex items-center justify-between mt-0.5">
 								<div className="text-[10px] text-vibe-fg-3">
-									{attachment.pageCount ? `${attachment.pageCount} page${attachment.pageCount !== 1 ? 's' : ''}` : formatFileSize(attachment.size)}
+									{attachment.pageCount ? attachmentsS.pagesCount(attachment.pageCount) : formatFileSize(attachment.size)}
 								</div>
 								{isFailed && attachment.error && (
 									<div className="text-[10px] text-red-500 truncate max-w-[120px]" title={attachment.error}>

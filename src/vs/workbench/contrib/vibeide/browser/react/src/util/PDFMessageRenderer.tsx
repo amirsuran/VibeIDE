@@ -6,6 +6,7 @@
 import React from 'react';
 import { ChatPDFAttachment } from '../../../../common/chatThreadServiceTypes.js';
 import { FileText } from 'lucide-react';
+import { attachmentsS } from '../vibe-settings-tsx/vibeSettingsRu.js';
 
 const formatFileSize = (bytes: number): string => {
 	if (bytes < 1024) return `${bytes} B`;
@@ -51,7 +52,7 @@ export const PDFMessageRenderer: React.FC<PDFMessageRendererProps> = ({
 					${gridCols === 3 ? 'grid-cols-3' : ''}
 				`}
 				role="group"
-				aria-label={`${pdfs.length} PDF${pdfs.length !== 1 ? 's' : ''}`}
+				aria-label={attachmentsS.pdfGridAria(pdfs.length)}
 			>
 				{pdfs.map((pdf, index) => {
 					const hasPreview = pdf.pagePreviews && pdf.pagePreviews.length > 0;
@@ -62,7 +63,7 @@ export const PDFMessageRenderer: React.FC<PDFMessageRendererProps> = ({
 							className="relative group"
 							role="button"
 							tabIndex={0}
-							aria-label={`PDF: ${pdf.filename}`}
+							aria-label={attachmentsS.pdfAria(pdf.filename)}
 						>
 							<div
 								className={`
@@ -81,7 +82,7 @@ export const PDFMessageRenderer: React.FC<PDFMessageRendererProps> = ({
 									{hasPreview ? (
 										<img
 											src={pdf.pagePreviews![0]}
-											alt={`Page 1 of ${pdf.filename}`}
+											alt={attachmentsS.pageOf(pdf.filename)}
 											className="w-full h-full object-contain"
 											loading="lazy"
 										/>
@@ -96,12 +97,12 @@ export const PDFMessageRenderer: React.FC<PDFMessageRendererProps> = ({
 									<div className="flex items-center justify-between mt-0.5">
 										<div className="text-[10px] opacity-75">
 											{pdf.pageCount
-												? `${pdf.pageCount} page${pdf.pageCount !== 1 ? 's' : ''}`
+												? attachmentsS.pagesCount(pdf.pageCount)
 												: formatFileSize(pdf.size)}
 										</div>
 										{hasPreview && pdf.pagePreviews!.length > 1 && (
 											<div className="text-[10px] opacity-75">
-												+{pdf.pagePreviews!.length - 1} more
+												{attachmentsS.morePages(pdf.pagePreviews!.length - 1)}
 											</div>
 										)}
 									</div>
