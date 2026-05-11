@@ -1352,7 +1352,7 @@ const EditTool = ({ toolMessage, threadId, messageIdx, content }: Parameters<Res
 
 		if (toolMessage.type === 'success' || toolMessage.type === 'rejected') {
 			const { result } = toolMessage
-			componentParams.bottomChildren = <BottomChildren title='Lint errors'>
+			componentParams.bottomChildren = <BottomChildren title={chatS.bottomChildrenLintErrors}>
 				{result?.lintErrors?.map((error, i) => (
 					<div key={i} className='whitespace-nowrap'>Lines {error.startLineNumber}-{error.endLineNumber}: {error.message}</div>
 				))}
@@ -1361,7 +1361,7 @@ const EditTool = ({ toolMessage, threadId, messageIdx, content }: Parameters<Res
 		else if (toolMessage.type === 'tool_error') {
 			// error
 			const { result } = toolMessage
-			componentParams.bottomChildren = <BottomChildren title='Error'>
+			componentParams.bottomChildren = <BottomChildren title={chatS.bottomChildrenError}>
 				<CodeChildren>
 					{result}
 				</CodeChildren>
@@ -1813,7 +1813,7 @@ const AssistantMessageComponent = React.memo(({ chatMessage, isCheckpointGhost, 
 						isApplyEnabled={true}
 						isLinkDetectionEnabled={true}
 					/>
-					{!isCommitted && <TypingCursor className="text-vibe-fg-2" aria-label="Streaming content" />}
+					{!isCommitted && <TypingCursor className="text-vibe-fg-2" aria-label={chatS.streamingContentAria} />}
 				</ProseWrapper>
 			</div>
 		}
@@ -1839,7 +1839,7 @@ const ReasoningWrapper = ({ isDoneReasoning, isStreaming, children }: { isDoneRe
 	const isDone = isDoneReasoning || !isStreaming
 	const isWriting = !isDone
 	const [isOpen, setIsOpen] = useState(false)
-	return <ToolHeaderWrapper title='Reasoning' desc1={isWriting ? <IconLoading state="thinking" inline /> : ''} isOpen={isOpen} onClick={() => setIsOpen(v => !v)}>
+	return <ToolHeaderWrapper title={chatS.reasoningHeader} desc1={isWriting ? <IconLoading state="thinking" inline /> : ''} isOpen={isOpen} onClick={() => setIsOpen(v => !v)}>
 		<ToolChildrenWrapper>
 			<div className='!select-text cursor-auto'>
 				{children}
@@ -2319,7 +2319,7 @@ const CommandTool = ({ toolMessage, type, threadId }: { threadId: string } & ({
 	}
 	else if (toolMessage.type === 'tool_error') {
 		const { result } = toolMessage
-		componentParams.bottomChildren = <BottomChildren title='Error'>
+		componentParams.bottomChildren = <BottomChildren title={chatS.bottomChildrenError}>
 			<CodeChildren>
 				{result}
 			</CodeChildren>
@@ -2402,7 +2402,7 @@ const MCPToolWrapper = ({ toolMessage }: WrapperProps<string>) => {
 	}
 	else if (toolMessage.type === 'tool_error') {
 		const { result } = toolMessage
-		componentParams.bottomChildren = <BottomChildren title='Error'>
+		componentParams.bottomChildren = <BottomChildren title={chatS.bottomChildrenError}>
 			<CodeChildren>
 				{result}
 			</CodeChildren>
@@ -2454,7 +2454,7 @@ const builtinToolNameToComponent: { [T in BuiltinToolName]: { resultWrapper: Res
 			else if (toolMessage.type === 'tool_error') {
 				const { result } = toolMessage
 				// JumpToFileButton removed in favor of FileLinkText
-				componentParams.bottomChildren = <BottomChildren title='Error'>
+				componentParams.bottomChildren = <BottomChildren title={chatS.bottomChildrenError}>
 					<CodeChildren>
 						{result}
 					</CodeChildren>
@@ -2501,7 +2501,7 @@ const builtinToolNameToComponent: { [T in BuiltinToolName]: { resultWrapper: Res
 			}
 			else if (toolMessage.type === 'tool_error') {
 				const { result } = toolMessage
-				componentParams.bottomChildren = <BottomChildren title='Error'>
+				componentParams.bottomChildren = <BottomChildren title={chatS.bottomChildrenError}>
 					<CodeChildren>
 						{result}
 					</CodeChildren>
@@ -2556,7 +2556,7 @@ const builtinToolNameToComponent: { [T in BuiltinToolName]: { resultWrapper: Res
 			}
 			else if (toolMessage.type === 'tool_error') {
 				const { result } = toolMessage
-				componentParams.bottomChildren = <BottomChildren title='Error'>
+				componentParams.bottomChildren = <BottomChildren title={chatS.bottomChildrenError}>
 					<CodeChildren>
 						{result}
 					</CodeChildren>
@@ -2605,7 +2605,7 @@ const builtinToolNameToComponent: { [T in BuiltinToolName]: { resultWrapper: Res
 			}
 			else if (toolMessage.type === 'tool_error') {
 				const { result } = toolMessage
-				componentParams.bottomChildren = <BottomChildren title='Error'>
+				componentParams.bottomChildren = <BottomChildren title={chatS.bottomChildrenError}>
 					<CodeChildren>
 						{result}
 					</CodeChildren>
@@ -2660,7 +2660,7 @@ const builtinToolNameToComponent: { [T in BuiltinToolName]: { resultWrapper: Res
 			}
 			else if (toolMessage.type === 'tool_error') {
 				const { result } = toolMessage
-				componentParams.bottomChildren = <BottomChildren title='Error'>
+				componentParams.bottomChildren = <BottomChildren title={chatS.bottomChildrenError}>
 					<CodeChildren>
 						{result}
 					</CodeChildren>
@@ -2706,7 +2706,7 @@ const builtinToolNameToComponent: { [T in BuiltinToolName]: { resultWrapper: Res
 			}
 			else if (toolMessage.type === 'tool_error') {
 				const { result } = toolMessage;
-				componentParams.bottomChildren = <BottomChildren title='Error'>
+				componentParams.bottomChildren = <BottomChildren title={chatS.bottomChildrenError}>
 					<CodeChildren>
 						{result}
 					</CodeChildren>
@@ -2750,7 +2750,7 @@ const builtinToolNameToComponent: { [T in BuiltinToolName]: { resultWrapper: Res
 			else if (toolMessage.type === 'tool_error') {
 				const { result } = toolMessage
 				// JumpToFileButton removed in favor of FileLinkText
-				componentParams.bottomChildren = <BottomChildren title='Error'>
+				componentParams.bottomChildren = <BottomChildren title={chatS.bottomChildrenError}>
 					<CodeChildren>
 						{result}
 					</CodeChildren>
@@ -2789,7 +2789,7 @@ const builtinToolNameToComponent: { [T in BuiltinToolName]: { resultWrapper: Res
 			else if (toolMessage.type === 'tool_error') {
 				const { result } = toolMessage
 				if (params) { componentParams.onClick = () => { voidOpenFileFn(params.uri, accessor) } }
-				componentParams.bottomChildren = <BottomChildren title='Error'>
+				componentParams.bottomChildren = <BottomChildren title={chatS.bottomChildrenError}>
 					<CodeChildren>
 						{result}
 					</CodeChildren>
@@ -2831,7 +2831,7 @@ const builtinToolNameToComponent: { [T in BuiltinToolName]: { resultWrapper: Res
 			else if (toolMessage.type === 'tool_error') {
 				const { result } = toolMessage
 				if (params) { componentParams.onClick = () => { voidOpenFileFn(params.uri, accessor) } }
-				componentParams.bottomChildren = <BottomChildren title='Error'>
+				componentParams.bottomChildren = <BottomChildren title={chatS.bottomChildrenError}>
 					<CodeChildren>
 						{result}
 					</CodeChildren>
@@ -2901,7 +2901,7 @@ const builtinToolNameToComponent: { [T in BuiltinToolName]: { resultWrapper: Res
 			}
 			else if (toolMessage.type === 'tool_error') {
 				const { result } = toolMessage
-				componentParams.bottomChildren = <BottomChildren title='Error'>
+				componentParams.bottomChildren = <BottomChildren title={chatS.bottomChildrenError}>
 					<CodeChildren>
 						{result}
 					</CodeChildren>
@@ -2936,7 +2936,7 @@ const builtinToolNameToComponent: { [T in BuiltinToolName]: { resultWrapper: Res
 			}
 			else if (toolMessage.type === 'tool_error') {
 				const { result } = toolMessage
-				componentParams.bottomChildren = <BottomChildren title='Error'>
+				componentParams.bottomChildren = <BottomChildren title={chatS.bottomChildrenError}>
 					<CodeChildren>
 						{result}
 					</CodeChildren>
@@ -3011,7 +3011,7 @@ const builtinToolNameToComponent: { [T in BuiltinToolName]: { resultWrapper: Res
 			}
 			else if (toolMessage.type === 'tool_error') {
 				const { result } = toolMessage
-				componentParams.bottomChildren = <BottomChildren title='Error'>
+				componentParams.bottomChildren = <BottomChildren title={chatS.bottomChildrenError}>
 					<CodeChildren>
 						{result}
 					</CodeChildren>
@@ -3100,7 +3100,7 @@ const builtinToolNameToComponent: { [T in BuiltinToolName]: { resultWrapper: Res
 			}
 			else if (toolMessage.type === 'tool_error') {
 				const { result } = toolMessage
-				componentParams.bottomChildren = <BottomChildren title='Error'>
+				componentParams.bottomChildren = <BottomChildren title={chatS.bottomChildrenError}>
 					<CodeChildren>
 						{result}
 					</CodeChildren>
@@ -3372,33 +3372,33 @@ const PlanComponent = React.memo(({ message, isCheckpointGhost, threadId, messag
 									<div className="flex gap-2">
 										<button
 											type="button"
-											title="Reject plan"
-											aria-label="Reject plan"
+											title={chatS.planRejectTitle}
+											aria-label={chatS.planRejectAria}
 											onClick={handleReject}
 											className="px-3 py-1.5 text-xs rounded bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20 transition-colors focus:outline-none focus:ring-2 focus:ring-red-500/40"
 										>
-											Reject
+											{chatS.planRejectLabel}
 										</button>
 										{isPlanMode ? (
 											<button
 												type="button"
-												title="Switch to Agent mode and execute this plan"
-												aria-label="Execute plan in Agent mode"
+												title={chatS.planExecuteInAgentTitle}
+												aria-label={chatS.planExecuteInAgentAria}
 												onClick={handleExecuteInAgent}
 												className="px-3 py-1.5 text-xs rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 hover:bg-blue-500/20 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500/40 flex items-center gap-1"
 											>
 												<ChevronRight size={12} />
-												Execute in Agent
+												{chatS.planExecuteInAgentLabel}
 											</button>
 										) : (
 											<button
 												type="button"
-												title="Approve and execute"
-												aria-label="Approve and execute plan"
+												title={chatS.planApproveTitle}
+												aria-label={chatS.planApproveAria}
 												onClick={handleApprove}
 												className="px-3 py-1.5 text-xs rounded bg-green-500/10 text-green-400 border border-green-500/20 hover:bg-green-500/20 transition-colors focus:outline-none focus:ring-2 focus:ring-green-500/40"
 											>
-												Approve & Execute
+												{chatS.planApproveLabel}
 											</button>
 										)}
 									</div>
@@ -3406,21 +3406,21 @@ const PlanComponent = React.memo(({ message, isCheckpointGhost, threadId, messag
 							{approvalState === 'executing' && isBusy && (
 								<button
 									type="button"
-									aria-label="Pause plan execution"
+									aria-label={chatS.planPauseAria}
 										onClick={() => chatThreadService.pauseAgentExecution({ threadId })}
 										className="px-3 py-1.5 text-xs rounded bg-orange-500/10 text-orange-400 border border-orange-500/20 hover:bg-orange-500/20 transition-colors focus:outline-none focus:ring-2 focus:ring-orange-500/40"
 									>
-										Pause
+										{chatS.planPauseLabel}
 									</button>
 								)}
 							{hasPausedSteps && !isBusy && (
 								<button
 									type="button"
-									aria-label="Resume plan execution"
+									aria-label={chatS.planResumeAria}
 										onClick={() => chatThreadService.resumeAgentExecution({ threadId })}
 										className="px-3 py-1.5 text-xs rounded bg-green-500/10 text-green-400 border border-green-500/20 hover:bg-green-500/20 transition-colors focus:outline-none focus:ring-2 focus:ring-green-500/40"
 									>
-										Resume
+										{chatS.planResumeLabel}
 									</button>
 								)}
 							</div>
@@ -3428,7 +3428,7 @@ const PlanComponent = React.memo(({ message, isCheckpointGhost, threadId, messag
 					</div>
 					{message.secondOpinion && message.secondOpinion.verdict !== 'looks_ok' && (
 						<div className="mt-2 text-xs text-orange-300 border border-orange-500/40 rounded px-2 py-1.5 bg-orange-500/10" role="status">
-							<span className="font-medium text-orange-200">Advisory review: </span>
+							<span className="font-medium text-orange-200">{chatS.planAdvisoryReview}</span>
 							{message.secondOpinion.message}
 						</div>
 					)}
@@ -3442,7 +3442,7 @@ const PlanComponent = React.memo(({ message, isCheckpointGhost, threadId, messag
 							const isDisabled = step.disabled
 							const status = step.status || 'queued'
 							const hasDetails = step.tools || step.files || step.error || step.toolCalls
-							const stepAria = `Step ${step.stepNumber}, ${status}: ${(step.description || '').slice(0, 400)}`
+							const stepAria = chatS.planStepAria(step.stepNumber, status, (step.description || '').slice(0, 400))
 
 							return (
 								<li
@@ -4851,8 +4851,8 @@ export const SidebarChat = () => {
 			<button
 				type='button'
 				onClick={() => commandService.executeCommand('vibeide.chat.toggleMaximize')}
-				title='Развернуть чат на всю ширину (повторно — вернуть)'
-				aria-label='Toggle Chat Maximize'
+				title={chatS.maximizeChatTitle}
+				aria-label={chatS.maximizeChatAria}
 				style={{
 					padding: '4px',
 					borderRadius: '4px',
@@ -4873,8 +4873,8 @@ export const SidebarChat = () => {
 			<button
 				type='button'
 				onClick={() => commandService.executeCommand('vibeide.chat.toggleZen')}
-				title='Zen-режим: скрыть всё, включая табы (повторно — выйти)'
-				aria-label='Toggle Chat Zen Mode'
+				title={chatS.zenModeTitle}
+				aria-label={chatS.zenModeAria}
 				style={{
 					padding: '4px',
 					borderRadius: '4px',

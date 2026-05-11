@@ -10,6 +10,7 @@ import '../styles.css';
 import ErrorBoundary from './ErrorBoundary.js';
 import { Search } from 'lucide-react';
 import { IsRunningType, ThreadType } from '../../../chatThreadService.js';
+import { chatS } from '../vibe-settings-tsx/vibeSettingsRu.js';
 
 const OPEN_CHAT_CMD = 'vibeide.chat.open';
 
@@ -48,6 +49,16 @@ const groupThreadsByDate = (threads: ThreadType[]): Map<DateGroupLabel, ThreadTy
 	return groups;
 };
 
+function dateGroupDisplayLabel(label: DateGroupLabel): string {
+	switch (label) {
+		case 'Today': return chatS.historyDateToday;
+		case 'Yesterday': return chatS.historyDateYesterday;
+		case 'Last 7 days': return chatS.historyDateLast7;
+		case 'Last 30 days': return chatS.historyDateLast30;
+		case 'Older': return chatS.historyDateOlder;
+	}
+}
+
 // ---------------------------------------------------------------------------
 // DateGroupSection
 // ---------------------------------------------------------------------------
@@ -70,7 +81,7 @@ const DateGroupSection = ({
 	return (
 		<div className="mb-1">
 			<div className="px-2 pt-3 pb-0.5 text-[10px] font-semibold uppercase tracking-widest text-vibe-fg-4 select-none">
-				{label}
+				{dateGroupDisplayLabel(label)}
 			</div>
 			<div className="flex flex-col gap-1 px-2">
 				{threads.map((thread, i) => (
@@ -156,7 +167,7 @@ const HistoryContent = () => {
 						value={filter}
 						onChange={e => setFilter(e.target.value)}
 						onKeyDown={e => e.stopPropagation()}
-						placeholder="Поиск"
+						placeholder={chatS.historySearchPlaceholder}
 						className="flex-1 bg-transparent text-xs text-vibe-fg-2 outline-none placeholder:text-vibe-fg-4 min-w-0"
 					/>
 				</div>
@@ -166,12 +177,12 @@ const HistoryContent = () => {
 			<div className="flex-1 overflow-y-auto overflow-x-hidden">
 				{!hasThreads ? (
 					<div className="px-3 py-6 text-xs text-vibe-fg-3 text-center select-none">
-						No chat history yet.
+						{chatS.historyEmptyState}
 					</div>
 				) : filter.trim() ? (
 					filteredThreads.length === 0 ? (
 						<div className="px-3 py-4 text-xs text-vibe-fg-3 text-center select-none">
-							No matches for &ldquo;{filter}&rdquo;
+							{chatS.historyNoMatches(filter)}
 						</div>
 					) : (
 						<div className="flex flex-col gap-1 px-2 py-2">

@@ -36,7 +36,7 @@ export const PastThreadsList = ({ className = '', onAfterSwitch }: { className?:
 	}, [streamState])
 
 	if (!allThreads) {
-		return <div key="error" className="p-1">{`Error accessing chat history.`}</div>;
+		return <div key="error" className="p-1">{chatS.historyError}</div>;
 	}
 
 	// Memoize sortedThreadIds computation to avoid recalculating on every render
@@ -57,7 +57,7 @@ export const PastThreadsList = ({ className = '', onAfterSwitch }: { className?:
 				: displayThreads.map((threadId, i) => {
 					const pastThread = allThreads[threadId];
 					if (!pastThread) {
-						return <div key={i} className="p-1">{`Error accessing chat history.`}</div>;
+						return <div key={i} className="p-1">{chatS.historyError}</div>;
 					}
 
 					return (
@@ -79,7 +79,7 @@ export const PastThreadsList = ({ className = '', onAfterSwitch }: { className?:
 					className="text-vibe-fg-3 opacity-80 hover:opacity-100 hover:brightness-115 cursor-pointer p-1 text-xs"
 					onClick={() => setShowAll(true)}
 				>
-					Show {sortedThreadIds.length - numInitialThreads} more...
+					{chatS.historyShowMore(sortedThreadIds.length - numInitialThreads)}
 				</div>
 			)}
 			{hasMoreThreads && showAll && (
@@ -87,7 +87,7 @@ export const PastThreadsList = ({ className = '', onAfterSwitch }: { className?:
 					className="text-vibe-fg-3 opacity-80 hover:opacity-100 hover:brightness-115 cursor-pointer p-1 text-xs"
 					onClick={() => setShowAll(false)}
 				>
-					Show less
+					{chatS.historyShowLess}
 				</div>
 			)}
 		</div>

@@ -8,6 +8,7 @@ import { AlertCircle, ChevronDown, ChevronUp, X, RotateCcw, RefreshCw, FileText 
 import { useSettingsState } from '../util/services.js';
 import { errorDetails } from '../../../../common/sendLLMMessageTypes.js';
 import { toErrorMessage } from '../../../../../../../base/common/errorMessage.js';
+import { errorDisplayS } from '../vibe-settings-tsx/vibeSettingsRu.js';
 
 
 export const ErrorDisplay = ({
@@ -40,7 +41,7 @@ export const ErrorDisplay = ({
 		normalizedMessage = toErrorMessage(fullError, false);
 	} else {
 		// Last resort: generic error message
-		normalizedMessage = 'An unknown error occurred. Please consult the log for more details.';
+		normalizedMessage = errorDisplayS.unknown;
 	}
 
 	// Only show details in dev mode or when explicitly expanded (never show raw stacks)
@@ -57,8 +58,7 @@ export const ErrorDisplay = ({
 					<AlertCircle className='h-5 w-5 text-red-600 mt-0.5 flex-shrink-0' />
 					<div className='flex-1 min-w-0'>
 						<h3 className='font-semibold text-red-800 text-sm'>
-							{/* eg Error */}
-							Error
+							{errorDisplayS.header}
 						</h3>
 						<p className='text-red-700 mt-1 text-sm break-words'>
 							{/* eg Something went wrong */}
@@ -72,7 +72,7 @@ export const ErrorDisplay = ({
 						<button
 							className='text-red-600 hover:text-red-800 hover:bg-red-100 p-1.5 rounded transition-colors duration-200'
 							onClick={() => setIsExpanded(!isExpanded)}
-							aria-label={isExpanded ? 'Hide details' : 'Show details'}
+							aria-label={isExpanded ? errorDisplayS.hideDetails : errorDisplayS.showDetails}
 							aria-expanded={isExpanded}
 						>
 							{isExpanded ? (
@@ -86,7 +86,7 @@ export const ErrorDisplay = ({
 						<button
 							className='text-red-600 hover:text-red-800 hover:bg-red-100 p-1.5 rounded transition-colors duration-200'
 							onClick={onDismiss}
-							aria-label='Dismiss error'
+							aria-label={errorDisplayS.dismissAria}
 						>
 							<X className='h-4 w-4' />
 						</button>
@@ -102,10 +102,10 @@ export const ErrorDisplay = ({
 							type="button"
 							className='@@vibe-pill-button @@vibe-pill-button--primary @@vibe-focus-ring flex items-center gap-1.5 text-sm'
 							onClick={onRetry}
-							aria-label='Retry operation'
+							aria-label={errorDisplayS.retryAria}
 						>
 							<RefreshCw className='h-4 w-4' />
-							Retry
+							{errorDisplayS.retryLabel}
 						</button>
 					)}
 					{onRollback && (
@@ -113,10 +113,10 @@ export const ErrorDisplay = ({
 							type="button"
 							className='@@vibe-pill-button @@vibe-pill-button--secondary @@vibe-focus-ring flex items-center gap-1.5 text-sm'
 							onClick={onRollback}
-							aria-label='Rollback changes'
+							aria-label={errorDisplayS.rollbackAria}
 						>
 							<RotateCcw className='h-4 w-4' />
-							Rollback
+							{errorDisplayS.rollbackLabel}
 						</button>
 					)}
 					{onOpenLogs && (
@@ -124,10 +124,10 @@ export const ErrorDisplay = ({
 							type="button"
 							className='@@vibe-pill-button @@vibe-focus-ring flex items-center gap-1.5 text-sm'
 							onClick={onOpenLogs}
-							aria-label='Open logs'
+							aria-label={errorDisplayS.openLogsAria}
 						>
 							<FileText className='h-4 w-4' />
-							Open Logs
+							{errorDisplayS.openLogsLabel}
 						</button>
 					)}
 				</div>
@@ -137,7 +137,7 @@ export const ErrorDisplay = ({
 			{isExpanded && details && (
 				<div className='mt-4 space-y-3 border-t border-red-200 pt-3 overflow-auto animate-in fade-in slide-in-from-top-2 duration-200'>
 					<div>
-						<span className='font-semibold text-red-800 text-xs'>Technical Details: </span>
+						<span className='font-semibold text-red-800 text-xs'>{errorDisplayS.technicalDetails}</span>
 						<pre className='text-red-700 text-xs mt-1.5 p-2 bg-red-100/50 rounded border border-red-200/50 overflow-x-auto'>{details}</pre>
 					</div>
 				</div>
