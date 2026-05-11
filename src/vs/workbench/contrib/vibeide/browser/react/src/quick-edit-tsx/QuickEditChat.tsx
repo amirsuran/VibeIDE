@@ -11,6 +11,7 @@ import { ButtonStop, ButtonSubmit, IconX, VibeChatArea } from '../sidebar-tsx/Si
 import { VIBEIDE_CTRL_K_ACTION_ID } from '../../../actionIDs.js';
 import { useRefState } from '../util/helpers.js';
 import { isFeatureNameDisabled } from '../../../../../../../workbench/contrib/vibeide/common/vibeideSettingsTypes.js';
+import { quickEditS } from '../vibe-settings-tsx/vibeSettingsRu.js';
 
 
 
@@ -118,7 +119,7 @@ export const QuickEditChat = ({
 					})
 				}, [textAreaRef_, onX])}
 				fnsRef={textAreaFnsRef}
-				placeholder="Enter instructions..."
+				placeholder={quickEditS.placeholder}
 				onChangeText={useCallback((newStr: string) => {
 					setInstructionsAreEmpty(!newStr)
 					onChangeText_(newStr)
