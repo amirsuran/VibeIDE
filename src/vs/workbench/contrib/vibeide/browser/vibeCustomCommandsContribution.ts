@@ -31,6 +31,7 @@ import { INotificationService, Severity } from '../../../../platform/notificatio
 import { IFileService } from '../../../../platform/files/common/files.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
+import { IClipboardService } from '../../../../platform/clipboard/common/clipboardService.js';
 import { joinPath } from '../../../../base/common/resources.js';
 import { VSBuffer } from '../../../../base/common/buffer.js';
 import { localize } from '../../../../nls.js';
@@ -279,6 +280,128 @@ CommandsRegistry.registerCommand({
 				'Импортировано команд: {0}.{1}',
 				selected.length, skippedSummary,
 			),
+		});
+	},
+});
+
+// Edit / Delete / Copy-command-line palette commands (roadmap L323 — three
+// of the five context-menu actions; the other two — `run` and `unpin` — are
+// already registered above). Each is exposed both via Command Palette and
+// programmatically so a future top-bar widget (L321) can dispatch from a
+// right-click handler without adding new ids.
+CommandsRegistry.registerCommand({
+	id: PROJECT_COMMANDS_PALETTE_IDS.edit,
+	handler: async (accessor: ServicesAccessor) => {
+		const commands = accessor.get(IVibeCustomCommandsService);
+		const quickInput = accessor.get(IQuickInputService);
+		const workspace = accessor.get(IWorkspaceContextService);
+		const editorService = accessor.get(IEditorService);
+		const notifications = accessor.get(INotificationService);
+
+		const list = commands.getCommands();
+		if (list.length === 0) {
+			notifications.notify({ severity: Severity.Info, message: localize('vibeide.commands.edit.empty', 'Нет проектных команд для редактирования.') });
+			return;
+		}
+		const picked = await quickInput.pick(
+			list.map(c => ({ label: c.name, description: c.id, commandId: c.id })),
+			{ placeHolder: localize('vibeide.commands.edit.placeholder', 'Выберите команду для редактирования') },
+		);
+		if (!picked) return;
+
+		const folder = workspace.getWorkspace().folders[0];
+		if (!folder) return;
+		const uri = joinPath(folder.uri, '.vibe', 'commands.json');
+		// Open the file editor; ids are unique within the doc so users find
+		// the picked command via Find quickly. A proper "Reveal id N" jump
+		// would need a JSON document tracker — out of scope for this commit.
+		await editorService.openEditor({ resource: uri });
+	},
+});
+
+CommandsRegistry.registerCommand({
+	id: PROJECT_COMMANDS_PALETTE_IDS.delete,
+	handler: async (accessor: ServicesAccessor) => {
+		const commands = accessor.get(IVibeCustomCommandsService);
+		const quickInput = accessor.get(IQuickInputService);
+		const workspace = accessor.get(IWorkspaceContextService);
+		const fileService = accessor.get(IFileService);
+		const notifications = accessor.get(INotificationService);
+
+		const list = commands.getCommands();
+		if (list.length === 0) {
+			notifications.notify({ severity: Severity.Info, message: localize('vibeide.commands.delete.empty', 'Нет проектных команд для удаления.') });
+			return;
+		}
+		const picked = await quickInput.pick(
+			list.map(c => ({ label: c.name, description: c.id, commandId: c.id })),
+			{ placeHolder: localize('vibeide.commands.delete.placeholder', 'Выберите команду для удаления') },
+		);
+		if (!picked) return;
+
+		const folder = workspace.getWorkspace().folders[0];
+		if (!folder) return;
+		const commandsUri = joinPath(folder.uri, '.vibe', 'commands.json');
+		let raw: ProjectCommandsFile | null = null;
+		try {
+			const buf = await fileService.readFile(commandsUri);
+			const decoded = decodeProjectCommandsFile(JSON.parse(buf.value.toString()));
+			if (decoded.ok) raw = decoded.value;
+		} catch { /* fall through */ }
+		if (raw === null) {
+			notifications.notify({
+				severity: Severity.Warning,
+				message: localize('vibeide.commands.delete.globalOnly', 'Команда доступна только из глобального источника — удалите её в исходном файле.'),
+			});
+			return;
+		}
+		const next: ProjectCommandsFile = {
+			vibeVersion: raw.vibeVersion,
+			commands: raw.commands.filter(c => c.id !== picked.commandId),
+		};
+		if (next.commands.length === raw.commands.length) {
+			// Picked command came from a global path, not the local file.
+			notifications.notify({
+				severity: Severity.Warning,
+				message: localize('vibeide.commands.delete.globalOnly', 'Команда доступна только из глобального источника — удалите её в исходном файле.'),
+			});
+			return;
+		}
+		await fileService.writeFile(commandsUri, VSBuffer.fromString(JSON.stringify(next, null, '\t') + '\n'));
+		await commands.reload();
+		notifications.notify({
+			severity: Severity.Info,
+			message: localize('vibeide.commands.delete.done', 'Команда «{0}» удалена.', picked.label),
+		});
+	},
+});
+
+CommandsRegistry.registerCommand({
+	id: 'vibeide.commands.copyCommandLine',
+	handler: async (accessor: ServicesAccessor) => {
+		const commands = accessor.get(IVibeCustomCommandsService);
+		const quickInput = accessor.get(IQuickInputService);
+		const clipboard = accessor.get(IClipboardService);
+		const notifications = accessor.get(INotificationService);
+
+		const list = commands.getCommands();
+		if (list.length === 0) {
+			notifications.notify({ severity: Severity.Info, message: localize('vibeide.commands.copy.empty', 'Нет проектных команд для копирования.') });
+			return;
+		}
+		const picked = await quickInput.pick(
+			list.map(c => {
+				const argSuffix = (c.args && c.args.length > 0) ? ' ' + c.args.join(' ') : '';
+				const full = `${c.command}${argSuffix}`;
+				return { label: c.name, description: c.id, detail: full, full };
+			}),
+			{ placeHolder: localize('vibeide.commands.copy.placeholder', 'Выберите команду — её shell-строка скопируется в буфер'), matchOnDetail: true },
+		);
+		if (!picked) return;
+		await clipboard.writeText(picked.full);
+		notifications.notify({
+			severity: Severity.Info,
+			message: localize('vibeide.commands.copy.done', 'Скопировано в буфер: {0}', picked.full),
 		});
 	},
 });
