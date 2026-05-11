@@ -13,6 +13,7 @@ import { useEffect, useState } from 'react';
 
 import { VibeideSelectionHelperProps } from '../../../../../../contrib/vibeide/browser/vibeideSelectionHelperWidget.js';
 import { VIBEIDE_OPEN_SETTINGS_ACTION_ID } from '../../../vibeideSettingsPane.js';
+import { selectionHelperS } from '../vibe-settings-tsx/vibeSettingsRu.js';
 
 
 export const VibeSelectionHelperMain = (props: VibeideSelectionHelperProps) => {
@@ -83,7 +84,7 @@ const VibeSelectionHelper = ({ rerenderKey }: VibeideSelectionHelperProps) => {
 					setClickState('clickedOption');
 				}}
 			>
-				<span>Add to Chat</span>
+				<span>{selectionHelperS.addToChat}</span>
 				<span className='ml-1 px-1 rounded bg-[var(--vscode-keybindingLabel-background)] text-[var(--vscode-keybindingLabel-foreground)] border border-[var(--vscode-keybindingLabel-border)]'>
 					{ctrlLKeybind.getLabel()}
 				</span>
@@ -103,7 +104,7 @@ const VibeSelectionHelper = ({ rerenderKey }: VibeideSelectionHelperProps) => {
 					setClickState('clickedOption');
 				}}
 			>
-				<span className='ml-1'>Edit Inline</span>
+				<span className='ml-1'>{selectionHelperS.editInline}</span>
 				<span className='ml-1 px-1 rounded bg-[var(--vscode-keybindingLabel-background)] text-[var(--vscode-keybindingLabel-foreground)] border border-[var(--vscode-keybindingLabel-border)]'>
 					{ctrlKKeybind.getLabel()}
 				</span>
@@ -137,7 +138,7 @@ const VibeSelectionHelper = ({ rerenderKey }: VibeideSelectionHelperProps) => {
 				setClickState('clickedOption');
 			}}
 		>
-			Disable Suggestions?
+			{selectionHelperS.disableSuggestions}
 		</div>
 
 		{dividerHTML}

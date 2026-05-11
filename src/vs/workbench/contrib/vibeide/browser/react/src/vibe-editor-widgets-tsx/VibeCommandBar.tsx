@@ -22,6 +22,7 @@ import {
 	VIBEIDE_ACCEPT_ALL_DIFFS_ACTION_ID,
 	VIBEIDE_REJECT_ALL_DIFFS_ACTION_ID
 } from '../../../actionIDs.js';
+import { commandBarS } from '../vibe-settings-tsx/vibeSettingsRu.js';
 
 export const VibeCommandBarMain = ({ uri, editor }: VibeideCommandBarProps) => {
 	const isDark = useIsDark()
@@ -199,7 +200,7 @@ export const VibeCommandBar = ({ uri, editor }: VibeideCommandBarProps) => {
 				<div className="flex bg-vibe-bg-2 shadow-md border border-vibe-border-2 [&>*:first-child]:pl-3 [&>*:last-child]:pr-3 [&>*]:border-r [&>*]:border-vibe-border-2 [&>*:last-child]:border-r-0">
 					<div className="flex items-center px-3">
 						<span className="text-xs whitespace-nowrap">
-							{`${sortedCommandBarURIs.length} file${sortedCommandBarURIs.length === 1 ? '' : 's'} changed`}
+							{commandBarS.filesChanged(sortedCommandBarURIs.length)}
 						</span>
 					</div>
 					<button
@@ -212,7 +213,7 @@ export const VibeCommandBar = ({ uri, editor }: VibeideCommandBarProps) => {
 							}
 						}}
 					>
-						Next <MoveRight className='size-3 my-1' />
+						{commandBarS.nextLabel} <MoveRight className='size-3 my-1' />
 					</button>
 				</div>
 			</div>
@@ -229,16 +230,14 @@ export const VibeCommandBar = ({ uri, editor }: VibeideCommandBarProps) => {
 					<div className="inline-flex bg-vibe-bg-2 rounded shadow-md border border-vibe-border-2 overflow-hidden">
 						<div className="flex items-center [&>*]:border-r [&>*]:border-vibe-border-2 [&>*:last-child]:border-r-0">
 							<AcceptAllButtonWrapper
-								// text={`Accept All${acceptAllKeybindLabel ? ` ${acceptAllKeybindLabel}` : ''}`}
-								text={`Accept All`}
+								text={commandBarS.acceptAll}
 								data-tooltip-id='vibe-tooltip'
 								data-tooltip-content={acceptAllKeybindLabel}
 								data-tooltip-delay-show={500}
 								onClick={onAcceptAll}
 								/>
 							<RejectAllButtonWrapper
-								// text={`Reject All${rejectAllKeybindLabel ? ` ${rejectAllKeybindLabel}` : ''}`}
-								text={`Reject All`}
+								text={commandBarS.rejectAll}
 								data-tooltip-id='vibe-tooltip'
 								data-tooltip-content={rejectAllKeybindLabel}
 								data-tooltip-delay-show={500}
@@ -271,10 +270,10 @@ export const VibeCommandBar = ({ uri, editor }: VibeideCommandBarProps) => {
 					</button>
 					<span className={`text-xs whitespace-nowrap px-1 ${!isADiffInThisFile ? 'opacity-70' : ''}`}>
 						{isADiffInThisFile
-							? `Diff ${(currDiffIdx ?? 0) + 1} of ${sortedDiffIds.length}`
+							? commandBarS.diffOf((currDiffIdx ?? 0) + 1, sortedDiffIds.length)
 							: streamState === 'streaming'
-								? 'No changes yet'
-								: 'No changes'
+								? commandBarS.noChangesYet
+								: commandBarS.noChanges
 						}
 
 					</span>
@@ -318,8 +317,8 @@ export const VibeCommandBar = ({ uri, editor }: VibeideCommandBarProps) => {
 					</button>
 					<span className="text-xs whitespace-nowrap px-1 mx-0.5">
 						{currFileIdx !== null
-							? `File ${currFileIdx + 1} of ${sortedCommandBarURIs.length}`
-							: `${sortedCommandBarURIs.length} file${sortedCommandBarURIs.length === 1 ? '' : 's'}`
+							? commandBarS.fileOf(currFileIdx + 1, sortedCommandBarURIs.length)
+							: commandBarS.filesCount(sortedCommandBarURIs.length)
 						}
 					</span>
 					<button
@@ -345,16 +344,14 @@ export const VibeCommandBar = ({ uri, editor }: VibeideCommandBarProps) => {
 				{showAcceptRejectAll && (
 					<div className='flex self-stretch gap-0 !px-0 !py-0'>
 						<AcceptAllButtonWrapper
-							// text={`Accept File${acceptFileKeybindLabel ? ` ${acceptFileKeybindLabel}` : ''}`}
-							text={`Accept File`}
+							text={commandBarS.acceptFile}
 							data-tooltip-id='vibe-tooltip'
 							data-tooltip-content={acceptFileKeybindLabel}
 							data-tooltip-delay-show={500}
 							onClick={onAcceptFile}
 						/>
 						<RejectAllButtonWrapper
-							// text={`Reject File${rejectFileKeybindLabel ? ` ${rejectFileKeybindLabel}` : ''}`}
-							text={`Reject File`}
+							text={commandBarS.rejectFile}
 							data-tooltip-id='vibe-tooltip'
 							data-tooltip-content={rejectFileKeybindLabel}
 							data-tooltip-delay-show={500}
