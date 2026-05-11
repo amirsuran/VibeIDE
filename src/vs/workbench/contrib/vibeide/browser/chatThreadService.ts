@@ -76,6 +76,8 @@ import {
 } from '../common/streamingGapWatchdog.js';
 import { classifyAndBuildToast } from '../common/agentErrorClassifier.js';
 import { decideResume, appendChunk, PartialResponse } from '../common/responseRetryCache.js';
+import { IVibeSessionMemoryService } from '../common/vibeSessionMemoryService.js';
+import { IVibeAgentTerritorialLockService } from './vibeAgentTerritorialLockService.js';
 
 // related to retrying when LLM message has error
 // Optimized retry logic: faster initial retry, exponential backoff
@@ -492,6 +494,8 @@ class ChatThreadService extends Disposable implements IChatThreadService {
 		@IDialogService private readonly _dialogService: IDialogService,
 		@IConfigurationService private readonly _configurationService: IConfigurationService,
 		@IVibeTokenCostForecastService private readonly _costForecastService: IVibeTokenCostForecastService,
+		@IVibeSessionMemoryService private readonly _sessionMemoryService: IVibeSessionMemoryService,
+		@IVibeAgentTerritorialLockService private readonly _agentTerritorialLockService: IVibeAgentTerritorialLockService,
 	) {
 		super()
 		this.state = { allThreads: {}, currentThreadId: null as unknown as string } // default state
@@ -6204,6 +6208,12 @@ We only need to do it for files that were edited since `from`, ie files between 
 	deleteThread(threadId: string): void {
 		this._planBindingRegistry.clearThread(threadId)
 		this._taskDecompositionService.clearPersistedPlanTask(threadId)
+
+		// Release short-term session memory for this thread (roadmap §933).
+		this._sessionMemoryService.releaseThread(threadId);
+
+		// Release advisory territorial locks whose holder matches this thread (roadmap §904).
+		void this._agentTerritorialLockService.releaseHolderLocks(threadId);
 
 		const { allThreads: currentThreads } = this.state
 

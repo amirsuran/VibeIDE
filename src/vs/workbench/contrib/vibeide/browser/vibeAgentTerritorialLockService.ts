@@ -27,6 +27,12 @@ export interface IVibeAgentTerritorialLockService {
 	readonly _serviceBrand: undefined;
 	/** Returns conflict info if `.vibe/agent-locks.json` has a matching non-expired lock; otherwise undefined */
 	evaluateWrite(uri: URI): Promise<IAgentTerritorialLockConflict | undefined>;
+	/**
+	 * Release all locks whose `holder` matches `holderId` (exact string match).
+	 * Called from `chatThreadService.deleteThread` with the threadId as holder key.
+	 * No-op when the file is absent, non-canonical, or the holder has no entries.
+	 */
+	releaseHolderLocks(holderId: string): Promise<void>;
 }
 
 export const IVibeAgentTerritorialLockService = createDecorator<IVibeAgentTerritorialLockService>('vibeAgentTerritorialLockService');
@@ -195,6 +201,54 @@ export class VibeAgentTerritorialLockService extends Disposable implements IVibe
 			);
 		} catch (e) {
 			this._logService.warn('[VibeIDE] agent-locks.json: TTL cleanup write failed', e);
+		}
+	}
+
+	async releaseHolderLocks(holderId: string): Promise<void> {
+		if (!holderId) {
+			return;
+		}
+		const folders = this._workspaceContextService.getWorkspace().folders;
+		if (folders.length === 0) {
+			return;
+		}
+		const locksUri = joinPath(folders[0].uri, '.vibe', 'agent-locks.json');
+		let raw: string;
+		try {
+			const buf = await this._fileService.readFile(locksUri);
+			raw = buf.value.toString();
+		} catch {
+			return;
+		}
+		let data: unknown;
+		try {
+			data = JSON.parse(raw);
+		} catch {
+			return;
+		}
+		const decoded = decodeAgentLocks(data);
+		if (decoded === null) {
+			return;
+		}
+		const result = filterLocksForDisposal({
+			locks: decoded,
+			disposedHolders: new Set([holderId]),
+			now: Date.now(),
+		});
+		if (result.release.length === 0) {
+			return;
+		}
+		for (const r of result.release) {
+			this._logService.info(`[VibeIDE] agent-lock holder-disposed (${r.reason}): holder=${r.entry.holder}`);
+		}
+		try {
+			await this._fileService.writeFile(
+				locksUri,
+				VSBuffer.fromString(JSON.stringify(result.keep, null, 2) + '\n'),
+				{ atomic: { postfix: '.vibe-tmp' } },
+			);
+		} catch (e) {
+			this._logService.warn('[VibeIDE] agent-locks.json: holder release write failed', e);
 		}
 	}
 }
