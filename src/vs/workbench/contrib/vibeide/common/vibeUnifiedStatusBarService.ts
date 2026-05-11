@@ -18,7 +18,21 @@ import { Disposable, IDisposable, toDisposable } from '../../../../base/common/l
 import { Emitter, Event } from '../../../../base/common/event.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { registerSingleton, InstantiationType } from '../../../../platform/instantiation/common/extensions.js';
+import { Registry } from '../../../../platform/registry/common/platform.js';
+import { IConfigurationRegistry, Extensions as ConfigurationExtensions } from '../../../../platform/configuration/common/configurationRegistry.js';
+import { localize } from '../../../../nls.js';
 import { StatusRowDescriptor, UnifiedStatusBarSnapshot, buildUnifiedStatusBarSnapshot } from './statusBarRowAggregator.js';
+
+Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({
+	id: 'vibeide',
+	properties: {
+		'vibeide.statusBar.unifiedOnly': {
+			type: 'boolean',
+			default: false,
+			description: localize('vibeide.statusBar.unifiedOnly', 'Свернуть VibeIDE-индикаторы в одну запись status-bar c popup-меню вместо набора отдельных entries. Уменьшает захламление; функциональность доступна через popup (клик → quick-pick). По умолчанию выключено.'),
+		},
+	},
+});
 
 export { StatusRowDescriptor, UnifiedStatusBarSnapshot };
 

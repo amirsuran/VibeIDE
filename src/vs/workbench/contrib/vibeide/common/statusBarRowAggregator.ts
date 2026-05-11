@@ -31,6 +31,8 @@ export interface StatusRowDescriptor {
 	readonly priority?: number;
 	/** When false the row is filtered out (allows feature flags). */
 	readonly enabled?: boolean;
+	/** Optional command id invoked from the popup quick-pick on this row. */
+	readonly command?: string;
 }
 
 export interface UnifiedStatusBarSnapshot {

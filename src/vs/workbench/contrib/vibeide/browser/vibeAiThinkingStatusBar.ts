@@ -19,12 +19,14 @@
  * time since the last stream-state change. Sufficient for the UI hint level.
  */
 
-import { Disposable, MutableDisposable } from '../../../../base/common/lifecycle.js';
+import { Disposable, IDisposable, MutableDisposable } from '../../../../base/common/lifecycle.js';
 import { localize } from '../../../../nls.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
 import { IStatusbarEntryAccessor, IStatusbarService, StatusbarAlignment } from '../../../services/statusbar/browser/statusbar.js';
 import { IChatThreadService } from './chatThreadService.js';
 import { buildThinkingIndicator, ThinkingPhase } from '../common/aiThinkingIndicator.js';
+import { IVibeUnifiedStatusBarService } from '../common/vibeUnifiedStatusBarService.js';
+import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 
 const STATUSBAR_ENTRY_ID = 'vibeide.aiThinkingIndicator';
 const TICK_MS = 1_000;
@@ -33,6 +35,7 @@ export class VibeAiThinkingStatusBarContribution extends Disposable implements I
 	static readonly ID = 'workbench.contrib.vibeAiThinkingStatusBar';
 
 	private readonly _entry = this._register(new MutableDisposable<IStatusbarEntryAccessor>());
+	private _unifiedRow: IDisposable | undefined;
 	private _phase: ThinkingPhase = 'idle';
 	private _phaseStartMs = 0;
 	private _tickHandle: ReturnType<typeof setInterval> | undefined;
@@ -40,10 +43,20 @@ export class VibeAiThinkingStatusBarContribution extends Disposable implements I
 	constructor(
 		@IChatThreadService private readonly _chat: IChatThreadService,
 		@IStatusbarService private readonly _statusbar: IStatusbarService,
+		@IVibeUnifiedStatusBarService private readonly _unified: IVibeUnifiedStatusBarService,
+		@IConfigurationService private readonly _config: IConfigurationService,
 	) {
 		super();
 		this._register(this._chat.onDidChangeStreamState(() => {
 			this._syncPhase();
+		}));
+		this._register(this._config.onDidChangeConfiguration(e => {
+			if (e.affectsConfiguration('vibeide.statusBar.unifiedOnly')) {
+				this._entry.clear();
+				this._unifiedRow?.dispose();
+				this._unifiedRow = undefined;
+				this._render();
+			}
 		}));
 		this._syncPhase();
 	}
@@ -91,6 +104,30 @@ export class VibeAiThinkingStatusBarContribution extends Disposable implements I
 			lastChunkAgoMs: this._phaseStartMs > 0 ? Date.now() - this._phaseStartMs : undefined,
 		});
 
+		const unifiedOnly = this._config.getValue<boolean>('vibeide.statusBar.unifiedOnly') === true;
+		if (unifiedOnly) {
+			this._entry.clear();
+			if (!state.visible) {
+				this._unifiedRow?.dispose();
+				this._unifiedRow = undefined;
+				return;
+			}
+			if (!this._unifiedRow) {
+				this._unifiedRow = this._unified.registerRow({
+					id: STATUSBAR_ENTRY_ID,
+					label: state.text,
+					tooltip: state.hint,
+					priority: 90,
+				});
+			} else {
+				this._unified.updateRow(STATUSBAR_ENTRY_ID, { label: state.text, tooltip: state.hint });
+			}
+			return;
+		}
+
+		this._unifiedRow?.dispose();
+		this._unifiedRow = undefined;
+
 		if (!state.visible) {
 			this._entry.clear();
 			return;
@@ -114,6 +151,7 @@ export class VibeAiThinkingStatusBarContribution extends Disposable implements I
 		if (this._tickHandle !== undefined) {
 			clearInterval(this._tickHandle);
 		}
+		this._unifiedRow?.dispose();
 		super.dispose();
 	}
 }

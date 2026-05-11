@@ -3,13 +3,15 @@
  *  Licensed under the MIT License. See LICENSE.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { Disposable } from '../../../../base/common/lifecycle.js';
+import { Disposable, IDisposable } from '../../../../base/common/lifecycle.js';
 import { localize } from '../../../../nls.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
 import { IStatusbarEntry, IStatusbarEntryAccessor, IStatusbarService, StatusbarAlignment } from '../../../services/statusbar/browser/statusbar.js';
 import { IVibeideSettingsService } from '../common/vibeideSettingsService.js';
 import { ChatMode } from '../common/vibeideSettingsTypes.js';
 import { CommandsRegistry } from '../../../../platform/commands/common/commands.js';
+import { IVibeUnifiedStatusBarService } from '../common/vibeUnifiedStatusBarService.js';
+import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 
 const MODE_ORDER: ChatMode[] = ['agent', 'gather', 'plan', 'normal'];
 
@@ -52,21 +54,62 @@ export class VibeChatModeStatusBarContribution extends Disposable implements IWo
 	static readonly ID = 'workbench.contrib.vibeChatModeStatusBar';
 
 	private _entry: IStatusbarEntryAccessor | undefined;
+	private _unifiedRow: IDisposable | undefined;
 
 	constructor(
 		@IStatusbarService private readonly _statusbarService: IStatusbarService,
 		@IVibeideSettingsService private readonly _settingsService: IVibeideSettingsService,
+		@IVibeUnifiedStatusBarService private readonly _unified: IVibeUnifiedStatusBarService,
+		@IConfigurationService private readonly _config: IConfigurationService,
 	) {
 		super();
-		this._entry = this._statusbarService.addEntry(
-			this._entryProps(),
-			'vibeide.chat.mode',
-			StatusbarAlignment.RIGHT,
-			{ location: { id: 'status.editor.mode', priority: 174 }, alignment: StatusbarAlignment.RIGHT }
-		);
-		this._register(this._settingsService.onDidChangeState(() => {
-			this._entry?.update(this._entryProps());
+		this._wire();
+		this._register(this._settingsService.onDidChangeState(() => this._refresh()));
+		this._register(this._config.onDidChangeConfiguration(e => {
+			if (e.affectsConfiguration('vibeide.statusBar.unifiedOnly')) { this._wire(); }
 		}));
+	}
+
+	private _wire(): void {
+		this._entry?.dispose();
+		this._entry = undefined;
+		this._unifiedRow?.dispose();
+		this._unifiedRow = undefined;
+
+		const unifiedOnly = this._config.getValue<boolean>('vibeide.statusBar.unifiedOnly') === true;
+		if (unifiedOnly) {
+			this._unifiedRow = this._unified.registerRow({
+				id: 'vibeide.chat.mode',
+				label: this._rowLabel(),
+				tooltip: this._tooltip(),
+				priority: 174,
+				command: CYCLE_COMMAND,
+			});
+		} else {
+			this._entry = this._statusbarService.addEntry(
+				this._entryProps(),
+				'vibeide.chat.mode',
+				StatusbarAlignment.RIGHT,
+				{ location: { id: 'status.editor.mode', priority: 174 }, alignment: StatusbarAlignment.RIGHT }
+			);
+		}
+	}
+
+	private _refresh(): void {
+		if (this._entry) { this._entry.update(this._entryProps()); }
+		if (this._unifiedRow) {
+			this._unified.updateRow('vibeide.chat.mode', { label: this._rowLabel(), tooltip: this._tooltip() });
+		}
+	}
+
+	private _rowLabel(): string {
+		const mode = this._settingsService.state.globalSettings.chatMode;
+		return `${MODE_ICON[mode]} ${MODE_LABEL[mode]}`;
+	}
+
+	private _tooltip(): string {
+		const mode = this._settingsService.state.globalSettings.chatMode;
+		return MODE_TOOLTIP[mode];
 	}
 
 	private _entryProps(): IStatusbarEntry {
@@ -80,6 +123,12 @@ export class VibeChatModeStatusBarContribution extends Disposable implements IWo
 			tooltip: MODE_TOOLTIP[mode] + '\n\n' + localize('vibeideChatModeSbCycle', 'Click to cycle: Agent → Explore → Plan → Chat.'),
 			command: CYCLE_COMMAND,
 		};
+	}
+
+	override dispose(): void {
+		this._unifiedRow?.dispose();
+		this._entry?.dispose();
+		super.dispose();
 	}
 }
 

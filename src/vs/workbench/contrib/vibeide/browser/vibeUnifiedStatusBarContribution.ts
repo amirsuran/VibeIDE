@@ -19,6 +19,10 @@ import { localize } from '../../../../nls.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
 import { IStatusbarEntry, IStatusbarEntryAccessor, IStatusbarService, StatusbarAlignment } from '../../../services/statusbar/browser/statusbar.js';
 import { IVibeUnifiedStatusBarService } from '../common/vibeUnifiedStatusBarService.js';
+import { Action2, registerAction2 } from '../../../../platform/actions/common/actions.js';
+import { ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
+import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
+import { ICommandService } from '../../../../platform/commands/common/commands.js';
 
 const ENTRY_ID = 'vibeide.unified';
 const SHOW_COMMAND = 'vibeide.unified.showStatusPopup';
@@ -83,3 +87,39 @@ registerWorkbenchContribution2(
 	VibeUnifiedStatusBarContribution,
 	WorkbenchPhase.AfterRestored,
 );
+
+// Popup quick-pick — opens on click of the unified status entry. Each row shows
+// label + optional counter + tooltip; selecting a row with `command` invokes it.
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: SHOW_COMMAND,
+			title: { value: localize('vibeide.unified.showPopup', 'VibeIDE: Show Status Popup'), original: 'VibeIDE: Show Status Popup' },
+			category: { value: 'VibeIDE', original: 'VibeIDE' },
+			f1: true,
+		});
+	}
+	async run(accessor: ServicesAccessor): Promise<void> {
+		const unified = accessor.get(IVibeUnifiedStatusBarService);
+		const quickInput = accessor.get(IQuickInputService);
+		const commands = accessor.get(ICommandService);
+		const snapshot = unified.getSnapshot();
+		if (snapshot.popupRows.length === 0) { return; }
+		const items = snapshot.popupRows.map(r => ({
+			id: r.id,
+			label: typeof r.counter === 'number' && r.counter > 0 ? `${r.label} (${Math.floor(r.counter)})` : r.label,
+			description: r.severity && r.severity !== 'info' ? `[${r.severity}]` : undefined,
+			detail: r.tooltip,
+			command: r.command,
+		}));
+		const picked = await quickInput.pick(items, {
+			title: localize('vibeide.unified.popupTitle', 'VibeIDE status'),
+			placeHolder: localize('vibeide.unified.popupPh', 'Select to open the related panel/action'),
+			matchOnDescription: true,
+			matchOnDetail: true,
+		});
+		if (picked?.command) {
+			try { await commands.executeCommand(picked.command); } catch { /* swallow */ }
+		}
+	}
+});

@@ -3,11 +3,12 @@
  *  Licensed under the MIT License. See LICENSE.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { Disposable } from '../../../../base/common/lifecycle.js';
+import { Disposable, IDisposable } from '../../../../base/common/lifecycle.js';
 import { localize } from '../../../../nls.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
 import { IStatusbarEntry, IStatusbarEntryAccessor, IStatusbarService, StatusbarAlignment } from '../../../services/statusbar/browser/statusbar.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+import { IVibeUnifiedStatusBarService } from '../common/vibeUnifiedStatusBarService.js';
 
 const SESSION_KEY = 'vibeide.skills.sessionActiveIds';
 
@@ -18,23 +19,49 @@ export class VibeSkillsSessionStatusBarContribution extends Disposable implement
 	static readonly ID = 'workbench.contrib.vibeSkillsSessionStatusBar';
 
 	private _entry: IStatusbarEntryAccessor | undefined;
+	private _unifiedRow: IDisposable | undefined;
 
 	constructor(
 		@IStatusbarService private readonly _statusbarService: IStatusbarService,
 		@IConfigurationService private readonly _configurationService: IConfigurationService,
+		@IVibeUnifiedStatusBarService private readonly _unified: IVibeUnifiedStatusBarService,
 	) {
 		super();
-		this._entry = this._statusbarService.addEntry(
-			this._entryProps(),
-			'vibeide.skills.session',
-			StatusbarAlignment.RIGHT,
-			{ location: { id: 'status.editor.mode', priority: 173 }, alignment: StatusbarAlignment.RIGHT }
-		);
+		this._wire();
 		this._register(this._configurationService.onDidChangeConfiguration(e => {
-			if (e.affectsConfiguration(SESSION_KEY)) {
-				this._entry?.update(this._entryProps());
-			}
+			if (e.affectsConfiguration(SESSION_KEY)) { this._refresh(); }
+			if (e.affectsConfiguration('vibeide.statusBar.unifiedOnly')) { this._wire(); }
 		}));
+	}
+
+	private _wire(): void {
+		this._entry?.dispose(); this._entry = undefined;
+		this._unifiedRow?.dispose(); this._unifiedRow = undefined;
+		const p = this._entryProps();
+		if (!p.text) { return; }
+		const unifiedOnly = this._configurationService.getValue<boolean>('vibeide.statusBar.unifiedOnly') === true;
+		if (unifiedOnly) {
+			this._unifiedRow = this._unified.registerRow({
+				id: 'vibeide.skills.session',
+				label: p.text,
+				tooltip: typeof p.tooltip === 'string' ? p.tooltip : undefined,
+				priority: 173,
+				command: typeof p.command === 'string' ? p.command : undefined,
+			});
+		} else {
+			this._entry = this._statusbarService.addEntry(p, 'vibeide.skills.session', StatusbarAlignment.RIGHT,
+				{ location: { id: 'status.editor.mode', priority: 173 }, alignment: StatusbarAlignment.RIGHT });
+		}
+	}
+
+	private _refresh(): void {
+		this._wire();
+	}
+
+	override dispose(): void {
+		this._unifiedRow?.dispose();
+		this._entry?.dispose();
+		super.dispose();
 	}
 
 	private _entryProps(): IStatusbarEntry {

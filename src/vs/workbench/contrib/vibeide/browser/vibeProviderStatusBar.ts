@@ -3,13 +3,15 @@
  *  Licensed under the MIT License. See LICENSE.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { Disposable } from '../../../../base/common/lifecycle.js';
+import { Disposable, IDisposable } from '../../../../base/common/lifecycle.js';
 import { localize } from '../../../../nls.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
 import { IStatusbarEntry, IStatusbarEntryAccessor, IStatusbarService, StatusbarAlignment } from '../../../services/statusbar/browser/statusbar.js';
 import { IVibeProviderStatusService, ProviderHealth } from '../common/vibeProviderStatusService.js';
 import { IVibeTokenCostForecastService } from '../common/vibeTokenCostForecastService.js';
 import { IVibeideSettingsService } from '../common/vibeideSettingsService.js';
+import { IVibeUnifiedStatusBarService } from '../common/vibeUnifiedStatusBarService.js';
+import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 
 /**
  * VibeIDE Provider Status Widget.
@@ -21,41 +23,80 @@ export class VibeProviderStatusBarContribution extends Disposable implements IWo
 
 	private _providerEntry: IStatusbarEntryAccessor | undefined;
 	private _costEntry: IStatusbarEntryAccessor | undefined;
+	private _providerRow: IDisposable | undefined;
+	private _costRow: IDisposable | undefined;
 
 	constructor(
 		@IStatusbarService private readonly _statusbarService: IStatusbarService,
 		@IVibeProviderStatusService private readonly _providerStatusService: IVibeProviderStatusService,
 		@IVibeTokenCostForecastService private readonly _costForecastService: IVibeTokenCostForecastService,
 		@IVibeideSettingsService private readonly _settingsService: IVibeideSettingsService,
+		@IVibeUnifiedStatusBarService private readonly _unified: IVibeUnifiedStatusBarService,
+		@IConfigurationService private readonly _config: IConfigurationService,
 	) {
 		super();
-		this._createEntries();
+		this._wire();
 		this._registerListeners();
 	}
 
-	private _createEntries(): void {
-		// Provider health indicator
-		this._providerEntry = this._statusbarService.addEntry(
-			this._getProviderEntryProps(),
-			'vibeide.providerStatus',
-			StatusbarAlignment.RIGHT,
-			{ location: { id: 'status.editor.mode', priority: 190 }, alignment: StatusbarAlignment.RIGHT }
-		);
+	private _wire(): void {
+		this._providerEntry?.dispose(); this._providerEntry = undefined;
+		this._costEntry?.dispose(); this._costEntry = undefined;
+		this._providerRow?.dispose(); this._providerRow = undefined;
+		this._costRow?.dispose(); this._costRow = undefined;
 
-		// Token cost display
-		this._costEntry = this._statusbarService.addEntry(
-			this._getCostEntryProps(),
-			'vibeide.tokenCost',
-			StatusbarAlignment.RIGHT,
-			{ location: { id: 'status.editor.mode', priority: 185 }, alignment: StatusbarAlignment.RIGHT }
-		);
+		const unifiedOnly = this._config.getValue<boolean>('vibeide.statusBar.unifiedOnly') === true;
+		const p = this._getProviderEntryProps();
+		const c = this._getCostEntryProps();
+		if (unifiedOnly) {
+			this._providerRow = this._unified.registerRow({
+				id: 'vibeide.providerStatus',
+				label: p.text,
+				tooltip: typeof p.tooltip === 'string' ? p.tooltip : undefined,
+				priority: 190,
+				command: 'vibeide.transparency.show',
+			});
+			this._costRow = this._unified.registerRow({
+				id: 'vibeide.tokenCost',
+				label: c.text,
+				tooltip: typeof c.tooltip === 'string' ? c.tooltip : undefined,
+				priority: 185,
+				command: 'vibeide.tokenBudget.status',
+			});
+		} else {
+			this._providerEntry = this._statusbarService.addEntry(p, 'vibeide.providerStatus', StatusbarAlignment.RIGHT,
+				{ location: { id: 'status.editor.mode', priority: 190 }, alignment: StatusbarAlignment.RIGHT });
+			this._costEntry = this._statusbarService.addEntry(c, 'vibeide.tokenCost', StatusbarAlignment.RIGHT,
+				{ location: { id: 'status.editor.mode', priority: 185 }, alignment: StatusbarAlignment.RIGHT });
+		}
+	}
+
+	private _refresh(): void {
+		const p = this._getProviderEntryProps();
+		const c = this._getCostEntryProps();
+		this._providerEntry?.update(p);
+		this._costEntry?.update(c);
+		if (this._providerRow) {
+			this._unified.updateRow('vibeide.providerStatus', { label: p.text, tooltip: typeof p.tooltip === 'string' ? p.tooltip : undefined });
+		}
+		if (this._costRow) {
+			this._unified.updateRow('vibeide.tokenCost', { label: c.text, tooltip: typeof c.tooltip === 'string' ? c.tooltip : undefined });
+		}
 	}
 
 	private _registerListeners(): void {
-		this._register(this._providerStatusService.onStatusChanged(() => {
-			this._providerEntry?.update(this._getProviderEntryProps());
-			this._costEntry?.update(this._getCostEntryProps());
+		this._register(this._providerStatusService.onStatusChanged(() => this._refresh()));
+		this._register(this._config.onDidChangeConfiguration(e => {
+			if (e.affectsConfiguration('vibeide.statusBar.unifiedOnly')) { this._wire(); }
 		}));
+	}
+
+	override dispose(): void {
+		this._providerRow?.dispose();
+		this._costRow?.dispose();
+		this._providerEntry?.dispose();
+		this._costEntry?.dispose();
+		super.dispose();
 	}
 
 	private _getProviderEntryProps(): IStatusbarEntry {

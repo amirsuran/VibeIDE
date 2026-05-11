@@ -17,7 +17,7 @@
  * fighting language-mode / encoding entries on the right.
  */
 
-import { Disposable } from '../../../../base/common/lifecycle.js';
+import { Disposable, IDisposable } from '../../../../base/common/lifecycle.js';
 import { MutableDisposable } from '../../../../base/common/lifecycle.js';
 import { localize } from '../../../../nls.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
@@ -25,6 +25,8 @@ import { IStatusbarEntryAccessor, IStatusbarService, StatusbarAlignment } from '
 import { IVibeCustomCommandsService } from './vibeCustomCommandsService.js';
 import { buildProjectCommandsStatusBarState } from '../common/projectCommandsStatusBar.js';
 import { PROJECT_COMMANDS_PALETTE_IDS } from '../common/projectCommandsServiceContract.js';
+import { IVibeUnifiedStatusBarService } from '../common/vibeUnifiedStatusBarService.js';
+import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 
 const STATUSBAR_ENTRY_ID = 'vibeide.commands.runningIndicator';
 
@@ -34,10 +36,13 @@ export class VibeCustomCommandsStatusBarContribution extends Disposable implemen
 	/** invocationId → name for live count + tooltip details. */
 	private readonly _running = new Map<string, string>();
 	private readonly _entry = this._register(new MutableDisposable<IStatusbarEntryAccessor>());
+	private _unifiedRow: IDisposable | undefined;
 
 	constructor(
 		@IVibeCustomCommandsService private readonly _commands: IVibeCustomCommandsService,
 		@IStatusbarService private readonly _statusbar: IStatusbarService,
+		@IVibeUnifiedStatusBarService private readonly _unified: IVibeUnifiedStatusBarService,
+		@IConfigurationService private readonly _config: IConfigurationService,
 	) {
 		super();
 		this._register(this._commands.onDidStartCommand(e => {
@@ -48,6 +53,14 @@ export class VibeCustomCommandsStatusBarContribution extends Disposable implemen
 			this._running.delete(e.invocationId);
 			this._refresh();
 		}));
+		this._register(this._config.onDidChangeConfiguration(e => {
+			if (e.affectsConfiguration('vibeide.statusBar.unifiedOnly')) {
+				this._entry.clear();
+				this._unifiedRow?.dispose();
+				this._unifiedRow = undefined;
+				this._refresh();
+			}
+		}));
 		this._refresh();
 	}
 
@@ -56,6 +69,30 @@ export class VibeCustomCommandsStatusBarContribution extends Disposable implemen
 			runningCount: this._running.size,
 			runningNames: Array.from(this._running.values()),
 		});
+		const unifiedOnly = this._config.getValue<boolean>('vibeide.statusBar.unifiedOnly') === true;
+		if (unifiedOnly) {
+			this._entry.clear();
+			if (!state.visible) {
+				this._unifiedRow?.dispose();
+				this._unifiedRow = undefined;
+				return;
+			}
+			if (!this._unifiedRow) {
+				this._unifiedRow = this._unified.registerRow({
+					id: STATUSBAR_ENTRY_ID,
+					label: state.text,
+					tooltip: state.tooltip,
+					counter: this._running.size,
+					priority: 80,
+					command: PROJECT_COMMANDS_PALETTE_IDS.run,
+				});
+			} else {
+				this._unified.updateRow(STATUSBAR_ENTRY_ID, { label: state.text, tooltip: state.tooltip, counter: this._running.size });
+			}
+			return;
+		}
+		this._unifiedRow?.dispose();
+		this._unifiedRow = undefined;
 		if (!state.visible) {
 			this._entry.clear();
 			return;
@@ -72,6 +109,11 @@ export class VibeCustomCommandsStatusBarContribution extends Disposable implemen
 		} else {
 			this._entry.value = this._statusbar.addEntry(props, STATUSBAR_ENTRY_ID, StatusbarAlignment.LEFT, 80);
 		}
+	}
+
+	override dispose(): void {
+		this._unifiedRow?.dispose();
+		super.dispose();
 	}
 }
 
