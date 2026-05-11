@@ -38,9 +38,13 @@ import { IVibeCustomCommandsService } from './vibeCustomCommandsService.js';
 import { PROJECT_COMMANDS_PALETTE_IDS } from '../common/projectCommandsServiceContract.js';
 import { serializeProjectCommandsInitTemplate } from '../common/projectCommandsInitTemplate.js';
 import { describeUnresolvedPlaceholders } from '../common/projectCommandSecretsResolver.js';
-import { commandIdToRegistryId } from '../common/projectCommandsRegistryId.js';
+import { commandIdToRegistryId, formatProjectCommandKeybindingLabel } from '../common/projectCommandsRegistryId.js';
+import { allocateDefaultChords } from '../common/projectCommandsKeybindings.js';
 import { importTasksJson } from '../common/vscodeTasksJsonImporter.js';
 import { decodeProjectCommandsFile, ProjectCommandsFile } from '../common/projectCommandsTypes.js';
+import { KeybindingsRegistry, KeybindingWeight } from '../../../../platform/keybinding/common/keybindingsRegistry.js';
+import { KeyMod, KeyCode } from '../../../../base/common/keyCodes.js';
+import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
 
 CommandsRegistry.registerCommand({
 	id: PROJECT_COMMANDS_PALETTE_IDS.run,
@@ -264,6 +268,7 @@ class VibeCustomCommandsContribution extends Disposable implements IWorkbenchCon
 
 	/** registryId → CommandsRegistry disposable so we can dispose-and-rebind on FS change. */
 	private readonly _dynamicRegistrations = new Map<string, IDisposable>();
+	private readonly _chordRegistrations: IDisposable[] = [];
 	private readonly _registrationStore = this._register(new DisposableStore());
 
 	constructor(@IVibeCustomCommandsService private readonly _commands: IVibeCustomCommandsService) {
@@ -273,11 +278,11 @@ class VibeCustomCommandsContribution extends Disposable implements IWorkbenchCon
 		// Initial pass + listen for FS changes. The service emits `init` on the
 		// first reload — we wait for that, then re-bind on every subsequent
 		// `fs-change | global-paths-change | manual-reload` event.
-		this._rebindDynamicCommands(_commands.getCommands());
+		this._rebindDynamicCommands(_commands.getCommands() as ReadonlyArray<{ id: string; pinned?: boolean; order?: number }>);
 		this._register(_commands.onDidChangeCommands(e => this._rebindDynamicCommands(e.commands)));
 	}
 
-	private _rebindDynamicCommands(commands: ReadonlyArray<{ id: string }>): void {
+	private _rebindDynamicCommands(commands: ReadonlyArray<{ id: string; name?: string; pinned?: boolean; order?: number }>): void {
 		// Dispose previous registrations. CommandsRegistry doesn't expose an
 		// "unregister" API, but `registerCommand` returns an IDisposable that
 		// removes the entry; we tracked them by registryId.
@@ -285,6 +290,10 @@ class VibeCustomCommandsContribution extends Disposable implements IWorkbenchCon
 			d.dispose();
 		}
 		this._dynamicRegistrations.clear();
+		for (const d of this._chordRegistrations) {
+			d.dispose();
+		}
+		this._chordRegistrations.length = 0;
 
 		for (const c of commands) {
 			const registryId = commandIdToRegistryId(c.id);
@@ -296,15 +305,42 @@ class VibeCustomCommandsContribution extends Disposable implements IWorkbenchCon
 				handler: async () => {
 					await this._commands.run(c.id);
 				},
+				// `description` shows up in the Keyboard Shortcuts UI search
+				// (`Project: <name>`) so users can find dynamic commands without
+				// memorising the `vibeide.commands.run.<id>` prefix.
+				metadata: { description: formatProjectCommandKeybindingLabel({ id: c.id, name: c.name ?? c.id }) },
 			});
 			this._dynamicRegistrations.set(registryId, d);
 		}
-		// Ensure the parent store releases everything at shutdown even if we
-		// somehow lose a reference.
 		for (const d of this._dynamicRegistrations.values()) {
+			this._registrationStore.add(d);
+		}
+
+		// Default chord keybindings (roadmap L339) for the top-9 pinned commands.
+		// Pure helper allocates `ctrl+shift+alt+<1..9>` with user-overridable
+		// `when: vibeide.commands.pinned >= N` clauses. Re-bind on every FS event
+		// so adding / removing a pinned command updates the chord set.
+		const chords = allocateDefaultChords(commands as ReadonlyArray<import('../common/projectCommandsTypes.js').ProjectCommand>);
+		for (const chord of chords) {
+			const keyCode = DIGIT_KEYS[chord.slot - 1];
+			if (keyCode === undefined) {
+				continue;
+			}
+			const d = KeybindingsRegistry.registerKeybindingRule({
+				id: chord.registryId,
+				weight: KeybindingWeight.WorkbenchContrib,
+				primary: KeyMod.CtrlCmd | KeyMod.Shift | KeyMod.Alt | keyCode,
+				when: ContextKeyExpr.deserialize(chord.when),
+			});
+			this._chordRegistrations.push(d);
 			this._registrationStore.add(d);
 		}
 	}
 }
+
+const DIGIT_KEYS: readonly KeyCode[] = [
+	KeyCode.Digit1, KeyCode.Digit2, KeyCode.Digit3, KeyCode.Digit4, KeyCode.Digit5,
+	KeyCode.Digit6, KeyCode.Digit7, KeyCode.Digit8, KeyCode.Digit9,
+];
 
 registerWorkbenchContribution2(VibeCustomCommandsContribution.ID, VibeCustomCommandsContribution, WorkbenchPhase.AfterRestored);
