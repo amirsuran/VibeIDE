@@ -1,0 +1,75 @@
+# Publish JSON Schemas to GitHub Pages (roadmap §K.4 L305).
+#
+# Mirrors `src/vs/workbench/contrib/vibeide/common/schemas/*.json` to
+# `https://<org>.github.io/<repo>/schemas/<file>.schema.json` so external
+# JSON-Schema consumers (editor lint plugins, vibe doctor --repair, third-party
+# pack authors) can reference them without cloning the repo.
+#
+# Schemas declare their canonical $id pointing at `https://vibeide.io/schemas/…`
+# — once the public domain serves these files, both URLs return the same JSON.
+# Until then, GitHub Pages is the working mirror.
+
+name: publish-schemas
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/vs/workbench/contrib/vibeide/common/schemas/*.json'
+      - '.github/workflows/publish-schemas.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Stage schemas
+        run: |
+          set -euo pipefail
+          mkdir -p _site/schemas
+          cp src/vs/workbench/contrib/vibeide/common/schemas/*.json _site/schemas/
+          # Sanity: refuse to publish if any schema lost its $id (canonical URL contract).
+          for f in _site/schemas/*.json; do
+            if ! grep -q '"\$id"[[:space:]]*:[[:space:]]*"https://' "$f"; then
+              echo "::error file=$f::missing canonical \$id — refusing to publish"
+              exit 1
+            fi
+          done
+          echo "Staged schemas:"
+          ls -la _site/schemas/
+          # Drop a tiny index for browsability.
+          {
+            echo '<!doctype html><meta charset="utf-8"><title>VibeIDE — JSON Schemas</title>'
+            echo '<h1>VibeIDE — JSON Schemas</h1><ul>'
+            for f in _site/schemas/*.json; do
+              name="$(basename "$f")"
+              echo "<li><a href=\"schemas/${name}\">${name}</a></li>"
+            done
+            echo '</ul>'
+          } > _site/index.html
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
