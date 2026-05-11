@@ -2,71 +2,72 @@
 /**
  * vibe diff --split-commits — split a large diff into logical atomic commits
  *
+ * Uses diffCommitGrouping (common/diffCommitGrouping.ts CJS mirror) for
+ * Conventional-Commits-aware bucketing. Ollama-assisted commit-message
+ * generation is a separate Phase 2 step; this script handles partitioning.
+ *
  * Usage:
- *   node scripts/vibe-diff-split.js
- *   node scripts/vibe-diff-split.js --dry-run
+ *   node scripts/vibe-diff-split.js [--dry-run] [--json]
  */
 
 'use strict';
 
 const { execSync } = require('child_process');
 const path = require('path');
+const { groupDiffByCommitType, renderGroupStub } = require('./lib/diff-commit-grouping.cjs');
 
 const args = process.argv.slice(2);
 const DRY_RUN = args.includes('--dry-run');
+const JSON_OUTPUT = args.includes('--json');
 
 function getStagedFiles() {
 	try {
-		const result = execSync('git diff --cached --name-only', { encoding: 'utf-8' });
-		return result.trim().split('\n').filter(Boolean);
+		const result = execSync('git diff --cached --name-status', { encoding: 'utf-8' });
+		return result.trim().split('\n').filter(Boolean).map(line => {
+			const parts = line.split('\t');
+			const status = (parts[0] || '').trim().toUpperCase();
+			const filePath = parts[1] || '';
+			return {
+				path: filePath,
+				isNew: status === 'A',
+				isDeleted: status === 'D',
+			};
+		}).filter(f => f.path.length > 0);
 	} catch { return []; }
 }
 
-function categorizeFile(filePath) {
-	const ext = path.extname(filePath).toLowerCase();
-	const name = path.basename(filePath).toLowerCase();
-	const dir = filePath.split('/')[0];
+const stagedChanges = getStagedFiles();
 
-	if (name.includes('test') || name.includes('spec') || dir === 'test' || dir === 'tests' || dir === '__tests__') return 'test';
-	if (name.includes('readme') || ext === '.md' || ext === '.txt' || dir === 'docs') return 'docs';
-	if (name === 'package.json' || name === 'package-lock.json' || ext === '.yml' || ext === '.yaml' || dir === '.github') return 'build';
-	if (ext === '.json' || ext === '.toml' || ext === '.ini' || ext === '.env') return 'config';
-	return 'feat';
-}
-
-function groupIntoCommits(files) {
-	const groups = {};
-	for (const file of files) {
-		const category = categorizeFile(file);
-		const dir = file.split('/').slice(0, 2).join('/');
-		const key = `${category}/${dir}`;
-		if (!groups[key]) groups[key] = { category, files: [] };
-		groups[key].files.push(file);
-	}
-	return Object.values(groups);
-}
-
-const stagedFiles = getStagedFiles();
-
-if (stagedFiles.length === 0) {
+if (stagedChanges.length === 0) {
 	console.log('No staged files. Run: git add <files>');
 	process.exit(0);
 }
 
-if (stagedFiles.length <= 5) {
-	console.log(`${stagedFiles.length} files staged — no split needed.`);
+if (stagedChanges.length <= 5 && !JSON_OUTPUT) {
+	console.log(`${stagedChanges.length} files staged — no split needed.`);
 	process.exit(0);
 }
 
-const groups = groupIntoCommits(stagedFiles);
+const groups = groupDiffByCommitType(stagedChanges);
 
-console.log(`\n📦 vibe diff --split-commits\n${'─'.repeat(50)}`);
-console.log(`${stagedFiles.length} staged files → ${groups.length} logical commits\n`);
+if (JSON_OUTPUT) {
+	const out = groups.map(g => ({
+		commitMessage: renderGroupStub(g),
+		type: g.type,
+		scope: g.scope,
+		files: g.files.map(f => f.path),
+	}));
+	console.log(JSON.stringify(out, null, 2));
+	process.exit(0);
+}
+
+console.log(`\nvibe diff --split-commits\n${'─'.repeat(50)}`);
+console.log(`${stagedChanges.length} staged files → ${groups.length} logical commits\n`);
 
 groups.forEach((group, i) => {
-	const message = `${group.category}: update ${group.files[0].split('/').pop()}${group.files.length > 1 ? ` and ${group.files.length - 1} more` : ''}`;
+	const message = renderGroupStub(group);
 	console.log(`Commit ${i + 1}: ${message}`);
-	group.files.forEach(f => console.log(`  - ${f}`));
+	group.files.forEach(f => console.log(`  - ${f.path}`));
 	console.log('');
 });
 
@@ -75,7 +76,6 @@ if (DRY_RUN) {
 	process.exit(0);
 }
 
-console.log('⚠️  Auto-splitting requires interactive mode.');
-console.log('   Phase 2 will implement AST-based atomic splitting.');
-console.log('\n   For now: unstage all, then stage and commit each group manually.');
-console.log('   Or use: git add -p (interactive staging)');
+console.log('Note: unstage all, then stage and commit each group manually.');
+console.log('Or use: git add -p (interactive staging)');
+console.log('Phase 2: Ollama-assisted commit-message body generation.');
