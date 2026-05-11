@@ -12,24 +12,15 @@ import { OllamaSetupInstructions, OneClickSwitchButton, SettingsForProvider, Mod
 import { ColorScheme } from '../../../../../../../platform/theme/common/theme.js';
 import ErrorBoundary from '../sidebar-tsx/ErrorBoundary.js';
 import { FileAccess } from '../../../../../../../base/common/network.js';
+import { onboardingS, tabNames, type TabName } from './vibeOnboardingRu.js';
 
 const OVERRIDE_VALUE = false
 
 const getHeroLogoUri = () => FileAccess.asBrowserUri('vs/workbench/browser/media/vibeide-logo.png').toString(true)
 
-const welcomeHighlights = [
-	'Чат и быстрое редактирование',
-	'Быстрое применение диффов',
-	'Загрузка PDF и изображений',
-	'Локальные и облачные модели',
-];
+const welcomeHighlights = onboardingS.welcomeHighlights;
 
-const welcomeStats = [
-	{ label: 'Вложения', value: 'PDF и изображения', detail: 'Кидайте ТЗ, скриншоты и заметки прямо в чат.' },
-	{ label: 'Быстрое применение', value: 'Построчно', detail: 'Утверждайте каждое изменение из того же диффа, что его сгенерировал.' },
-	{ label: 'Роутер моделей', value: 'Автовыбор', detail: 'Anthropic, GPT-4o, Gemini, DeepSeek или Ollama — под задачу.' },
-	{ label: 'Надстройки VibeIDE', value: 'Больше из коробки', detail: 'Fast Apply, вложения и подсказки с учётом SCM без плагинов.' },
-];
+const welcomeStats = onboardingS.welcomeStats;
 
 export const VibeOnboarding = () => {
 
@@ -66,7 +57,7 @@ const VibeHeroIcon = () => {
 		<div className="w-full max-w-[220px] aspect-square rounded-2xl overflow-hidden @@vibe-onboarding-hero-logo">
 			<img
 				src={heroLogoUri}
-				alt="Логотип VibeIDE"
+				alt={onboardingS.heroLogoAlt}
 				className="w-full h-full object-contain opacity-95"
 				draggable={false}
 				onError={(e) => {
@@ -113,16 +104,7 @@ const FadeIn = ({ children, className, delayMs = 0, durationMs, ...props }: { ch
 //  New AddProvidersPage Component and helpers
 // =============================================
 
-const tabNames = ['Free', 'Paid', 'Local'] as const;
-
-type TabName = typeof tabNames[number] | 'Cloud/Other';
-
-const tabLabelRu: Record<TabName, string> = {
-	Free: 'Бесплатно',
-	Paid: 'Платно',
-	Local: 'Локально',
-	'Cloud/Other': 'Облако / другое',
-};
+const tabLabelRu: Record<TabName, string> = onboardingS.tabLabel;
 
 // Data for cloud providers tab
 const cloudProviders: ProviderName[] = ['googleVertex', 'liteLLM', 'microsoftAzure', 'awsBedrock', 'openAICompatible'];
@@ -135,21 +117,10 @@ const providerNamesOfTab: Record<TabName, ProviderName[]> = {
 	'Cloud/Other': cloudProviders,
 };
 
-const descriptionOfTab: Record<TabName, string> = {
-	Free: `OpenCode Zen и другие провайдеры с бесплатным уровнем — OpenRouter, Gemini, Pollinations. OpenCode Go (подписка на том же аккаунте) — сразу после Zen. Добавляйте сколько нужно.`,
-	Paid: `Прямое подключение к любому провайдеру (свой API-ключ).`,
-	Local: `Активные провайдеры подхватываются автоматически. Добавляйте сколько нужно.`,
-	'Cloud/Other': `Добавляйте сколько нужно. Для нестандартной конфигурации — свяжитесь с нами.`,
-};
+const descriptionOfTab: Record<TabName, string> = onboardingS.tabDescription;
 
 
-const featureNameMap: { display: string, featureName: FeatureName }[] = [
-	{ display: 'Чат', featureName: 'Chat' },
-	{ display: 'Быстрое редактирование', featureName: 'Ctrl+K' },
-	{ display: 'Автодополнение', featureName: 'Autocomplete' },
-	{ display: 'Быстрое применение', featureName: 'Apply' },
-	{ display: 'Контроль версий', featureName: 'SCM' },
-];
+const featureNameMap: ReadonlyArray<{ display: string, featureName: FeatureName }> = onboardingS.featureLabel;
 
 const AddProvidersPage = ({ pageIndex, setPageIndex }: { pageIndex: number, setPageIndex: (index: number) => void }) => {
 	const [currentTab, setCurrentTab] = useState<TabName>('Free');
@@ -177,10 +148,10 @@ const AddProvidersPage = ({ pageIndex, setPageIndex }: { pageIndex: number, setP
 	return (
 		<div className="flex flex-col gap-8 w-full min-h-[75vh] max-w-[1000px] mx-auto">
 			<div className="space-y-2 text-center md:text-left">
-				<p className="text-xs uppercase tracking-[0.35em] text-vibe-fg-4">Шаг 2</p>
-				<h2 className="text-4xl font-light text-vibe-fg-0">Выберите провайдеры моделей</h2>
+				<p className="text-xs uppercase tracking-[0.35em] text-vibe-fg-4">{onboardingS.step2Label}</p>
+				<h2 className="text-4xl font-light text-vibe-fg-0">{onboardingS.step2Title}</h2>
 				<p className="text-base text-vibe-fg-3 max-w-2xl mx-auto md:mx-0">
-					Подключите несколько провайдеров сразу: VibeIDE направляет Чат, быстрое редактирование и автодополнение на сильнейшую модель под каждый запрос.
+					{onboardingS.step2Lead}
 				</p>
 			</div>
 
@@ -207,7 +178,7 @@ const AddProvidersPage = ({ pageIndex, setPageIndex }: { pageIndex: number, setP
 					</div>
 
 					<div className="grid gap-3 mt-2 text-sm">
-						<p className="uppercase text-[11px] tracking-[0.4em] text-vibe-fg-4">Покрытие функций</p>
+						<p className="uppercase text-[11px] tracking-[0.4em] text-vibe-fg-4">{onboardingS.featureCoverage}</p>
 						{featureNameMap.map(({ display, featureName }) => {
 							const hasModel = settingsState.modelSelectionOfFeature[featureName] !== null;
 							return (
@@ -215,10 +186,10 @@ const AddProvidersPage = ({ pageIndex, setPageIndex }: { pageIndex: number, setP
 									<span>{display}</span>
 									{hasModel ? (
 										<span className="inline-flex items-center gap-1 text-emerald-400 text-xs font-medium">
-											<Check className="w-4 h-4" /> Подключено
+											<Check className="w-4 h-4" /> {onboardingS.statusConnected}
 										</span>
 									) : (
-										<span className="text-xs text-vibe-fg-4">Ожидает</span>
+										<span className="text-xs text-vibe-fg-4">{onboardingS.statusPending}</span>
 									)}
 								</div>
 							);
@@ -239,29 +210,21 @@ const AddProvidersPage = ({ pageIndex, setPageIndex }: { pageIndex: number, setP
 							<div key={providerName} className="rounded-2xl border border-vibe-border-3/80 bg-vibe-bg-3/60 p-5 shadow-[0_10px_30px_rgba(0,0,0,0.35)]">
 								<div className="flex items-center justify-between mb-3">
 									<div className="text-xl font-medium text-vibe-fg-0 flex items-center gap-2">
-										Добавить {displayInfoOfProviderName(providerName).title}
+										{onboardingS.addProviderTitle(displayInfoOfProviderName(providerName).title)}
 										{(providerName === 'openCodeZen' || providerName === 'openCode' || providerName === 'gemini' || providerName === 'openRouter' || providerName === 'pollinations') && (
 											<span
 												data-tooltip-id="vibe-tooltip-provider-info"
 												data-tooltip-place="right"
 												className="text-xs @@vibe-onboarding-accent-link"
-												data-tooltip-content={providerName === 'openCodeZen'
-													? 'OpenCode Zen: отобранные модели через opencode.ai/zen; бесплатные модели указаны в документации (MiniMax M2.5 Free, Ling 2.6 Flash и др.).'
-													: providerName === 'openCode'
-														? 'OpenCode Go: подписка Go на том же аккаунте Zen; модели и endpoint /zen/go — см. dev.opencode.ai/docs/go.'
-														: providerName === 'gemini'
-															? 'Gemini 2.5 Pro — до 25 бесплатных чатов в день, Flash — около 500. При нехватке кредитов можно перейти на платный тариф.'
-															: providerName === 'openRouter'
-																? 'OpenRouter: до 50 бесплатных чатов в день (1000 при депозите $10) на моделях с тегом :free.'
-																: 'Дешёвый API со множеством моделей (кредиты Pollen). Ключ на enter.pollinations.ai.'}
+												data-tooltip-content={onboardingS.providerTooltip(providerName)}
 											>
-												Подробнее
+												{onboardingS.moreInfo}
 											</span>
 										)}
 									</div>
 									{providerName === 'ollama' && (
 										<span className="inline-flex items-center gap-1 text-xs text-vibe-fg-3">
-											<Lock size={12} /> Локально
+											<Lock size={12} /> {onboardingS.localBadge}
 										</span>
 									)}
 								</div>
@@ -280,11 +243,11 @@ const AddProvidersPage = ({ pageIndex, setPageIndex }: { pageIndex: number, setP
 					{(currentTab === 'Local' || currentTab === 'Cloud/Other') && (
 						<div className="w-full mt-6 rounded-2xl border border-vibe-border-4/80 bg-vibe-bg-2/70 p-6">
 							<div className="flex items-center gap-2 mb-4">
-								<div className="text-xl font-medium">Модели</div>
+								<div className="text-xl font-medium">{onboardingS.modelsHeading}</div>
 							</div>
 
 							{currentTab === 'Local' && (
-								<div className="text-sm text-vibe-fg-3 mb-4">Локальные модели по возможности определяются автоматически. Добавьте записи вручную для тонкой настройки роутинга.</div>
+								<div className="text-sm text-vibe-fg-3 mb-4">{onboardingS.localModelsHint}</div>
 							)}
 
 							{currentTab === 'Local' && <ModelDump filteredProviders={localProviderNames} />}
@@ -307,7 +270,7 @@ const AddProvidersPage = ({ pageIndex, setPageIndex }: { pageIndex: number, setP
 										setPageIndex(pageIndex + 1);
 										setErrorMessage(null);
 									} else {
-										setErrorMessage("Подключите хотя бы одну модель с поддержкой чата перед продолжением.");
+										setErrorMessage(onboardingS.connectModelPrompt);
 									}
 								}}
 							/>
@@ -375,12 +338,12 @@ const NextButton = ({ onClick, ...props }: { onClick: () => void } & React.Butto
 			`}
 			{...disabled && {
 				'data-tooltip-id': 'vibe-tooltip',
-				"data-tooltip-content": 'Заполните все обязательные поля или выберите другого провайдера.',
+				"data-tooltip-content": onboardingS.requiredFieldsTooltip,
 				"data-tooltip-place": 'top',
 			}}
 			{...buttonProps}
 		>
-			Далее
+			{onboardingS.nextBtn}
 			<ChevronRight className="w-4 h-4" />
 		</button>
 	)
@@ -394,7 +357,7 @@ const PreviousButton = ({ onClick, ...props }: { onClick: () => void } & React.B
 			className="@@vibe-pill-button @@vibe-pill-button--secondary @@vibe-focus-ring px-5 py-2.5 cursor-pointer"
 			{...props}
 		>
-			Назад
+			{onboardingS.previousBtn}
 		</button>
 	)
 }
@@ -432,11 +395,11 @@ const WelcomePage = ({ onNext, onSkip }: { onNext: () => void; onSkip: () => voi
 			<div className="rounded-[32px] border border-vibe-border-2 bg-vibe-bg-2/90 backdrop-blur-2xl shadow-[0_60px_140px_rgba(0,0,0,0.75)] px-10 py-12">
 				<div className="flex flex-col lg:flex-row gap-10 items-center">
 					<div className="flex-1 flex flex-col gap-6 text-center lg:text-left">
-						<p className="text-xs uppercase tracking-[0.45em] text-vibe-fg-4">Добро пожаловать</p>
+						<p className="text-xs uppercase tracking-[0.45em] text-vibe-fg-4">{onboardingS.welcomeKicker}</p>
 						<div>
-							<h1 className="text-4xl sm:text-5xl font-light @@vibe-onboarding-welcome-title max-w-xl mx-auto lg:mx-0">Сборка там, где ИИ уже встроен в редактор</h1>
+							<h1 className="text-4xl sm:text-5xl font-light @@vibe-onboarding-welcome-title max-w-xl mx-auto lg:mx-0">{onboardingS.heroTitle}</h1>
 							<p className="text-base text-vibe-fg-2 mt-3 max-w-xl mx-auto lg:mx-0">
-								VibeIDE держит чат, быстрое редактирование, Fast Apply и работу с репозиторием в одной тёмной среде — с нативной загрузкой PDF и изображений, чтобы ТЗ и макеты всегда были вместе с разговором.
+								{onboardingS.heroLead}
 							</p>
 						</div>
 						<div className="flex flex-wrap gap-3 justify-center lg:justify-start">
@@ -447,8 +410,8 @@ const WelcomePage = ({ onNext, onSkip }: { onNext: () => void; onSkip: () => voi
 							))}
 						</div>
 						<div className="flex flex-wrap gap-3 justify-center lg:justify-start">
-							<PrimaryActionButton ringSize='xl' onClick={onNext}>Начать настройку</PrimaryActionButton>
-							<SecondaryActionButton onClick={onSkip}>Пропустить</SecondaryActionButton>
+							<PrimaryActionButton ringSize='xl' onClick={onNext}>{onboardingS.startSetup}</PrimaryActionButton>
+							<SecondaryActionButton onClick={onSkip}>{onboardingS.skipBtn}</SecondaryActionButton>
 						</div>
 					</div>
 					<div className="flex-1 w-full flex flex-col items-center gap-6">
@@ -645,31 +608,31 @@ const VibeOnboardingContent = () => {
 			<PreviousButton
 				onClick={() => { setPageIndex(pageIndex - 1) }}
 			/>
-			<SecondaryActionButton onClick={() => skipOnboarding('final-step-skip')}>Пропустить</SecondaryActionButton>
+			<SecondaryActionButton onClick={() => skipOnboarding('final-step-skip')}>{onboardingS.skipBtn}</SecondaryActionButton>
 			<PrimaryActionButton
 				onClick={() => {
 					vibeideSettingsService.setGlobalSetting('isOnboardingComplete', true);
 					vibeMetricsService.capture('Completed Onboarding', { selectedProviderName, wantToUseOption })
 				}}
 				ringSize={vibeSettingsState.globalSettings.isOnboardingComplete ? 'screen' : undefined}
-			>Начать в VibeIDE</PrimaryActionButton>
+			>{onboardingS.startInVibe}</PrimaryActionButton>
 		</div>
 	</div>
 
 
 	// cannot be md
 	const basicDescOfWantToUseOption: { [wantToUseOption in WantToUseOption]: string } = {
-		smart: "Модели с лучшими показателями на бенчмарках.",
-		private: "На вашем ПК или в локальной сети — данные не уходят наружу.",
-		cheap: "Бесплатные и недорогие варианты.",
+		smart: onboardingS.tagSmart,
+		private: onboardingS.tagPrivate,
+		cheap: onboardingS.tagCheap,
 		all: "",
 	}
 
 	// can be md
 	const detailedDescOfWantToUseOption: { [wantToUseOption in WantToUseOption]: string } = {
-		smart: "Максимально способные, удобны для агентного режима.",
-		private: "Приватный хостинг: данные не покидают ваш компьютер или сеть. [Напишите нам](mailto:founders@voideditor.com) для помощи с развёртыванием в компании.",
-		cheap: "Выгодные тарифы вроде Gemini 2.5 Pro или свой хостинг через Ollama и vLLM бесплатно.",
+		smart: onboardingS.tagAgent,
+		private: onboardingS.tagPrivateDetail,
+		cheap: onboardingS.tagCheapDetail,
 		all: "",
 	}
 
@@ -709,10 +672,10 @@ const VibeOnboardingContent = () => {
 
 			content={
 				<div>
-					<div className="text-4xl sm:text-5xl font-light text-center @@vibe-onboarding-section-title max-w-lg mx-auto">Настройки и темы</div>
+					<div className="text-4xl sm:text-5xl font-light text-center @@vibe-onboarding-section-title max-w-lg mx-auto">{onboardingS.settingsAndThemes}</div>
 
 					<div className="mt-8 text-center flex flex-col items-center gap-4 w-full max-w-md mx-auto">
-						<h4 className="text-vibe-fg-3 mb-4">Перенести настройки из другого редактора?</h4>
+						<h4 className="text-vibe-fg-3 mb-4">{onboardingS.transferFromOther}</h4>
 						<OneClickSwitchButton className='w-full px-4 py-2' fromEditor="VS Code" />
 						<OneClickSwitchButton className='w-full px-4 py-2' fromEditor="Cursor" />
 						<OneClickSwitchButton className='w-full px-4 py-2' fromEditor="Windsurf" />
