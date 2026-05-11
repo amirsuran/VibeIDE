@@ -43,10 +43,14 @@ import { commandIdToRegistryId, formatProjectCommandKeybindingLabel } from '../c
 import { allocateDefaultChords } from '../common/projectCommandsKeybindings.js';
 import { importTasksJson } from '../common/vscodeTasksJsonImporter.js';
 import { sanitizeProjectCommand, describeIssue } from '../common/projectCommandsSanitizer.js';
-import { decodeProjectCommandsFile, ProjectCommandsFile } from '../common/projectCommandsTypes.js';
+import { decodeProjectCommandsFile, ProjectCommandsFile, ProjectCommand } from '../common/projectCommandsTypes.js';
 import { KeybindingsRegistry, KeybindingWeight } from '../../../../platform/keybinding/common/keybindingsRegistry.js';
 import { KeyMod, KeyCode } from '../../../../base/common/keyCodes.js';
 import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
+import { IDialogService } from '../../../../platform/dialogs/common/dialogs.js';
+import { renderImportDiffMarkdown, ProjectCommandLite } from '../common/commandsImportDiff.js';
+import { prepareCommandsPackImport } from '../common/projectCommandsCommunityCatalog.js';
+import { ComputedHash, decodePackEnvelope } from '../common/skillPackVerifier.js';
 
 CommandsRegistry.registerCommand({
 	id: PROJECT_COMMANDS_PALETTE_IDS.run,
@@ -505,6 +509,140 @@ CommandsRegistry.registerCommand({
 		notifications.notify({
 			severity: Severity.Info,
 			message: localize('vibeide.commands.revokeTrust.done', 'Доверие к команде «{0}» отозвано. При следующем запуске потребуется подтверждение.', picked.label),
+		});
+	},
+});
+
+// `VibeIDE: Import project commands from URL` (roadmap L918).
+// Fetches a community pack (vibe-community-commands-pack-v1), verifies SHA-256,
+// renders a per-command diff in a confirm dialog, then writes .vibe/commands.json.
+CommandsRegistry.registerCommand({
+	id: PROJECT_COMMANDS_PALETTE_IDS.importFromUrl,
+	handler: async (accessor: ServicesAccessor) => {
+		const commands = accessor.get(IVibeCustomCommandsService);
+		const quickInput = accessor.get(IQuickInputService);
+		const dialog = accessor.get(IDialogService);
+		const fileService = accessor.get(IFileService);
+		const workspace = accessor.get(IWorkspaceContextService);
+		const notifications = accessor.get(INotificationService);
+
+		const rawUrl = await quickInput.input({
+			placeHolder: localize('vibeide.commands.importFromUrl.placeholder', 'https://... (vibe-community-commands-pack-v1)'),
+			prompt: localize('vibeide.commands.importFromUrl.prompt', 'Введите HTTPS URL файла community commands pack'),
+			validateInput: async v => {
+				const t = v.trim();
+				if (!t) return null;
+				if (!t.startsWith('https://')) return localize('vibeide.commands.importFromUrl.notHttps', 'Разрешены только HTTPS URL.');
+				return null;
+			},
+		});
+		if (!rawUrl?.trim()) return;
+		const url = rawUrl.trim();
+		if (!url.startsWith('https://')) {
+			notifications.notify({ severity: Severity.Warning, message: localize('vibeide.commands.importFromUrl.notHttps', 'Разрешены только HTTPS URL.') });
+			return;
+		}
+
+		let raw: unknown;
+		try {
+			const resp = await fetch(url);
+			if (!resp.ok) {
+				notifications.notify({ severity: Severity.Error, message: localize('vibeide.commands.importFromUrl.fetchFailed', 'Не удалось загрузить pack: HTTP {0}', resp.status) });
+				return;
+			}
+			raw = await resp.json();
+		} catch (e) {
+			notifications.notify({ severity: Severity.Error, message: localize('vibeide.commands.importFromUrl.fetchError', 'Ошибка при загрузке pack: {0}', (e as Error).message ?? String(e)) });
+			return;
+		}
+
+		const envelopeResult = decodePackEnvelope(raw);
+		if (!envelopeResult.ok) {
+			notifications.notify({ severity: Severity.Error, message: localize('vibeide.commands.importFromUrl.envelopeInvalid', 'Неверный формат pack (decode): {0}', envelopeResult.reason) });
+			return;
+		}
+
+		const computedHashes: ComputedHash[] = [];
+		for (const entry of envelopeResult.value.entries) {
+			try {
+				const data = new TextEncoder().encode(entry.content);
+				const hashBuf = await crypto.subtle.digest('SHA-256', data);
+				const hex = Array.from(new Uint8Array(hashBuf)).map(b => b.toString(16).padStart(2, '0')).join('');
+				computedHashes.push({ id: entry.id, sha256: hex });
+			} catch (e) {
+				notifications.notify({ severity: Severity.Error, message: localize('vibeide.commands.importFromUrl.hashError', 'Ошибка SHA-256 для {0}: {1}', entry.id, String(e)) });
+				return;
+			}
+		}
+
+		const incomingCommandsByPackId = new Map<string, ProjectCommandLite>();
+		const incomingFull: ProjectCommand[] = [];
+		for (const entry of envelopeResult.value.entries) {
+			let parsed: unknown;
+			try {
+				parsed = JSON.parse(entry.content);
+			} catch (e) {
+				notifications.notify({ severity: Severity.Error, message: localize('vibeide.commands.importFromUrl.contentParseError', 'Ошибка парсинга команды {0}: {1}', entry.id, (e as Error).message) });
+				return;
+			}
+			if (!parsed || typeof (parsed as Record<string, unknown>).command !== 'string') {
+				notifications.notify({ severity: Severity.Error, message: localize('vibeide.commands.importFromUrl.contentInvalid', 'Команда {0} в pack имеет неверный формат.', entry.id) });
+				return;
+			}
+			const c = parsed as ProjectCommand;
+			incomingCommandsByPackId.set(entry.id, { id: entry.id, name: c.name, command: c.command, args: c.args, env: c.env, cwd: c.cwd });
+			incomingFull.push({ ...c, id: entry.id });
+		}
+
+		const currentLite: ProjectCommandLite[] = commands.getCommands().map(c => ({ id: c.id, name: c.name, command: c.command, args: c.args, env: c.env, cwd: c.cwd }));
+
+		const result = prepareCommandsPackImport({ raw, computedHashes, currentCommands: currentLite, incomingCommandsByPackId });
+		if (result.kind === 'wrong-format') {
+			notifications.notify({ severity: Severity.Error, message: localize('vibeide.commands.importFromUrl.wrongFormat', 'Неподдерживаемый формат pack: {0}', result.actual) });
+			return;
+		}
+		if (result.kind === 'envelope-invalid') {
+			notifications.notify({ severity: Severity.Error, message: localize('vibeide.commands.importFromUrl.envelopeInvalid2', 'Неверный формат pack: {0}', result.reason) });
+			return;
+		}
+		if (result.kind === 'verify-failed') {
+			notifications.notify({ severity: Severity.Error, message: localize('vibeide.commands.importFromUrl.verifyFailed', 'SHA-256 верификация не пройдена: {0}{1}', result.reason, result.details ? ` (${result.details})` : '') });
+			return;
+		}
+		if (result.kind === 'missing-incoming-command') {
+			notifications.notify({ severity: Severity.Error, message: localize('vibeide.commands.importFromUrl.missingCmd', 'Команда {0} объявлена в манифесте, но отсутствует в entries.', result.id) });
+			return;
+		}
+
+		const dangerLine = result.diff.touchesSensitiveFields
+			? `\n\n⚠️ ${localize('vibeide.commands.importFromUrl.danger', 'Изменяются поля command/args/env/cwd. Проверьте каждую строку перед подтверждением.')}`
+			: '';
+		const confirmed = await dialog.confirm({
+			message: localize('vibeide.commands.importFromUrl.confirmTitle', 'VibeIDE: импорт project commands из URL'),
+			detail: renderImportDiffMarkdown(result.diff) + dangerLine,
+			primaryButton: localize('vibeide.commands.importFromUrl.confirmBtn', 'Импортировать'),
+		});
+		if (!confirmed.confirmed) return;
+
+		const folder = workspace.getWorkspace().folders[0];
+		if (!folder) {
+			notifications.notify({ severity: Severity.Warning, message: localize('vibeide.commands.importFromUrl.noWorkspace', 'Откройте рабочую папку для сохранения команд.') });
+			return;
+		}
+		const commandsUri = joinPath(folder.uri, '.vibe', 'commands.json');
+		let existing: ProjectCommandsFile | null = null;
+		try {
+			const buf = await fileService.readFile(commandsUri);
+			const dec = decodeProjectCommandsFile(JSON.parse(buf.value.toString()));
+			if (dec.ok) existing = dec.value;
+		} catch { /* missing → treated as empty */ }
+
+		const merged: ProjectCommandsFile = { vibeVersion: existing?.vibeVersion ?? '1.0.0', commands: incomingFull };
+		await fileService.writeFile(commandsUri, VSBuffer.fromString(JSON.stringify(merged, null, '\t') + '\n'));
+		await commands.reload();
+		notifications.notify({
+			severity: Severity.Info,
+			message: localize('vibeide.commands.importFromUrl.done', 'Импорт завершён: добавлено {0}, изменено {1}, удалено {2}.', result.diff.stats.added, result.diff.stats.modified, result.diff.stats.removed),
 		});
 	},
 });
