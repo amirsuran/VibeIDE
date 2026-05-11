@@ -1,0 +1,124 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright 2026 VibeIDE Team. All rights reserved.
+ *  Licensed under the MIT License. See LICENSE.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/**
+ * AI thinking indicator — status-bar contribution (roadmap L290).
+ *
+ * Maps `IChatThreadService.streamState` to `ThinkingPhase` and renders
+ * `buildThinkingIndicator()` in the LEFT status bar. The entry is hidden
+ * when no request is active, so it never competes with baseline IDE chrome.
+ *
+ * Phase mapping:
+ *   LLM / preparing / tool   → 'thinking'
+ *   awaiting_user / idle      → 'idle' (hidden)
+ *   undefined with error      → 'failed'
+ *
+ * `lastChunkAgoMs` is approximated via a 1-second tick that measures elapsed
+ * time since the last stream-state change. Sufficient for the UI hint level.
+ */
+
+import { Disposable, MutableDisposable } from '../../../../base/common/lifecycle.js';
+import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
+import { IStatusbarEntryAccessor, IStatusbarService, StatusbarAlignment } from '../../../services/statusbar/browser/statusbar.js';
+import { IChatThreadService } from './chatThreadService.js';
+import { buildThinkingIndicator, ThinkingPhase } from '../common/aiThinkingIndicator.js';
+
+const STATUSBAR_ENTRY_ID = 'vibeide.aiThinkingIndicator';
+const TICK_MS = 1_000;
+
+export class VibeAiThinkingStatusBarContribution extends Disposable implements IWorkbenchContribution {
+	static readonly ID = 'workbench.contrib.vibeAiThinkingStatusBar';
+
+	private readonly _entry = this._register(new MutableDisposable<IStatusbarEntryAccessor>());
+	private _phase: ThinkingPhase = 'idle';
+	private _phaseStartMs = 0;
+	private _tickHandle: ReturnType<typeof setInterval> | undefined;
+
+	constructor(
+		@IChatThreadService private readonly _chat: IChatThreadService,
+		@IStatusbarService private readonly _statusbar: IStatusbarService,
+	) {
+		super();
+		this._register(this._chat.onDidChangeStreamState(() => {
+			this._syncPhase();
+		}));
+		this._syncPhase();
+	}
+
+	private _syncPhase(): void {
+		const streamState = this._chat.streamState;
+		let newPhase: ThinkingPhase = 'idle';
+
+		for (const threadState of Object.values(streamState)) {
+			if (!threadState) continue;
+			const running = threadState.isRunning;
+			if (running === 'LLM' || running === 'preparing' || running === 'tool') {
+				newPhase = 'thinking';
+				break;
+			}
+			if (running === undefined && 'error' in threadState && threadState.error) {
+				newPhase = 'failed';
+				break;
+			}
+		}
+
+		if (newPhase !== this._phase) {
+			this._phase = newPhase;
+			this._phaseStartMs = Date.now();
+		}
+
+		this._startOrStopTick();
+		this._render();
+	}
+
+	private _startOrStopTick(): void {
+		if (this._phase === 'idle' || this._phase === 'completed') {
+			if (this._tickHandle !== undefined) {
+				clearInterval(this._tickHandle);
+				this._tickHandle = undefined;
+			}
+		} else if (this._tickHandle === undefined) {
+			this._tickHandle = setInterval(() => this._render(), TICK_MS);
+		}
+	}
+
+	private _render(): void {
+		const state = buildThinkingIndicator({
+			phase: this._phase,
+			lastChunkAgoMs: this._phaseStartMs > 0 ? Date.now() - this._phaseStartMs : undefined,
+		});
+
+		if (!state.visible) {
+			this._entry.clear();
+			return;
+		}
+
+		const props = {
+			name: 'VibeIDE AI Thinking',
+			text: state.text,
+			ariaLabel: state.hint ?? state.text,
+			tooltip: state.hint,
+		};
+
+		if (this._entry.value) {
+			this._entry.value.update(props);
+		} else {
+			this._entry.value = this._statusbar.addEntry(props, STATUSBAR_ENTRY_ID, StatusbarAlignment.LEFT, 90);
+		}
+	}
+
+	override dispose(): void {
+		if (this._tickHandle !== undefined) {
+			clearInterval(this._tickHandle);
+		}
+		super.dispose();
+	}
+}
+
+registerWorkbenchContribution2(
+	VibeAiThinkingStatusBarContribution.ID,
+	VibeAiThinkingStatusBarContribution,
+	WorkbenchPhase.AfterRestored,
+);
