@@ -81,6 +81,7 @@ import { IVibeAgentTerritorialLockService } from './vibeAgentTerritorialLockServ
 import { resolveModelForPath, decodeRoutingRules } from '../common/modelRoutingByPath.js';
 import { IVibeMentionService } from '../common/vibeMentionService.js';
 import { IVibeSearchContextService } from '../common/vibeSearchContextService.js';
+import { IVibeAIDebuggingService } from './vibeAIDebuggingContribution.js';
 
 // related to retrying when LLM message has error
 // Optimized retry logic: faster initial retry, exponential backoff
@@ -512,6 +513,7 @@ class ChatThreadService extends Disposable implements IChatThreadService {
 		@IVibeAgentTerritorialLockService private readonly _agentTerritorialLockService: IVibeAgentTerritorialLockService,
 		@IVibeMentionService private readonly _mentionService: IVibeMentionService,
 		@IVibeSearchContextService private readonly _searchContextService: IVibeSearchContextService,
+		@IVibeAIDebuggingService private readonly _aiDebuggingService: IVibeAIDebuggingService,
 	) {
 		super()
 		this.state = { allThreads: {}, currentThreadId: null as unknown as string } // default state
@@ -3922,6 +3924,33 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 					contextSize,
 					timestamp: now
 				});
+			}
+
+			// L881 — AI Debugging Context inject with token-budget gate. Skip injection when
+			// the prompt is already near context capacity (≥70%); the debug snapshot is the
+			// least-load-bearing piece of context and should yield first. Budget headroom is
+			// computed from the model's reported context size when available.
+			try {
+				const used = promptTokens ?? 0;
+				const capacity = contextSize && contextSize > 0 ? contextSize : 0;
+				const usageRatio = capacity > 0 ? used / capacity : 0;
+				const TOKEN_BUDGET_GATE = 0.70;
+				if (capacity > 0 && usageRatio >= TOKEN_BUDGET_GATE) {
+					this._logService.info(`[VibeIDE] debug-context skipped (token-budget gate: ${used}/${capacity} = ${(usageRatio * 100).toFixed(1)}%)`);
+				} else {
+					const dbgMarkdown = this._aiDebuggingService.getContextMarkdown();
+					if (dbgMarkdown && dbgMarkdown.length > 0) {
+						// Shrink budget further when usage is between 50% and 70% — use 4KB instead of 8KB.
+						const HARD_MAX = 8 * 1024;
+						const SOFT_MAX = 4 * 1024;
+						const cap = usageRatio >= 0.5 ? SOFT_MAX : HARD_MAX;
+						const body = dbgMarkdown.length > cap ? dbgMarkdown.slice(0, cap) + '\n…[truncated]' : dbgMarkdown;
+						const section = `\n\n<!-- vibeide:debug-context -->\n${body}\n<!-- /vibeide:debug-context -->`;
+						separateSystemMessage = (separateSystemMessage ?? '') + section;
+					}
+				}
+			} catch (e) {
+				this._logService.warn('[VibeIDE] AI debug context inject failed:', e);
 			}
 
 			// CRITICAL: Validate that messages are not empty before sending to API

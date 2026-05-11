@@ -1204,18 +1204,21 @@ export class ToolsService implements IToolsService {
 				// Parse natural language to shell command.
 				const parsed = await this.nlShellParserService.parseNLToShell(nlInput, cwd, CancellationToken.None);
 
-				// Safety gate per nl-shell-safety-contract.md / L990:
-				//   high (destructive) → block and require explicit confirm.
-				//   medium (ambiguous) → warn only; execute.
-				if (parsed.estimatedRisk === 'high') {
+				// L1053 — chat-mode confirm dialog UI. Service sets
+				// `requiresConfirmation = estimatedRisk !== 'low'`; both medium (ambiguous)
+				// and high (destructive) need an explicit confirm before execute.
+				if (parsed.requiresConfirmation) {
+					const isHigh = parsed.estimatedRisk === 'high';
 					const { confirmed } = await this.dialogService.confirm({
-						type: 'warning',
-						message: `Destructive command detected`,
-						detail: `"${parsed.command}"\n\nThis command may cause irreversible data loss. Proceed only if you are sure.`,
-						primaryButton: 'Run anyway',
+						type: isHigh ? 'warning' : 'info',
+						message: isHigh ? `Destructive command detected` : `Review command before running`,
+						detail: `"${parsed.command}"\n\n${parsed.explanation || ''}\n\n${isHigh
+							? 'This command may cause irreversible data loss. Proceed only if you are sure.'
+							: 'Risk is ambiguous — confirm intent before execution.'}`,
+						primaryButton: isHigh ? 'Run anyway' : 'Run',
 					});
 					if (!confirmed) {
-						const abortMsg = '[Aborted by user: destructive command not confirmed]';
+						const abortMsg = `[Aborted by user: ${isHigh ? 'destructive' : 'ambiguous'} command not confirmed]`;
 						return {
 							result: Promise.resolve({
 								result: abortMsg,
@@ -1225,8 +1228,6 @@ export class ToolsService implements IToolsService {
 							}),
 						};
 					}
-				} else if (parsed.estimatedRisk === 'medium') {
-					this.notificationService.info(`⚠️ Potentially risky command: ${parsed.command} — review before relying on output.`);
 				}
 
 				// Execute the parsed command.

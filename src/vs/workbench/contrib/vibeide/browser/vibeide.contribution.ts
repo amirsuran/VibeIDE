@@ -81,6 +81,10 @@ import './agentSessionsRegistration.js'
 // register file service (for explorer context menu)
 import './fileService.js'
 
+// i18n: VibeIDE NLS bundle loader + dev-only live-reload (roadmap §L491/L513)
+import './vibeNlsBundleService.js'
+import './vibeNlsLiveReload.js'
+
 // register source control management
 import './vibeideSCMService.js'
 
@@ -120,6 +124,10 @@ import './errorDetectionCommands.js'
 
 // performance guardrails
 import '../common/performanceGuardrailsService.js'
+
+// AI provenance — decorates @ai-generated blocks (roadmap §L1179)
+import '../common/vibeAiProvenanceConfiguration.js'
+import './vibeAiProvenanceEditorContribution.js'
 
 // status bar contribution
 import './vibeideStatusBar.js'
@@ -604,3 +612,15 @@ import './vibeProviderFailoverContribution.js'
 
 // VibeIDE: Network outbound panel — vibeide.network.showOutbound palette → ring buffer → Output channel (§ N.5/1043)
 import './vibeNetworkContribution.js'
+
+// VibeIDE: Subagent isolation runtime — real Worker/child_process.fork adapter for decideSubagentIsolation (§ L883)
+import './vibeSubagentIsolationRuntime.js'
+
+// VibeIDE: Background agent runtime — fork/spawn + JSON-line stdout protocol driving lifecycle FSM (§ L884)
+import './vibeBackgroundAgentRuntime.js'
+
+// VibeIDE: Roadmap-agent executor — delegate-to-subagent pipeline driving transitionLoop FSM (§ L885)
+import './vibeRoadmapAgentExecutor.js'
+
+// VibeIDE: Cloud locale sync — runtime adapter for decideLocaleSync + HTTP exchange (§ L517)
+import './vibeCloudLocaleSyncService.js'

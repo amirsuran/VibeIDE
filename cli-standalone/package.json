@@ -1,0 +1,39 @@
+{
+	"name": "@vibeide/cli-standalone",
+	"version": "0.0.1",
+	"description": "Standalone vibe CLI — single binary that dispatches into the VibeIDE script set (doctor, skills, plans, release-lint, …). Mirrors the in-repo scripts/vibe.js dispatcher so the same commands work outside a VibeIDE checkout.",
+	"keywords": [
+		"vibeide",
+		"cli",
+		"agent",
+		"skills",
+		"doctor"
+	],
+	"license": "MIT",
+	"author": "VibeIDE Team",
+	"homepage": "https://github.com/borodatych/VibeIDE/tree/main/cli-standalone#readme",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/borodatych/VibeIDE.git",
+		"directory": "cli-standalone"
+	},
+	"bugs": {
+		"url": "https://github.com/borodatych/VibeIDE/issues"
+	},
+	"bin": {
+		"vibe": "./bin/vibe.js"
+	},
+	"files": [
+		"bin/",
+		"scripts/",
+		"README.md",
+		"LICENSE"
+	],
+	"engines": {
+		"node": ">=18"
+	},
+	"scripts": {
+		"sync": "node ./bin/sync-from-repo.js",
+		"prepublishOnly": "node ./bin/sync-from-repo.js --check"
+	}
+}

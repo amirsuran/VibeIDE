@@ -1,8 +1,8 @@
 # VibeIDE Sample Extension
 
 Smallest possible extension that uses the VibeIDE proposed-API surface. Acceptance
-proof for `references/v1/extension-api-readonly-draft.md` and the docs in
-`docs/v1/extension-development.md`.
+proof for the `vibeideReadonly` proposal in
+`src/vscode-dts/vscode.proposed.vibeideReadonly.d.ts`.
 
 ## What it does
 
@@ -11,14 +11,18 @@ VibeIDE namespace and shows the result as a notification:
 
 - `vscode.vibeide.agent.status()` — Trust Score mode + running flag.
 - `vscode.vibeide.skills.list()` — number of skills discovered.
-- `vscode.vibeide.constraints.queryAllowed(...)` — whether an `edit_file` action
-  on the workspace root is allowed under current `.vibe/constraints.json`.
+- `vscode.vibeide.constraints.queryAllowed(...)` — whether `write` on the
+  workspace root is allowed under current `.vibe/constraints.json`.
 - `vscode.vibeide.plans.subscribeToEvents(...)` — logs plan-lifecycle events
   to the dev tools console.
 
-Until the proposed typings ship in `src/vscode-dts/`, the calls go through `any`
-casts. The cast disappears when the typings land — at that point this file becomes
-a five-line tutorial referenced from `docs/v1/extension-development.md`.
+The accessors are wired through `MainThreadVibeIDE` to the corresponding
+workbench services (`IChatThreadService`, `IVibeSkillsLibraryService`,
+`IVibePlanEventJournalService.onEvent`, `IVibeConstraintsService`).
+
+This sample is JavaScript-only and uses `any` casts so it can be loaded without
+a typings shim. TypeScript consumers should declare `enabledApiProposals` in
+`package.json` and import `vscode.vibeide` directly.
 
 ## Run
 
@@ -28,6 +32,5 @@ a five-line tutorial referenced from `docs/v1/extension-development.md`.
 4. In the host window, run `VibeIDE Sample: Show status` from the command palette.
 
 If you see a warning about the proposed API being absent, the build does not yet
-ship `vibeideReadonly` — that means the typings + extHost wiring still live in the
-backlog. See `references/v1/extension-api-readonly-draft.md` § "Wiring backlog" for
-the next steps.
+ship `vibeideReadonly` — make sure `enabledApiProposals: ["vibeideReadonly"]` is
+present in `package.json`.

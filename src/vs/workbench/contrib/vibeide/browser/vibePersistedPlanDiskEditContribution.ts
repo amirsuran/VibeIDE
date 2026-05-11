@@ -154,7 +154,7 @@ export class VibePersistedPlanDiskEditContribution extends Disposable implements
 				const m = line.match(/^-\s+(?:~~)?(?:\[[ x]\]\s+)?Step\s+(\d+):\s*(.+?)(?:~~)?(?:\s*_\(skipped\)_\s*)?$/);
 				if (!m) continue;
 				const status = line.includes('[x]') ? 'succeeded' : line.startsWith('- ~~') ? 'skipped' : 'queued';
-				steps.push({ id: m[1], title: `Step ${m[1]}: ${m[2].trim()}`, status });
+				steps.push({ id: m[1], title: localize('vibeide.planStepTitle', "Step {0}: {1}", m[1], m[2].trim()), status });
 			}
 		}
 		const summaryMatch = text.match(/## Summary\r?\n\r?\n([\s\S]*?)(?:\r?\n##|$)/);

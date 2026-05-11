@@ -132,7 +132,12 @@
     "vibe:transparency:dashboard": "node scripts/vibe.js transparency-dashboard --markdown",
     "vibe:schema:templates": "node scripts/vibe.js schema-templates",
     "vibe:schema:list": "node scripts/vibe.js schema-templates --list",
-    "build-language-packs": "node bin/vibe-language-pack-build.mjs --locale ru"
+    "build-language-packs": "node bin/vibe-language-pack-build.mjs --locale ru",
+    "coverage:vibeide": "c8 --config .c8rc scripts/test.bat",
+    "coverage:vibeide:ci": "c8 --config .c8rc --check-coverage scripts/test.bat",
+    "coverage:report": "c8 report --config .c8rc",
+    "privacy:check": "node scripts/privacy-ci-check.mjs",
+    "privacy:check:json": "node scripts/privacy-ci-check.mjs --json"
   },
   "dependencies": {
     "@anthropic-ai/sandbox-runtime": "0.0.49",

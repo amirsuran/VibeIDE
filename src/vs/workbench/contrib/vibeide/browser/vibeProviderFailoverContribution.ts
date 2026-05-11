@@ -21,24 +21,24 @@ import { Disposable } from '../../../../base/common/lifecycle.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
 import { IConfigurationRegistry, Extensions as ConfigurationExtensions } from '../../../../platform/configuration/common/configurationRegistry.js';
+import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
+import { ILogService } from '../../../../platform/log/common/log.js';
+import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+import { localize } from '../../../../nls.js';
 
 Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({
 	id: 'vibeide.providers',
-	title: 'VibeIDE — Provider Resilience',
+	title: localize('vibeide.providers.title', "VibeIDE — Provider Resilience"),
 	type: 'object',
 	properties: {
 		'vibeide.providers.failoverChain': {
 			type: 'array',
 			items: { type: 'string' },
 			default: [],
-			description: 'Ordered list of provider ids to use for auto-failover when the current provider returns 3 consecutive server errors. Leave empty to disable failover. Example: ["anthropic","openai","ollama"].',
+			description: localize('vibeide.providers.failoverChain.description', "Ordered list of provider ids to use for auto-failover when the current provider returns 3 consecutive server errors. Leave empty to disable failover. Example: [\"anthropic\",\"openai\",\"ollama\"]."),
 		},
 	},
 });
-import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
-import { ILogService } from '../../../../platform/log/common/log.js';
-import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
-import { localize } from '../../../../nls.js';
 import { IAuditLogService } from '../common/auditLogService.js';
 import { IVibeProviderStatusService, RequestOutcome } from '../common/vibeProviderStatusService.js';
 import {

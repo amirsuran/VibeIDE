@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Disposable } from '../../../../base/common/lifecycle.js';
+import { Emitter, Event } from '../../../../base/common/event.js';
 import { registerSingleton, InstantiationType } from '../../../../platform/instantiation/common/extensions.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { IFileService } from '../../../../platform/files/common/files.js';
@@ -41,11 +42,15 @@ export const IVibePlanEventJournalService = createDecorator<IVibePlanEventJourna
  */
 export interface IVibePlanEventJournalService {
 	readonly _serviceBrand: undefined;
+	readonly onEvent: Event<Record<string, unknown>>;
 	append(workspaceFolder: URI, record: Record<string, unknown>): Promise<void>;
 }
 
 class VibePlanEventJournalService extends Disposable implements IVibePlanEventJournalService {
 	declare readonly _serviceBrand: undefined;
+
+	private readonly _onEvent = this._register(new Emitter<Record<string, unknown>>());
+	readonly onEvent: Event<Record<string, unknown>> = this._onEvent.event;
 
 	constructor(
 		@IFileService private readonly _fileService: IFileService,
@@ -56,6 +61,11 @@ class VibePlanEventJournalService extends Disposable implements IVibePlanEventJo
 	}
 
 	async append(workspaceFolder: URI, record: Record<string, unknown>): Promise<void> {
+		// Fire in-process listeners regardless of whether disk-journaling is enabled —
+		// subscribers (e.g., the extension API bridge) should see events even when the
+		// journal is opted-out.
+		this._onEvent.fire(record);
+
 		const enabled = this._configurationService.getValue<boolean>('vibeide.planEventsJournal.enable') ?? true;
 		if (!enabled) {
 			return;
