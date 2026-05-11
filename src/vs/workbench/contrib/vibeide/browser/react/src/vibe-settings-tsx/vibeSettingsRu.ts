@@ -121,7 +121,162 @@ export const chatS = {
 	acceptFileTooltip: 'Принять файл',
 	historyToolbarTitle: 'История чатов',
 	historyFilterPlaceholder: 'Фильтр…',
+	historySearchPlaceholder: 'Поиск',
 	historyEmptyFiltered: 'Нет совпадений',
+	historyEmptyState: 'История чатов пуста.',
+	historyNoMatches: (q: string) => `Нет совпадений для «${q}»`,
+	historyError: 'Ошибка доступа к истории чатов.',
+	historyShowMore: (n: number) => `Ещё ${n}…`,
+	historyShowLess: 'Свернуть',
+	historyDateToday: 'Сегодня',
+	historyDateYesterday: 'Вчера',
+	historyDateLast7: 'Последние 7 дней',
+	historyDateLast30: 'Последние 30 дней',
+	historyDateOlder: 'Ранее',
+	maximizeChatTitle: 'Развернуть чат на всю ширину (повторно — вернуть)',
+	maximizeChatAria: 'Развернуть/свернуть чат',
+	zenModeTitle: 'Zen-режим: скрыть всё, включая табы (повторно — выйти)',
+	zenModeAria: 'Переключить Zen-режим чата',
+	bottomChildrenLintErrors: 'Ошибки линтера',
+	bottomChildrenError: 'Ошибка',
+	reasoningHeader: 'Рассуждение',
+	streamingContentAria: 'Стрим контента',
+	planRejectTitle: 'Отклонить план',
+	planRejectAria: 'Отклонить план',
+	planRejectLabel: 'Отклонить',
+	planExecuteInAgentTitle: 'Переключиться в режим Агента и выполнить план',
+	planExecuteInAgentAria: 'Выполнить план в режиме Агента',
+	planExecuteInAgentLabel: 'Выполнить в Агенте',
+	planApproveTitle: 'Одобрить и выполнить',
+	planApproveAria: 'Одобрить и выполнить план',
+	planApproveLabel: 'Одобрить и выполнить',
+	planPauseAria: 'Поставить выполнение плана на паузу',
+	planPauseLabel: 'Пауза',
+	planResumeAria: 'Возобновить выполнение плана',
+	planResumeLabel: 'Возобновить',
+	planAdvisoryReview: 'Совет ревьюера: ',
+	planStepAria: (n: number, status: string, desc: string) => `Шаг ${n}, ${status}: ${desc}`,
+} as const;
+
+/** Russian UI strings for ErrorDisplay (sidebar-tsx/ErrorDisplay.tsx). */
+export const errorDisplayS = {
+	header: 'Ошибка',
+	unknown: 'Произошла неизвестная ошибка. Подробности — в журнале.',
+	hideDetails: 'Скрыть подробности',
+	showDetails: 'Показать подробности',
+	dismissAria: 'Закрыть ошибку',
+	retryLabel: 'Повторить',
+	retryAria: 'Повторить операцию',
+	rollbackLabel: 'Откатить',
+	rollbackAria: 'Откатить изменения',
+	openLogsLabel: 'Открыть журналы',
+	openLogsAria: 'Открыть журналы',
+	technicalDetails: 'Технические подробности: ',
+} as const;
+
+/** Russian UI strings for VibeTooltip (vibe-tooltip/VibeTooltip.tsx). */
+export const tooltipS = {
+	starterModelsTitle: 'Хорошие стартовые модели',
+	forChat: 'Для чата:',
+	forAutocomplete: 'Для автодополнения:',
+	useLargest: 'По возможности берите самую большую из этих моделей!',
+} as const;
+
+/** Russian UI strings for QuickEditChat (quick-edit-tsx/QuickEditChat.tsx). */
+export const quickEditS = {
+	placeholder: 'Введите инструкции…',
+} as const;
+
+const _pluralRu = (n: number, one: string, few: string, many: string): string => {
+	const mod10 = n % 10;
+	const mod100 = n % 100;
+	if (mod10 === 1 && mod100 !== 11) { return one; }
+	if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) { return few; }
+	return many;
+};
+
+/** Russian UI strings for VibeCommandBar (vibe-editor-widgets-tsx/VibeCommandBar.tsx). */
+export const commandBarS = {
+	filesChanged: (n: number) => `${n} ${_pluralRu(n, 'файл изменён', 'файла изменено', 'файлов изменено')}`,
+	nextLabel: 'Далее',
+	acceptAll: 'Принять всё',
+	rejectAll: 'Отклонить всё',
+	acceptFile: 'Принять файл',
+	rejectFile: 'Отклонить файл',
+	diffOf: (idx: number, total: number) => `Правка ${idx} из ${total}`,
+	noChangesYet: 'Изменений пока нет',
+	noChanges: 'Нет изменений',
+	fileOf: (idx: number, total: number) => `Файл ${idx} из ${total}`,
+	filesCount: (n: number) => `${n} ${_pluralRu(n, 'файл', 'файла', 'файлов')}`,
+} as const;
+
+/** Russian UI strings for VibeSelectionHelper (vibe-editor-widgets-tsx/VibeSelectionHelper.tsx). */
+export const selectionHelperS = {
+	addToChat: 'Добавить в чат',
+	editInline: 'Править inline',
+	disableSuggestions: 'Отключить подсказки?',
+} as const;
+
+/** Russian UI strings for util/inputs.tsx (chat input dropdowns and shared widgets). */
+export const inputsS = {
+	noResultsFound: 'Ничего не найдено',
+	enterTextToFilter: 'Введите текст для фильтра…',
+	noChangesFound: 'Нет изменений',
+	diffChangeOf: (idx: number, total: number) => `Изменение ${idx} из ${total}`,
+} as const;
+
+/** Russian UI strings for image/PDF attachments (util/ImageAttachmentChip, ImageMessageRenderer, PDFAttachmentList, PDFMessageRenderer, ImageLightbox). */
+export const attachmentsS = {
+	imageAttachmentAria: (filename: string, size: string, status: 'uploading' | 'failed' | 'ready') =>
+		`Изображение: ${filename}, ${size}. ${status === 'uploading' ? 'Загружается' : status === 'failed' ? 'Ошибка' : 'Готово'}`,
+	processing: 'Обработка…',
+	cancelUpload: 'Отменить загрузку',
+	cancelProcessing: 'Отменить обработку',
+	cancel: 'Отмена',
+	removeAttachment: (filename: string) => `Удалить ${filename}`,
+	retry: 'Повторить',
+	loading: 'Загрузка…',
+	imageGridAria: (n: number) => `${n} ${_pluralRu(n, 'изображение', 'изображения', 'изображений')}`,
+	pdfGridAria: (n: number) => `${n} PDF`,
+	imageClickToZoom: (filename: string) => `Изображение: ${filename}. Клик — увеличить.`,
+	imageFallbackAlt: (idx: number) => `Изображение ${idx}`,
+	pdfAria: (filename: string) => `PDF: ${filename}`,
+	pageOf: (filename: string) => `Страница 1 из ${filename}`,
+	pagesCount: (n: number) => `${n} ${_pluralRu(n, 'страница', 'страницы', 'страниц')}`,
+	morePages: (n: number) => `+${n} ещё`,
+	listAria: (n: number, kind: 'image' | 'pdf') =>
+		kind === 'image'
+			? `${n} ${_pluralRu(n, 'вложение-изображение', 'вложения-изображения', 'вложений-изображений')}`
+			: `${n} PDF-${_pluralRu(n, 'вложение', 'вложения', 'вложений')}`,
+	lightboxDialogAria: (idx: number, total: number, filename: string) =>
+		`Изображение ${idx} из ${total}: ${filename}`,
+	lightboxClose: 'Закрыть лайтбокс',
+	lightboxPrev: 'Предыдущее изображение',
+	lightboxNext: 'Следующее изображение',
+	lightboxGoTo: (idx: number) => `Перейти к изображению ${idx}`,
+	lightboxCountSuffix: (idx: number, total: number) => `${idx} из ${total}`,
+} as const;
+
+/** Russian UI strings for markdown/ApplyBlockHoverButtons.tsx (chat code-block hover buttons). */
+export const markdownApplyS = {
+	copyIdle: 'Копировать',
+	copyDone: 'Скопировано!',
+	copyError: 'Не удалось скопировать',
+	goToFile: 'Перейти к файлу',
+	stop: 'Остановить',
+	apply: 'Применить',
+	remove: 'Убрать',
+	keep: 'Принять',
+	done: 'Готово',
+	applying: 'Применяю',
+	applyErrorNoFile: 'Ошибка VibeIDE: не удалось запустить Apply. Этот блок Apply работает с текущим файлом, но возможно ни один файл не открыт.',
+	applyErrorFile: (path: string) => `Ошибка VibeIDE: не удалось запустить Apply. Этот блок Apply работает с ${path}, но файл может не существовать.`,
+	applyErrorRuntime: (e: string) => `Ошибка VibeIDE: проблема при выполнении Apply: ${e}.`,
+} as const;
+
+/** Russian UI strings for markdown/ChatMarkdownRender.tsx. */
+export const chatMarkdownRenderS = {
+	unknownToken: 'Неизвестный токен…',
 } as const;
 
 
@@ -322,6 +477,38 @@ export const safetyS = {
 	perfGuardrailsDesc: 'Сводка trip count / max / avg / threshold по каждому защитному правилу за текущую сессию. Live-агрегатор `perfGuardrailsAggregator` собирает данные; UI-просмотр откроется в Output channel.',
 	perfGuardrailsOpen: 'Открыть `vibe doctor --perf`',
 	perfGuardrailsBacklog: 'Live dashboard в Settings — backlog (нужны streaming hooks из Performance Guardrails service).',
+
+	// L991-992 — PerfGuardrailsPanel.tsx
+	perfPanelTitle: 'Performance Guardrails',
+	perfPanelIntro: 'Защитные правила (P95 latency, max memory, max FIM context) фиксируют срабатывания в `vibe doctor --perf` и в Output channel «VibeIDE Perf».',
+	perfPanelRefresh: 'Обновить снимок',
+	perfPanelOpenOutput: 'Открыть Output channel',
+	perfPanelEmpty: 'За текущую сессию ни одно правило не срабатывало.',
+	perfPanelColRule: 'Правило',
+	perfPanelColTrips: 'Срабатываний',
+	perfPanelColAvg: 'Среднее',
+	perfPanelColMax: 'Макс.',
+	perfPanelColThreshold: 'Порог',
+
+	// L991-992 — MemoryPanel.tsx
+	memoryPanelTitle: 'Память сессии',
+	memoryPanelIntro: 'Записи, накопленные `VibeSessionMemoryService` за текущую сессию. Они подмешиваются в системный промпт, влияют на edit-risk-vs-confidence и хранятся в `.vibe/session-memory.jsonl`.',
+	memoryPanelReload: 'Перечитать с диска',
+	memoryPanelClear: 'Очистить (только текущая сессия)',
+	memoryPanelClearConfirm: 'Очистить in-memory snapshot? Файл .vibe/session-memory.jsonl останется на диске.',
+	memoryPanelEmpty: 'Записей нет — память пустая.',
+	memoryPanelColKind: 'Тип',
+	memoryPanelColAge: 'Возраст',
+	memoryPanelColPreview: 'Содержимое',
+	memoryPanelDocsLink: 'Документация: docs/v1/session-memory.md',
+
+	// Settings.tsx — extra (L481 long-tail)
+	perfPanelRunDoctorMsg: 'Запустите `npx vibe doctor --perf` в терминале для текстового отчёта.',
+	ageLessThanMin: '<1 мин',
+	ageMinutes: (n: number) => `${n} мин`,
+	ageHours: (n: number) => `${n} ч`,
+	ageDays: (n: number) => `${n} дн`,
+	modelsCountTotal: (n: number) => `${n} всего`,
 } as const;
 
 export const modelsS = {
@@ -691,4 +878,58 @@ export const workspaceS = {
 		`Файл слишком большой для предпросмотра (> ${maxKb} КБ) — откройте в редакторе.`,
 	refreshPreview: 'Обновить предпросмотр',
 	editInEditor: 'Править в редакторе',
+	// L480 long-tail — sub-tab pill labels for workspace forms
+	pillRules: 'Правила (.vibe/rules.md)',
+	pillAgents: 'Агенты (AGENTS.md)',
+	pillGoals: 'Цели (.vibe/goals.md)',
+	pillPrompts: 'Промпты (.vibe/prompts)',
+	pillWorkflows: 'Workflows (.vibe/workflows)',
+	pillSkills: 'Навыки (.vibe/skills)',
+	exampleSkeletonMarkup: 'Пример разметки (скелет для копирования)',
+	exampleSkeleton: 'Пример (скелет для копирования)',
+	skillsHintLine1Prefix: 'Каталог под ',
+	skillsHintLine1Mid: ' с файлом ',
+	skillsHintLine1Suffix: '.',
+	skillsHintLine2Prefix: 'Поле ',
+	skillsHintLine2Mid: ' в YAML — id для ',
+	skillsHintLine2Suffix: ' (может отличаться от папки).',
+	// New workflow template literals (insert when creating a new workflow file)
+	workflowTplDescription: 'Опишите многошаговый сценарий для агента.',
+	workflowTplStepName: 'Шаг 1',
+	workflowTplStepDescription: 'Что сделать на этом шаге.',
+} as const;
+
+/** Russian UI strings for CommandsEditorPanel.tsx (L316). */
+export const commandsEditorS = {
+	title: 'Project Commands — редактор',
+	toggleToJson: 'Переключить на JSON',
+	toggleToForm: 'Переключить на формы',
+	reload: 'Перечитать с диска',
+	save: 'Сохранить',
+	addCommand: '+ Добавить команду',
+	deleteCommand: 'Удалить команду',
+	selectOrAdd: 'Выберите команду слева или добавьте новую.',
+	unnamed: '(без имени)',
+	noWorkspace: 'Откройте рабочую папку — `.vibe/commands.json` создаётся в корне.',
+	loadParseFailed: 'Ошибка парсинга `.vibe/commands.json`',
+	loadDecodeFailed: 'Ошибка валидации `.vibe/commands.json`',
+	saveDecodeFailed: 'Не сохранено: ошибка валидации схемы',
+	jsonParseFailed: 'JSON: ошибка парсинга',
+	toggleParseFailed: 'Переключение не выполнено: текущий JSON не парсится',
+	toggleDecodeFailed: 'Переключение не выполнено: схема не валидна',
+	saveDone: '`.vibe/commands.json` сохранён.',
+	fixErrors: 'Исправьте ошибки в полях перед сохранением.',
+	duplicateId: (id: string) => `Дублирующийся id «${id}». Идентификаторы команд должны быть уникальными.`,
+	secretSuspect: (name: string, where: string) =>
+		`«${name}»: подозрение на plaintext-секрет в ${where}. Используйте \${secret:KEY} вместо инлайнового значения.`,
+	fieldId: 'id (slug, [a-z0-9-])',
+	fieldName: 'Имя (видно в палитре)',
+	fieldCommand: 'Команда (исполняемый файл)',
+	fieldDescription: 'Описание',
+	fieldArgs: 'Аргументы (по одному в строке)',
+	fieldCwd: 'cwd (относительно корня workspace)',
+	fieldEnv: 'env (KEY=VALUE по строкам)',
+	fieldPinned: 'pinned',
+	fieldSingleton: 'singleton',
+	fieldConfirm: 'confirm',
 } as const;

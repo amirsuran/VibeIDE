@@ -716,7 +716,7 @@ export const ModelDump = ({ filteredProviders }: { filteredProviders?: ProviderN
 			const countInParens = q.length > 0
 				? `${models.length}/${afterActive.length}`
 				: `${models.length}`;
-			const countTitle = (q.length > 0 || activeOnly) ? `${allModels.length} всего` : undefined;
+			const countTitle = (q.length > 0 || activeOnly) ? safetyS.modelsCountTotal(allModels.length) : undefined;
 			return <div key={providerName} className='mb-2 @@vibe-chat-like-shell overflow-hidden'>
 				<button
 					type='button'
@@ -2013,13 +2013,215 @@ const FeatureOptionsSettingsBody = () => {
 };
 
 // -----------------------------------------------------------------------------
-// Safety & Diagnostics panel (roadmap §L.6 L1055 / L1056) — radio for auto-stash
-// mode + skeleton entries for model-routing and Performance Guardrails.
+// Safety & Diagnostics panel (roadmap §L.6 L1055 / L1056 / L991 / L992 / L1057)
+// — radio for auto-stash mode + model-routing link + live PerfPanel +
+// session-MemoryPanel.
 // -----------------------------------------------------------------------------
 
 const AUTOSTASH_MODES = ['always', 'dirty-only', 'never'] as const;
 type AutostashMode = typeof AUTOSTASH_MODES[number];
 const AUTOSTASH_KEY = 'vibeide.safety.autostash.mode';
+
+// L991 — Performance Guardrails React panel.
+// Reads .vibe/perf-guardrails-events.jsonl from the active workspace folder via
+// IFileService, aggregates the last 24h via aggregatePerfGuardrails, renders a
+// per-rule table. Refresh is manual to keep this off the render hot path.
+const PerfGuardrailsPanel = () => {
+	const accessor = useAccessor()
+	const fileService = accessor.get('IFileService')
+	const workspaceService = accessor.get('IWorkspaceContextService')
+	const notificationService = accessor.get('INotificationService')
+
+	type Row = {
+		rule: string;
+		tripCount: number;
+		maxObservedValue: number;
+		avgObservedValue: number;
+		thresholdValue: number;
+		topContext: string;
+	};
+	const [rows, setRows] = useState<Row[]>([])
+	const [empty, setEmpty] = useState<boolean>(true)
+	const [err, setErr] = useState<string | null>(null)
+
+	const refresh = useCallback(async () => {
+		setErr(null)
+		try {
+			const folder = workspaceService.getWorkspace().folders[0]
+			if (!folder) {
+				setRows([]); setEmpty(true); return
+			}
+			const uri = joinPath(folder.uri, '.vibe', 'perf-guardrails-events.jsonl')
+			let text = ''
+			try {
+				const buf = await fileService.readFile(uri)
+				text = buf.value.toString()
+			} catch {
+				setRows([]); setEmpty(true); return
+			}
+			const events: any[] = []
+			for (const line of text.split(/\r\n|\r|\n/)) {
+				const trimmed = line.trim()
+				if (!trimmed) continue
+				try {
+					events.push(JSON.parse(trimmed))
+				} catch { /* skip malformed */ }
+			}
+			const { aggregatePerfGuardrails } = await import('../../../../common/perfGuardrailsAggregator.js')
+			const now = Date.now()
+			const dash = aggregatePerfGuardrails(events, now - 24 * 60 * 60 * 1000, now)
+			setRows(dash.rules.map(r => ({
+				rule: r.rule,
+				tripCount: r.tripCount,
+				maxObservedValue: r.maxObservedValue,
+				avgObservedValue: r.avgObservedValue,
+				thresholdValue: r.thresholdValue,
+				topContext: r.topContext,
+			})))
+			setEmpty(dash.rules.length === 0)
+		} catch (e: any) {
+			setErr(e?.message ?? String(e))
+		}
+	}, [fileService, workspaceService])
+
+	useEffect(() => { void refresh() }, [refresh])
+
+	return (
+		<div className='max-w-[800px]'>
+			<h2 className='text-xl mb-2'>{safetyS.perfPanelTitle}</h2>
+			<h4 className='text-vibe-fg-3 mb-4'>{safetyS.perfPanelIntro}</h4>
+			<div className='flex gap-2 mb-2'>
+				<VibeButtonBgDarken className='px-4 py-1 max-w-fit' onClick={() => { void refresh() }}>
+					{safetyS.perfPanelRefresh}
+				</VibeButtonBgDarken>
+				<VibeButtonBgDarken
+					className='px-4 py-1 max-w-fit'
+					onClick={() => {
+						notificationService.notify({
+							severity: Severity.Info,
+							message: safetyS.perfPanelRunDoctorMsg,
+						})
+					}}
+				>
+					{safetyS.perfPanelOpenOutput}
+				</VibeButtonBgDarken>
+			</div>
+			{err ? <div className='text-vibe-fg-3 text-xs mb-2'>error: {err}</div> : null}
+			{empty ? (
+				<div className='text-vibe-fg-3 text-sm'>{safetyS.perfPanelEmpty}</div>
+			) : (
+				<table className='text-vibe-fg-1 text-sm w-full border-collapse'>
+					<thead>
+						<tr className='text-left text-vibe-fg-3'>
+							<th className='px-2 py-1'>{safetyS.perfPanelColRule}</th>
+							<th className='px-2 py-1'>{safetyS.perfPanelColTrips}</th>
+							<th className='px-2 py-1'>{safetyS.perfPanelColAvg}</th>
+							<th className='px-2 py-1'>{safetyS.perfPanelColMax}</th>
+							<th className='px-2 py-1'>{safetyS.perfPanelColThreshold}</th>
+						</tr>
+					</thead>
+					<tbody>
+						{rows.map(r => (
+							<tr key={r.rule}>
+								<td className='px-2 py-1'>{r.rule}{r.topContext ? <span className='text-vibe-fg-3'> · {r.topContext}</span> : null}</td>
+								<td className='px-2 py-1'>{r.tripCount}</td>
+								<td className='px-2 py-1'>{r.avgObservedValue.toFixed(1)}</td>
+								<td className='px-2 py-1'>{r.maxObservedValue.toFixed(1)}</td>
+								<td className='px-2 py-1'>{r.thresholdValue.toFixed(1)}</td>
+							</tr>
+						))}
+					</tbody>
+				</table>
+			)}
+		</div>
+	)
+}
+
+// L992 / L1057 — Session-memory React panel.
+// Pulls in-memory snapshot from IVibeSessionMemoryService for the current
+// chat thread; manual refresh button so we don't subscribe to every append.
+const SessionMemoryPanel = () => {
+	const accessor = useAccessor()
+	const sessionMemory = accessor.get('IVibeSessionMemoryService')
+	const chatThreadService = accessor.get('IChatThreadService')
+	const notificationService = accessor.get('INotificationService')
+
+	type Entry = { id: string; kind: string; content: string; updatedAt: number };
+	const [rows, setRows] = useState<Entry[]>([])
+	const [empty, setEmpty] = useState<boolean>(true)
+
+	const refresh = useCallback(() => {
+		try {
+			const thread = chatThreadService.getCurrentThread()
+			const threadId = thread?.id
+			if (!threadId) { setRows([]); setEmpty(true); return }
+			const entries = sessionMemory.getRecent(threadId, 100)
+			setRows(entries.map(e => ({ id: e.id, kind: e.kind, content: e.content, updatedAt: (e as any).updatedAt ?? (e as any).createdAt ?? Date.now() })))
+			setEmpty(entries.length === 0)
+		} catch {
+			setRows([]); setEmpty(true)
+		}
+	}, [sessionMemory, chatThreadService])
+
+	useEffect(() => { refresh() }, [refresh])
+
+	const formatAge = (updatedAt: number): string => {
+		const dt = Math.max(0, Date.now() - updatedAt)
+		const m = Math.floor(dt / 60000)
+		if (m < 1) return safetyS.ageLessThanMin
+		if (m < 60) return safetyS.ageMinutes(m)
+		const h = Math.floor(m / 60)
+		if (h < 24) return safetyS.ageHours(h)
+		const d = Math.floor(h / 24)
+		return safetyS.ageDays(d)
+	}
+
+	return (
+		<div className='max-w-[800px]'>
+			<h2 className='text-xl mb-2'>{safetyS.memoryPanelTitle}</h2>
+			<h4 className='text-vibe-fg-3 mb-4'>{safetyS.memoryPanelIntro}</h4>
+			<div className='flex gap-2 mb-2'>
+				<VibeButtonBgDarken className='px-4 py-1 max-w-fit' onClick={refresh}>
+					{safetyS.memoryPanelReload}
+				</VibeButtonBgDarken>
+				<VibeButtonBgDarken
+					className='px-4 py-1 max-w-fit'
+					onClick={() => {
+						notificationService.notify({
+							severity: Severity.Info,
+							message: safetyS.memoryPanelClearConfirm,
+						})
+					}}
+				>
+					{safetyS.memoryPanelClear}
+				</VibeButtonBgDarken>
+			</div>
+			<div className='text-vibe-fg-3 text-xs mb-2'>{safetyS.memoryPanelDocsLink}</div>
+			{empty ? (
+				<div className='text-vibe-fg-3 text-sm'>{safetyS.memoryPanelEmpty}</div>
+			) : (
+				<table className='text-vibe-fg-1 text-sm w-full border-collapse'>
+					<thead>
+						<tr className='text-left text-vibe-fg-3'>
+							<th className='px-2 py-1'>{safetyS.memoryPanelColKind}</th>
+							<th className='px-2 py-1'>{safetyS.memoryPanelColAge}</th>
+							<th className='px-2 py-1'>{safetyS.memoryPanelColPreview}</th>
+						</tr>
+					</thead>
+					<tbody>
+						{rows.map(r => (
+							<tr key={r.id}>
+								<td className='px-2 py-1 align-top'>{r.kind}</td>
+								<td className='px-2 py-1 align-top whitespace-nowrap'>{formatAge(r.updatedAt)}</td>
+								<td className='px-2 py-1 align-top break-all'>{r.content.length > 200 ? r.content.slice(0, 200) + '…' : r.content}</td>
+							</tr>
+						))}
+					</tbody>
+				</table>
+			)}
+		</div>
+	)
+}
 
 const SafetyPanel = () => {
 	const accessor = useAccessor()
@@ -2095,22 +2297,13 @@ const SafetyPanel = () => {
 				</VibeButtonBgDarken>
 			</div>
 
-			<div className='max-w-[600px]'>
-				<h2 className='text-xl mb-2'>{safetyS.perfGuardrailsTitle}</h2>
-				<h4 className='text-vibe-fg-3 mb-4'>{safetyS.perfGuardrailsDesc}</h4>
-				<div className='text-vibe-fg-3 text-xs mb-2'>{safetyS.perfGuardrailsBacklog}</div>
-				<VibeButtonBgDarken
-					className='px-4 py-1 max-w-fit'
-					onClick={() => {
-						notificationService.notify({
-							severity: Severity.Info,
-							message: 'Performance Guardrails: запустите `npx vibe doctor --perf` в терминале для просмотра агрегата.',
-						});
-					}}
-				>
-					{safetyS.perfGuardrailsOpen}
-				</VibeButtonBgDarken>
-			</div>
+			<ErrorBoundary>
+				<PerfGuardrailsPanel />
+			</ErrorBoundary>
+
+			<ErrorBoundary>
+				<SessionMemoryPanel />
+			</ErrorBoundary>
 		</div>
 	);
 };

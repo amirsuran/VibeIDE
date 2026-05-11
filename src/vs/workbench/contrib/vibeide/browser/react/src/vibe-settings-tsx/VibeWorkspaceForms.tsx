@@ -34,8 +34,8 @@ function newWorkflowTemplateJson(fileBaseId: string): string {
 	return `${JSON.stringify(
 		{
 			name: fileBaseId,
-			description: 'Опишите многошаговый сценарий для агента.',
-			steps: [{ name: 'Шаг 1', description: 'Что сделать на этом шаге.' }],
+			description: workspaceS.workflowTplDescription,
+			steps: [{ name: workspaceS.workflowTplStepName, description: workspaceS.workflowTplStepDescription }],
 		},
 		null,
 		'\t',
@@ -923,12 +923,12 @@ export const VibeWorkspaceFormsPanel = () => {
 	}
 
 	const mainWorkspacePills: { id: Exclude<MainWorkspaceSubtab, 'vibeStructure'>; label: string }[] = [
-		{ id: 'rules', label: 'Правила (.vibe/rules.md)' },
-		{ id: 'agents', label: 'Агенты (AGENTS.md)' },
-		{ id: 'goals', label: 'Цели (.vibe/goals.md)' },
-		{ id: 'prompts', label: 'Промпты (.vibe/prompts)' },
-		{ id: 'workflows', label: 'Workflows (.vibe/workflows)' },
-		{ id: 'skills', label: 'Навыки (.vibe/skills)' },
+		{ id: 'rules', label: workspaceS.pillRules },
+		{ id: 'agents', label: workspaceS.pillAgents },
+		{ id: 'goals', label: workspaceS.pillGoals },
+		{ id: 'prompts', label: workspaceS.pillPrompts },
+		{ id: 'workflows', label: workspaceS.pillWorkflows },
+		{ id: 'skills', label: workspaceS.pillSkills },
 	];
 
 	return (
@@ -1048,7 +1048,7 @@ export const VibeWorkspaceFormsPanel = () => {
 				<div className='flex flex-col gap-2'>
 					<p className='text-xs text-vibe-fg-3'>{workspaceS.goalsHint}</p>
 					<details className='text-xs text-vibe-fg-3 @@vibe-chat-like-shell px-2 py-1'>
-						<summary className='cursor-pointer text-vibe-fg-2 select-none'>Пример разметки (скелет для копирования)</summary>
+						<summary className='cursor-pointer text-vibe-fg-2 select-none'>{workspaceS.exampleSkeletonMarkup}</summary>
 						<pre className='mt-2 max-h-40 overflow-auto font-mono text-[11px] text-vibe-fg-3 whitespace-pre-wrap border-t border-vibe-border-1 pt-2'>{VIBE_GOALS_FORM_EXAMPLE}</pre>
 					</details>
 					<button type='button' className='text-xs text-vibe-fg-3 border border-vibe-border-1 rounded px-2 py-1 self-start' onClick={insertGoalsExampleClick}>
@@ -1175,8 +1175,8 @@ export const VibeWorkspaceFormsPanel = () => {
 			{subTab === 'skills' && (
 				<div className='flex flex-col gap-3'>
 					<p className='text-xs text-vibe-fg-3'>
-						Каталог под <code className='text-vibe-fg-2'>.vibe/skills/</code> с файлом <code className='text-vibe-fg-2'>SKILL.md</code>.
-						Поле <code className='text-vibe-fg-2'>name</code> в YAML — id для <code className='text-vibe-fg-2'>/skill:</code> (может отличаться от папки).
+						{workspaceS.skillsHintLine1Prefix}<code className='text-vibe-fg-2'>.vibe/skills/</code>{workspaceS.skillsHintLine1Mid}<code className='text-vibe-fg-2'>SKILL.md</code>{workspaceS.skillsHintLine1Suffix}
+						{workspaceS.skillsHintLine2Prefix}<code className='text-vibe-fg-2'>name</code>{workspaceS.skillsHintLine2Mid}<code className='text-vibe-fg-2'>/skill:</code>{workspaceS.skillsHintLine2Suffix}
 					</p>
 					<div className='flex flex-wrap gap-2 items-end'>
 						<div className='flex flex-col gap-1'>
@@ -1305,7 +1305,7 @@ export const VibeWorkspaceFormsPanel = () => {
 						</div>
 					</details>
 					<details className='text-xs text-vibe-fg-3 @@vibe-chat-like-shell px-2 py-1'>
-						<summary className='cursor-pointer text-vibe-fg-2 select-none'>Пример (скелет для копирования)</summary>
+						<summary className='cursor-pointer text-vibe-fg-2 select-none'>{workspaceS.exampleSkeleton}</summary>
 						<pre className='mt-2 max-h-40 overflow-auto font-mono text-[11px] text-vibe-fg-3 whitespace-pre-wrap border-t border-vibe-border-1 pt-2'>{rootJsonExampleSnippet(selRootJsonName)}</pre>
 					</details>
 					<button type='button' className='text-xs text-vibe-fg-3 border border-vibe-border-1 rounded px-2 py-1 self-start' onClick={insertRootJsonExampleClick}>
