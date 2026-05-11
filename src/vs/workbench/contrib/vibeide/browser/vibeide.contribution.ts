@@ -370,6 +370,7 @@ import '../common/vibeWebContextService.js'
 import './vibeCustomCommandsService.js'
 import './vibeCustomCommandsContribution.js'
 import './vibeCustomCommandsStatusBar.js'
+import './vibeCustomCommandsOnboarding.js'
 
 // VibeIDE: @search context service (workspace literal grep, no LLM)
 import '../common/vibeSearchContextService.js'
