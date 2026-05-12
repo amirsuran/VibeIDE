@@ -10,9 +10,12 @@ import {
 	AddCommandDraft,
 	appendCommandToFile,
 	buildProjectCommandFromDraft,
+	commandToDraft,
+	findCommandById,
 	parseArgsText,
 	previewProjectCommandJson,
 	removeCommandFromFile,
+	replaceCommandInFile,
 	serializeCommandsFile,
 	setPinnedInFile,
 	validateAddCommandDraft,
@@ -257,5 +260,55 @@ suite('Project Commands — Add-form policy: preview + file mutations', () => {
 		const out = serializeCommandsFile(sampleFile);
 		assert.ok(out.endsWith('\n'));
 		assert.ok(out.includes('\t"vibeVersion"'));
+	});
+
+	test('findCommandById: hits matching entry, returns null when absent', () => {
+		assert.strictEqual(findCommandById(sampleFile, 'example')?.id, 'example');
+		assert.strictEqual(findCommandById(sampleFile, 'nope'), null);
+	});
+
+	test('commandToDraft: round-trips args / pinned / order', () => {
+		const cmd = sampleFile.commands[0];
+		const draft = commandToDraft(cmd);
+		assert.strictEqual(draft.id, 'example');
+		assert.strictEqual(draft.name, 'Hello');
+		assert.strictEqual(draft.command, 'echo');
+		assert.strictEqual(draft.argsText, 'Hello');
+		assert.strictEqual(draft.pinned, true);
+		assert.strictEqual(draft.orderText, '0');
+	});
+
+	test('commandToDraft: empty optional fields become empty strings, not undefined', () => {
+		const cmd = { id: 'a', name: 'A', command: 'echo' };
+		const draft = commandToDraft(cmd);
+		assert.strictEqual(draft.description, '');
+		assert.strictEqual(draft.argsText, '');
+		assert.strictEqual(draft.cwd, '');
+		assert.strictEqual(draft.terminal, '');
+		assert.strictEqual(draft.pinned, false);
+		assert.strictEqual(draft.orderText, '');
+	});
+
+	test('replaceCommandInFile: null when id absent', () => {
+		const updated = { id: 'nope', name: 'X', command: 'echo' };
+		assert.strictEqual(replaceCommandInFile(sampleFile, 'nope', updated), null);
+	});
+
+	test('replaceCommandInFile: in-place replacement preserves position', () => {
+		const file: ProjectCommandsFile = {
+			vibeVersion: '1.0.0',
+			commands: [
+				{ id: 'a', name: 'A', command: 'echo' },
+				{ id: 'b', name: 'B', command: 'echo' },
+				{ id: 'c', name: 'C', command: 'echo' },
+			],
+		};
+		const r = replaceCommandInFile(file, 'b', { id: 'b', name: 'B2', command: 'pwsh' });
+		assert.notStrictEqual(r, null);
+		assert.strictEqual(r!.file.commands.length, 3);
+		assert.strictEqual(r!.file.commands[1].name, 'B2');
+		assert.strictEqual(r!.file.commands[1].command, 'pwsh');
+		assert.strictEqual(r!.file.commands[0].id, 'a');
+		assert.strictEqual(r!.file.commands[2].id, 'c');
 	});
 });

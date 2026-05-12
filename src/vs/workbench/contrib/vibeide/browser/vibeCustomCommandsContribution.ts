@@ -49,10 +49,14 @@ import {
 	AddCommandDraft,
 	appendCommandToFile,
 	buildProjectCommandFromDraft,
+	commandToDraft,
+	removeCommandFromFile,
 	validateAddCommandDraft,
 	ADD_COMMAND_ERROR,
 } from '../common/projectCommandsAddFormPolicy.js';
 import { VIBE_WORKSPACE_FORMAT_VERSION } from '../common/vibeDefaultWorkspaceReadme.js';
+import { setVibeProjectCommandFormProps, VibeProjectCommandFormInput } from './vibeProjectCommandFormPane.js';
+import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { safeParseConfigJson } from '../common/vibeConfigJsonParser.js';
 import { findSuspiciousLiteralSecrets } from '../common/projectCommandSecretsResolver.js';
 import { KeybindingsRegistry, KeybindingWeight } from '../../../../platform/keybinding/common/keybindingsRegistry.js';
@@ -795,13 +799,164 @@ CommandsRegistry.registerCommand({
 });
 
 // ── vibeide.commands.add ───────────────────────────────────────────────────────
-// Multi-step QuickInput chain that fills an `AddCommandDraft`, validates against
-// `projectCommandsAddFormPolicy`, writes the new entry to `.vibe/commands.json`
-// (creating the file from scratch when it doesn't exist), and triggers a reload.
-// Used by the Project Commands menubar entry; mirrors the in-form path in
-// `ProjectCommandsPanel`.
+// Opens the standalone Add/Edit form editor (`VibeProjectCommandFormInput`)
+// in 'add' mode. Form lives in `VibeProjectCommandForm.tsx` — see that file
+// for validation and write logic.
 CommandsRegistry.registerCommand({
 	id: PROJECT_COMMANDS_PALETTE_IDS.add,
+	handler: async (accessor: ServicesAccessor) => {
+		const editorService = accessor.get(IEditorService);
+		const instantiationService = accessor.get(IInstantiationService);
+		const notifications = accessor.get(INotificationService);
+		const workspace = accessor.get(IWorkspaceContextService);
+
+		const folder = workspace.getWorkspace().folders[0];
+		if (!folder) {
+			notifications.notify({
+				severity: Severity.Warning,
+				message: localize('vibeide.commands.add.noWorkspace', 'Откройте папку, чтобы добавить проектную команду.'),
+			});
+			return;
+		}
+
+		setVibeProjectCommandFormProps({ mode: 'add' });
+		// Close any existing form first so reopening with fresh props remounts the
+		// React root with the new mode/draft (the editor input resource is shared).
+		const open = editorService.findEditors(VibeProjectCommandFormInput.RESOURCE);
+		if (open.length > 0) {
+			await editorService.closeEditors(open);
+		}
+		const input = instantiationService.createInstance(VibeProjectCommandFormInput);
+		await editorService.openEditor(input);
+	},
+});
+
+// ── vibeide.commands.editById ─────────────────────────────────────────────────
+// Opens the standalone Add/Edit form in 'edit' mode, prefilled from the
+// existing workspace command. Workspace-source only — global-source commands
+// fall back to a notification.
+CommandsRegistry.registerCommand({
+	id: 'vibeide.commands.editById',
+	handler: async (accessor: ServicesAccessor, commandId: string) => {
+		const editorService = accessor.get(IEditorService);
+		const instantiationService = accessor.get(IInstantiationService);
+		const notifications = accessor.get(INotificationService);
+		const workspace = accessor.get(IWorkspaceContextService);
+		const fileService = accessor.get(IFileService);
+
+		if (typeof commandId !== 'string' || !commandId) return;
+		const folder = workspace.getWorkspace().folders[0];
+		if (!folder) {
+			notifications.notify({
+				severity: Severity.Warning,
+				message: localize('vibeide.commands.edit.noWorkspace', 'Откройте папку, чтобы редактировать проектную команду.'),
+			});
+			return;
+		}
+
+		// Read commands.json from disk so we get the on-disk shape, not the merged
+		// snapshot (which can include global-source entries with the same id).
+		const commandsUri = joinPath(folder.uri, '.vibe', 'commands.json');
+		let existingCmd: ProjectCommand | null = null;
+		try {
+			const buf = await fileService.readFile(commandsUri);
+			const parsed = safeParseConfigJson(buf.value.toString());
+			if (parsed.ok) {
+				const decoded = decodeProjectCommandsFile(parsed.value);
+				if (decoded.ok) {
+					existingCmd = decoded.value.commands.find(c => c.id === commandId) ?? null;
+				}
+			}
+		} catch { /* missing file — handled below */ }
+
+		if (!existingCmd) {
+			notifications.notify({
+				severity: Severity.Warning,
+				message: localize('vibeide.commands.edit.missing', 'Команда «{0}» не найдена в workspace .vibe/commands.json (возможно, она из global-источника — редактируйте исходный файл).', commandId),
+			});
+			return;
+		}
+
+		setVibeProjectCommandFormProps({
+			mode: 'edit',
+			commandIdForEdit: commandId,
+			initialDraft: commandToDraft(existingCmd),
+		});
+		const open = editorService.findEditors(VibeProjectCommandFormInput.RESOURCE);
+		if (open.length > 0) {
+			await editorService.closeEditors(open);
+		}
+		const input = instantiationService.createInstance(VibeProjectCommandFormInput);
+		await editorService.openEditor(input);
+	},
+});
+
+// ── vibeide.commands.deleteById ───────────────────────────────────────────────
+// Confirm + remove. Workspace-source only.
+CommandsRegistry.registerCommand({
+	id: 'vibeide.commands.deleteById',
+	handler: async (accessor: ServicesAccessor, commandId: string) => {
+		const fileService = accessor.get(IFileService);
+		const workspace = accessor.get(IWorkspaceContextService);
+		const notifications = accessor.get(INotificationService);
+		const dialogService = accessor.get(IDialogService);
+		const commands = accessor.get(IVibeCustomCommandsService);
+
+		if (typeof commandId !== 'string' || !commandId) return;
+		const folder = workspace.getWorkspace().folders[0];
+		if (!folder) return;
+
+		const commandsUri = joinPath(folder.uri, '.vibe', 'commands.json');
+		let existing: ProjectCommandsFile | null = null;
+		try {
+			const buf = await fileService.readFile(commandsUri);
+			const parsed = safeParseConfigJson(buf.value.toString());
+			if (parsed.ok) {
+				const decoded = decodeProjectCommandsFile(parsed.value);
+				if (decoded.ok) existing = decoded.value;
+			}
+		} catch { /* missing → treated as empty */ }
+
+		const cmd = existing?.commands.find(c => c.id === commandId) ?? null;
+		if (!cmd || !existing) {
+			notifications.notify({
+				severity: Severity.Warning,
+				message: localize('vibeide.commands.delete.missing', 'Команда «{0}» не найдена в workspace .vibe/commands.json (возможно, она из global-источника).', commandId),
+			});
+			return;
+		}
+
+		const confirm = await dialogService.confirm({
+			message: localize('vibeide.commands.delete.title', 'Удалить команду «{0}»?', cmd.name),
+			detail: localize('vibeide.commands.delete.detail', 'Запись будет удалена из .vibe/commands.json. Откатить можно только через git.'),
+			primaryButton: localize('vibeide.commands.delete.ok', 'Удалить'),
+			type: 'warning',
+		});
+		if (!confirm.confirmed) return;
+
+		const removed = removeCommandFromFile(existing, commandId);
+		if (!removed) return;
+		try {
+			await fileService.writeFile(commandsUri, VSBuffer.fromString(removed.serialized));
+		} catch (e) {
+			notifications.notify({
+				severity: Severity.Error,
+				message: localize('vibeide.commands.delete.writeFailed', 'Не удалось записать .vibe/commands.json: {0}', String((e as Error)?.message ?? e)),
+			});
+			return;
+		}
+		await commands.reload();
+		notifications.notify({
+			severity: Severity.Info,
+			message: localize('vibeide.commands.delete.done', 'Команда «{0}» удалена.', cmd.name),
+		});
+	},
+});
+
+// Legacy multi-step QuickInput Add handler (kept as a fallback under a separate
+// id — palette/menubar still resolve to the editor-based handler above).
+CommandsRegistry.registerCommand({
+	id: 'vibeide.commands.addViaQuickInput',
 	handler: async (accessor: ServicesAccessor) => {
 		const quickInput = accessor.get(IQuickInputService);
 		const notifications = accessor.get(INotificationService);

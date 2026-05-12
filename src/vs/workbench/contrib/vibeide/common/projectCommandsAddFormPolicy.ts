@@ -198,6 +198,63 @@ export function appendCommandToFile(
 }
 
 /**
+ * Find a command by id in a file. Returns `null` when absent (e.g. the id
+ * belongs to a global-source entry that isn't in the workspace file).
+ */
+export function findCommandById(
+	file: ProjectCommandsFile,
+	id: string,
+): ProjectCommand | null {
+	return file.commands.find(c => c.id === id) ?? null;
+}
+
+/**
+ * Convert an existing `ProjectCommand` into a fully-populated draft suitable
+ * for the edit form. Inverse of `buildProjectCommandFromDraft` for fields
+ * actually shown in the UI; serialises args back to newline-separated text.
+ */
+export function commandToDraft(cmd: ProjectCommand): AddCommandDraft {
+	return {
+		id: cmd.id,
+		name: cmd.name,
+		description: cmd.description ?? '',
+		command: cmd.command,
+		argsText: (cmd.args ?? []).join('\n'),
+		cwd: cmd.cwd ?? '',
+		terminal: (cmd.terminal === 'integrated' || cmd.terminal === 'external' || cmd.terminal === 'background')
+			? cmd.terminal
+			: '',
+		pinned: cmd.pinned === true,
+		orderText: cmd.order === undefined ? '' : String(cmd.order),
+	};
+}
+
+/**
+ * Replace the command with id `id` in `file.commands` by the supplied
+ * `updated` entry. The new entry takes the position of the old one — the
+ * order isn't shuffled — so menubar / table reorderings stay stable across
+ * edits.
+ *
+ * Returns `null` when the id isn't present (global-source command, race with
+ * external delete, etc.); caller surfaces a warning.
+ */
+export function replaceCommandInFile(
+	file: ProjectCommandsFile,
+	id: string,
+	updated: ProjectCommand,
+): { file: ProjectCommandsFile; serialized: string } | null {
+	const idx = file.commands.findIndex(c => c.id === id);
+	if (idx < 0) return null;
+	const next = [...file.commands];
+	next[idx] = updated;
+	const updatedFile: ProjectCommandsFile = {
+		vibeVersion: file.vibeVersion,
+		commands: next,
+	};
+	return { file: updatedFile, serialized: serializeCommandsFile(updatedFile) };
+}
+
+/**
  * Replace pinned-flag in-place for command id `id`. Returns `null` when the id
  * is not in the file (i.e. it came from a global path; caller must show the
  * "global-only" warning).

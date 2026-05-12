@@ -386,6 +386,7 @@ import './vibeCustomCommandsStatusBar.js'
 import './vibeCustomCommandsOnboarding.js'
 import './vibeProjectCommandsTopBarContribution.js'
 import './vibeProjectCommandsMenubarContribution.js'
+import './vibeProjectCommandFormPane.js'
 import './vibeAiThinkingStatusBar.js'
 
 // VibeIDE: Plan-lease periodic janitor (.vibe/plans/.leases TTL cleanup)

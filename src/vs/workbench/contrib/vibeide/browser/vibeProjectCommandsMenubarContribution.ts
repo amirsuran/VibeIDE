@@ -6,35 +6,40 @@
 /**
  * Project Commands — menubar (title-bar top-level "Project Commands" submenu).
  *
- * Surfaces the `MenubarVibeProjectCommandsMenu` ID declared in
- * `platform/actions/common/actions.ts`. Two slots:
+ * Layout:
  *
- *   group `1_add`  — static "+ Добавить команду…" item bound to
- *                    `vibeide.commands.add` (registered in
- *                    `vibeCustomCommandsContribution.ts`).
- *   group `2_list` — dynamic items, one per project command. Each click
- *                    invokes the command. Re-registered on every
- *                    `onDidChangeCommands` event (FS-watch, manual reload,
- *                    globalPaths change) — old `IDisposable`s are torn down
- *                    first so we don't accumulate ghost entries.
+ *   group `1_add`  — static "+ Добавить команду…" → `vibeide.commands.add`.
+ *   group `2_list` — dynamic, one per project command. Each entry is a
+ *                    SUBMENU (`MenuId('vibeProjectCommandItem.<id>')`) with
+ *                    three actions:
+ *                       ▶ Запустить    → `vibeide.commands.menubarRun.<id>`
+ *                       ✎ Редактировать → `vibeide.commands.menubarEdit.<id>`
+ *                       🗑 Удалить      → `vibeide.commands.menubarDelete.<id>`
+ *                    Each synthetic command id is registered in
+ *                    `CommandsRegistry` and disposed alongside the menu items.
+ *                    Per-command MenuIds are intentionally lightweight — VS
+ *                    Code's `MenuRegistry` only knows about ids it was asked
+ *                    to read from, so spurious id creation has no cost.
  *
- * Each dynamic command id is a unique synthetic id
- * (`vibeide.commands.menubarRun.<id>`) registered in `CommandsRegistry` so
- * `MenuRegistry.appendMenuItem` can bind without losing the id argument.
- * Synthetic ids dispose with the menu items.
+ * Re-registration happens on every `onDidChangeCommands` event (FS-watch,
+ * manual reload, globalPaths change). Old `IDisposable`s in `_dynamicEntries`
+ * are torn down first so we don't accumulate ghost menubar entries.
  */
 
 import { Disposable, DisposableStore, IDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
 import { localize } from '../../../../nls.js';
 import { MenuId, MenuRegistry } from '../../../../platform/actions/common/actions.js';
 import { CommandsRegistry } from '../../../../platform/commands/common/commands.js';
+import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
 import { IVibeCustomCommandsService } from './vibeCustomCommandsService.js';
 import { PROJECT_COMMANDS_PALETTE_IDS } from '../common/projectCommandsServiceContract.js';
 import { sortProjectCommandsForDisplay } from '../common/projectCommandsTypes.js';
 
-const STATIC_ADD_ITEM_ID = 'vibeide.menubar.commands.add';
 const DYNAMIC_RUN_PREFIX = 'vibeide.commands.menubarRun.';
+const DYNAMIC_EDIT_PREFIX = 'vibeide.commands.menubarEdit.';
+const DYNAMIC_DELETE_PREFIX = 'vibeide.commands.menubarDelete.';
+const DYNAMIC_SUBMENU_PREFIX = 'vibeProjectCommandItem.';
 
 /** Static `+ Добавить команду…` entry. Registered once at module load. */
 MenuRegistry.appendMenuItem(MenuId.MenubarVibeProjectCommandsMenu, {
@@ -46,11 +51,6 @@ MenuRegistry.appendMenuItem(MenuId.MenubarVibeProjectCommandsMenu, {
 	},
 });
 
-CommandsRegistry.registerCommand({
-	id: STATIC_ADD_ITEM_ID,
-	handler: () => { /* placeholder — never invoked; the menu item dispatches to `vibeide.commands.add` directly. */ },
-});
-
 export class VibeProjectCommandsMenubarContribution extends Disposable implements IWorkbenchContribution {
 	static readonly ID = 'workbench.contrib.vibeProjectCommandsMenubar';
 
@@ -58,6 +58,7 @@ export class VibeProjectCommandsMenubarContribution extends Disposable implement
 
 	constructor(
 		@IVibeCustomCommandsService private readonly _commands: IVibeCustomCommandsService,
+		@ICommandService private readonly _commandService: ICommandService,
 	) {
 		super();
 		this._refresh();
@@ -72,21 +73,68 @@ export class VibeProjectCommandsMenubarContribution extends Disposable implement
 		for (let i = 0; i < list.length; i++) {
 			const cmd = list[i];
 			const runId = DYNAMIC_RUN_PREFIX + cmd.id;
-			const commandsDisp: IDisposable = CommandsRegistry.registerCommand({
+			const editId = DYNAMIC_EDIT_PREFIX + cmd.id;
+			const deleteId = DYNAMIC_DELETE_PREFIX + cmd.id;
+			const submenuId = new MenuId(DYNAMIC_SUBMENU_PREFIX + cmd.id);
+
+			// Synthetic command ids — Run/Edit/Delete. Each dispatches to the
+			// canonical action; bundling here gives us per-command menu items
+			// without ad-hoc arg-passing through MenuItem.command.
+			const runCmdDisp: IDisposable = CommandsRegistry.registerCommand({
 				id: runId,
 				handler: async () => { await this._commands.run(cmd.id); },
 			});
-			const menuDisp: IDisposable = MenuRegistry.appendMenuItem(MenuId.MenubarVibeProjectCommandsMenu, {
+			const editCmdDisp: IDisposable = CommandsRegistry.registerCommand({
+				id: editId,
+				handler: async () => { await this._commandService.executeCommand('vibeide.commands.editById', cmd.id); },
+			});
+			const deleteCmdDisp: IDisposable = CommandsRegistry.registerCommand({
+				id: deleteId,
+				handler: async () => { await this._commandService.executeCommand('vibeide.commands.deleteById', cmd.id); },
+			});
+
+			// Submenu entry under the top-level menu's `2_list` group.
+			const submenuItemDisp: IDisposable = MenuRegistry.appendMenuItem(MenuId.MenubarVibeProjectCommandsMenu, {
 				group: '2_list',
 				order: i,
+				submenu: submenuId,
+				title: cmd.pinned ? `📌 ${cmd.name}` : cmd.name,
+			});
+
+			// Submenu contents — Run, Edit (✎), Delete (🗑). Order chosen so the
+			// most-frequent action (Run) is at the top.
+			const runItemDisp: IDisposable = MenuRegistry.appendMenuItem(submenuId, {
+				group: '1_run',
+				order: 1,
 				command: {
 					id: runId,
-					// Pin emoji marker mirrors the status-bar pill style; keeps the dropdown skimmable.
-					title: cmd.pinned ? `📌 ${cmd.name}` : cmd.name,
+					title: localize('vibeide.menubar.commands.itemRun', "▶ Запустить"),
 				},
 			});
-			this._dynamicEntries.add(commandsDisp);
-			this._dynamicEntries.add(toDisposable(() => menuDisp.dispose()));
+			const editItemDisp: IDisposable = MenuRegistry.appendMenuItem(submenuId, {
+				group: '2_modify',
+				order: 1,
+				command: {
+					id: editId,
+					title: localize('vibeide.menubar.commands.itemEdit', "✎ Редактировать"),
+				},
+			});
+			const deleteItemDisp: IDisposable = MenuRegistry.appendMenuItem(submenuId, {
+				group: '2_modify',
+				order: 2,
+				command: {
+					id: deleteId,
+					title: localize('vibeide.menubar.commands.itemDelete', "🗑 Удалить"),
+				},
+			});
+
+			this._dynamicEntries.add(runCmdDisp);
+			this._dynamicEntries.add(editCmdDisp);
+			this._dynamicEntries.add(deleteCmdDisp);
+			this._dynamicEntries.add(toDisposable(() => submenuItemDisp.dispose()));
+			this._dynamicEntries.add(toDisposable(() => runItemDisp.dispose()));
+			this._dynamicEntries.add(toDisposable(() => editItemDisp.dispose()));
+			this._dynamicEntries.add(toDisposable(() => deleteItemDisp.dispose()));
 		}
 	}
 
