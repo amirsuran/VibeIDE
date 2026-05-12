@@ -167,6 +167,12 @@ export const VibeProjectCommandForm: React.FC<VibeProjectCommandFormProps> = (pr
 	// '...';` skips the rewrite, so `@@vibe-command-center-search` does NOT
 	// resolve to the styled `vibe-command-center-search` class. Every utility
 	// must be inline in the JSX below.
+	//
+	// Equally important — Tailwind utilities here are generated under the
+	// `.vibe-scope` descendant selector (`.vibe-scope .vibe-flex { … }`), so
+	// they do NOT apply to the `.vibe-scope` element itself. The root therefore
+	// has two layers: an outer `@@vibe-scope` marker and an inner div that
+	// carries the actual layout utilities (`max-w-2xl mx-auto px-6 py-5`).
 
 	// Field row factory — keeps the markup uniform: label on its own line, then
 	// the wrapped input, then either an error or a hint. All classNames must be
@@ -218,7 +224,19 @@ export const VibeProjectCommandForm: React.FC<VibeProjectCommandFormProps> = (pr
 	};
 
 	return (
-		<div className='@@vibe-scope flex flex-col gap-4 max-w-xl mx-auto p-5'>
+		// Outer scope wrapper — Tailwind utilities don't bind to `.vibe-scope`
+		// itself (descendant selector), so width/height/overflow are inline so
+		// they actually take effect.
+		//
+		// `@@vibe-settings-scroll-root` combined with `@@vibe-scope` on the
+		// SAME element triggers the `.monaco-workbench .vibe-scope.vibe-settings-scroll-root`
+		// rule in `vibeide.css` which remaps `--vibe-bg-1/2/3` to
+		// `--vscode-input-background` / `--vscode-dropdown-listBackground` —
+		// otherwise the defaults (#040404 / #101010) make scrollbars black-on-
+		// black. The remap cascades into descendant textareas too, so the
+		// `args` field's inner scrollbar becomes visible without further work.
+		<div className='@@vibe-scope @@vibe-settings-scroll-root' style={{ width: '100%', height: '100%', overflow: 'auto' }}>
+			<div className='flex flex-col gap-4 max-w-2xl mx-auto px-6 py-5'>
 			<div className='flex items-center justify-between'>
 				<h2 className='text-base text-vibe-fg-1 font-medium'>
 					{isEdit ? workspaceS.pcFormEditTitle(commandIdForEdit ?? '') : workspaceS.pcFormAddTitle}
@@ -265,18 +283,16 @@ export const VibeProjectCommandForm: React.FC<VibeProjectCommandFormProps> = (pr
 
 			<div className='flex flex-col gap-1.5'>
 				<label className='text-xs text-vibe-fg-2'>{workspaceS.pcFieldTerminal}</label>
-				<div className='flex items-center gap-1.5 px-2 py-1.5 @@vibe-command-center-search'>
-					<select
-						className='flex-1 bg-transparent text-xs text-vibe-fg-2 outline-none min-w-0 appearance-none cursor-pointer'
-						value={draft.terminal ?? ''}
-						onChange={e => updateField('terminal', e.target.value as ProjectCommandTerminal | '')}
-					>
-						<option value=''>{workspaceS.pcTerminalDefault}</option>
-						<option value='integrated'>{workspaceS.pcTerminalIntegrated}</option>
-						<option value='external'>{workspaceS.pcTerminalExternal}</option>
-						<option value='background'>{workspaceS.pcTerminalBackground}</option>
-					</select>
-				</div>
+				<select
+					className='@@vibe-themed-select px-2 py-1.5 text-xs w-full cursor-pointer'
+					value={draft.terminal ?? ''}
+					onChange={e => updateField('terminal', e.target.value as ProjectCommandTerminal | '')}
+				>
+					<option value=''>{workspaceS.pcTerminalDefault}</option>
+					<option value='integrated'>{workspaceS.pcTerminalIntegrated}</option>
+					<option value='external'>{workspaceS.pcTerminalExternal}</option>
+					<option value='background'>{workspaceS.pcTerminalBackground}</option>
+				</select>
 			</div>
 
 			<label className='flex items-center gap-2 cursor-pointer select-none text-xs text-vibe-fg-2 py-1'>
@@ -318,6 +334,7 @@ export const VibeProjectCommandForm: React.FC<VibeProjectCommandFormProps> = (pr
 					disabled={saveBusy}
 				>{workspaceS.pcFormCancel}</button>
 				{!validation.isValid ? <span className='text-[11px] text-[var(--vscode-editorWarning-foreground)]'>{workspaceS.pcFormHasErrors}</span> : null}
+			</div>
 			</div>
 		</div>
 	);

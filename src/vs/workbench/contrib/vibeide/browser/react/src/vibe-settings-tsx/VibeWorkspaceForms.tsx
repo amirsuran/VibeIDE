@@ -1939,10 +1939,10 @@ const ProjectCommandsPanel: React.FC<{ openAddTick?: number }> = ({ openAddTick 
 						<table className='w-full text-xs text-vibe-fg-2'>
 							<thead>
 								<tr className='text-[11px] text-vibe-fg-3 uppercase tracking-wide'>
+									<th className='text-left px-1 py-1 w-7'></th>
 									<th className='text-left px-2 py-1'>{workspaceS.pcTableColId}</th>
 									<th className='text-left px-2 py-1'>{workspaceS.pcTableColName}</th>
 									<th className='text-left px-2 py-1'>{workspaceS.pcTableColCommand}</th>
-									<th className='text-left px-2 py-1'>{workspaceS.pcTableColPinned}</th>
 									<th className='text-left px-2 py-1'>{workspaceS.pcTableColOrder}</th>
 									<th className='text-right px-2 py-1'>{workspaceS.pcTableColActions}</th>
 								</tr>
@@ -1951,15 +1951,24 @@ const ProjectCommandsPanel: React.FC<{ openAddTick?: number }> = ({ openAddTick 
 								{filtered.map(c => {
 									const argSuffix = (c.args && c.args.length > 0) ? ' ' + c.args.join(' ') : '';
 									const line = `${c.command}${argSuffix}`;
+									const isPinned = c.pinned === true;
 									return (
 										<tr key={c.id} className='border-t border-vibe-border-1 hover:bg-vibe-bg-2/30'>
+											<td className='px-1 py-1 align-middle'>
+												<button
+													type='button'
+													className={`@@vibe-pin-toggle codicon codicon-pinned ${isPinned ? '@@vibe-pin-toggle--active' : ''}`}
+													title={isPinned ? workspaceS.pcRowUnpinTip : workspaceS.pcRowPinTip}
+													aria-label={isPinned ? workspaceS.pcRowUnpin : workspaceS.pcRowPin}
+													onClick={() => void onPinToggleRow(c)}
+												/>
+											</td>
 											<td className='px-2 py-1 font-mono'>{c.id}</td>
 											<td className='px-2 py-1'>{c.name}</td>
 											<td className='px-2 py-1 font-mono truncate' style={{ maxWidth: 280 }} title={line}>{line}</td>
-											<td className='px-2 py-1'>{c.pinned === true ? '📌' : ''}</td>
 											<td className='px-2 py-1'>{typeof c.order === 'number' ? c.order : ''}</td>
 											<td className='px-2 py-1'>
-												<div className='flex justify-end gap-1 flex-wrap'>
+												<div className='flex justify-end gap-1 flex-nowrap'>
 													<button
 														type='button'
 														className='@@vibe-pill-button px-2 py-0.5 text-[11px]'
@@ -1975,13 +1984,8 @@ const ProjectCommandsPanel: React.FC<{ openAddTick?: number }> = ({ openAddTick 
 													<button
 														type='button'
 														className='@@vibe-pill-button px-2 py-0.5 text-[11px]'
-														onClick={() => void onPinToggleRow(c)}
-													>{c.pinned === true ? workspaceS.pcRowUnpin : workspaceS.pcRowPin}</button>
-													<button
-														type='button'
-														className='@@vibe-pill-button px-2 py-0.5 text-[11px]'
 														title={workspaceS.pcRowEditTip}
-														onClick={() => void commandService.executeCommand('vibeide.commands.openConfigFile')}
+														onClick={() => void commandService.executeCommand('vibeide.commands.editById', c.id)}
 													>{workspaceS.pcRowEdit}</button>
 													<button
 														type='button'

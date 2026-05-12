@@ -21,10 +21,12 @@
  */
 
 import { Dimension } from '../../../../base/browser/dom.js';
+import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { Codicon } from '../../../../base/common/codicons.js';
-import { toDisposable } from '../../../../base/common/lifecycle.js';
+import { IDisposable } from '../../../../base/common/lifecycle.js';
 import { URI } from '../../../../base/common/uri.js';
 import * as nls from '../../../../nls.js';
+import { IEditorOptions } from '../../../../platform/editor/common/editor.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { SyncDescriptor } from '../../../../platform/instantiation/common/descriptors.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
@@ -33,7 +35,7 @@ import { ITelemetryService } from '../../../../platform/telemetry/common/telemet
 import { IThemeService } from '../../../../platform/theme/common/themeService.js';
 import { EditorPaneDescriptor, IEditorPaneRegistry } from '../../../browser/editor.js';
 import { EditorPane } from '../../../browser/parts/editor/editorPane.js';
-import { EditorExtensions } from '../../../common/editor.js';
+import { EditorExtensions, IEditorOpenContext } from '../../../common/editor.js';
 import { EditorInput } from '../../../common/editor/editorInput.js';
 import { IEditorGroup } from '../../../services/editor/common/editorGroupsService.js';
 
@@ -79,6 +81,17 @@ export class VibeProjectCommandFormInput extends EditorInput {
 export class VibeProjectCommandFormPane extends EditorPane {
 	static readonly ID = 'workbench.pane.vibe.projectCommandForm';
 
+	/** Root DOM element where the React form is mounted. Created once in
+	 *  `createEditor`, kept across input changes. */
+	private _root: HTMLElement | undefined;
+	/** Currently mounted React tree. Disposed and recreated on every
+	 *  `setInput` so the form picks up fresh `_pendingProps` (the action
+	 *  handlers set those right before `editorService.openEditor`). Without
+	 *  remount, the pane gets reused across Add/Edit invocations and the
+	 *  React state from the first open lingers — the form always shows the
+	 *  first-opened mode. */
+	private _mount: IDisposable | undefined;
+
 	constructor(
 		group: IEditorGroup,
 		@ITelemetryService telemetryService: ITelemetryService,
@@ -96,13 +109,57 @@ export class VibeProjectCommandFormPane extends EditorPane {
 		const root = document.createElement('div');
 		root.style.height = '100%';
 		root.style.width = '100%';
-		root.style.overflow = 'auto';
+		// Scrolling + scrollbar theming live on the inner `.vibe-scope` wrapper
+		// inside the React form so the workbench `.vibe-scope::-webkit-scrollbar`
+		// rules (themed via --vibe-bg-* / --vscode-scrollbar* tokens) apply.
 		parent.appendChild(root);
+		this._root = root;
+		// Actual React mount happens in `setInput` so each open of the pane
+		// re-reads `_pendingProps`.
+	}
 
+	override async setInput(input: EditorInput, options: IEditorOptions | undefined, context: IEditorOpenContext, token: CancellationToken): Promise<void> {
+		await super.setInput(input, options, context, token);
+		this._remount();
+	}
+
+	override clearInput(): void {
+		this._disposeMount();
+		super.clearInput();
+	}
+
+	override dispose(): void {
+		this._disposeMount();
+		super.dispose();
+	}
+
+	private _remount(): void {
+		const root = this._root;
+		if (!root) return;
+		this._disposeMount();
+		// Snapshot the props at remount time — the action handler sets
+		// `_pendingProps` synchronously before calling `openEditor`, so by
+		// the time `setInput` runs the slot holds the intended payload.
+		const props: VibeProjectCommandFormProps = { ..._pendingProps };
 		this.instantiationService.invokeFunction(accessor => {
-			const mount = mountVibeProjectCommandForm(root, accessor, { ..._pendingProps });
-			this._register(toDisposable(() => mount?.dispose?.()));
+			const mounted = mountVibeProjectCommandForm(root, accessor, props);
+			const disposeFn = mounted?.dispose;
+			if (disposeFn) {
+				this._mount = { dispose: () => disposeFn() };
+			}
 		});
+	}
+
+	private _disposeMount(): void {
+		if (this._mount) {
+			this._mount.dispose();
+			this._mount = undefined;
+		}
+		if (this._root) {
+			while (this._root.firstChild) {
+				this._root.removeChild(this._root.firstChild);
+			}
+		}
 	}
 
 	layout(_dimension: Dimension): void { /* form is responsive — nothing to do */ }

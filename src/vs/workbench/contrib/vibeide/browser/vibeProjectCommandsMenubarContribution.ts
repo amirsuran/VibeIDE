@@ -6,12 +6,13 @@
 /**
  * Project Commands — menubar (title-bar top-level "Команды" submenu).
  *
- * Layout (flat — submenu-per-command was tried first but dynamic
- * `MenuId('vibeProjectCommandItem.<id>')` instances did not reliably re-render
- * in the title-bar menubar, even with `emitEventsForSubmenuChanges: true`. A
- * flat list of MenuItems is rebuilt on every `onDidChangeCommands` and always
- * renders — Edit/Delete are surfaced through dedicated "по списку" entries
- * that show a Quick Pick of every command):
+ * Layout (flat: each command is a single MenuItem; clicking runs it.
+ * Inline Edit/Delete icons-per-row are NOT possible inside a stock VS Code
+ * MenuRegistry-driven menubar dropdown — title is plain text and items
+ * render through `MenuActionViewItem` with no per-row action slots. A
+ * previous attempt to use submenu-per-command broke the "click = Run"
+ * affordance, so we keep flat + dedicated `editPick` / `deletePick`
+ * Quick-Pick entries above the list):
  *
  *   group `1_add`  — `+ Добавить команду…`            → `vibeide.commands.add`
  *                    `↻ Восстановить демо-команду`     → `vibeide.commands.seedDemo`
@@ -58,27 +59,11 @@ MenuRegistry.appendMenuItem(MenuId.MenubarVibeProjectCommandsMenu, {
 	},
 });
 
-/** `✎ Редактировать команду…` — opens a Quick Pick over all loaded commands;
- *  picked id → `vibeide.commands.editById`. Falls back gracefully when the
- *  list is empty. */
-MenuRegistry.appendMenuItem(MenuId.MenubarVibeProjectCommandsMenu, {
-	group: '2_ops',
-	order: 1,
-	command: {
-		id: 'vibeide.commands.editPick',
-		title: localize('vibeide.menubar.commands.editPick', "✎ Редактировать команду…"),
-	},
-});
-
-/** `🗑 Удалить команду…` — Quick Pick → `vibeide.commands.deleteById`. */
-MenuRegistry.appendMenuItem(MenuId.MenubarVibeProjectCommandsMenu, {
-	group: '2_ops',
-	order: 2,
-	command: {
-		id: 'vibeide.commands.deletePick',
-		title: localize('vibeide.menubar.commands.deletePick', "🗑 Удалить команду…"),
-	},
-});
+// `editPick` / `deletePick` Quick-Pick entries used to live here (`group: '2_ops'`).
+// They were redundant once `VibeProjectCommandsPopupContribution` intercepts the
+// menubar click and renders per-row inline Edit/Delete icons. The underlying
+// CommandsRegistry handlers stay registered (palette-accessible) — only the
+// menubar surface for them is dropped.
 
 export class VibeProjectCommandsMenubarContribution extends Disposable implements IWorkbenchContribution {
 	static readonly ID = 'workbench.contrib.vibeProjectCommandsMenubar';

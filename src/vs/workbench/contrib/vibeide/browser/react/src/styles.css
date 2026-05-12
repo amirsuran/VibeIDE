@@ -213,6 +213,93 @@ select.vibe-chat-like-control:disabled {
 }
 
 /**
+ * Themed native <select>: mirrors the input field exactly — same bg / border /
+ * radius / text color tokens as `.vibe-command-center-search` (input wrapper)
+ * in `vibeide.css`. Uses the modern Customizable Select API
+ * (`appearance: base-select` + `::picker(select)`, Chromium 132+) so the
+ * dropdown popup itself is themed — bg, border, radius, options' hover/selected
+ * states all on `--vscode-*` tokens. Browsers without the API fall back to
+ * OS-rendered popup automatically (no error, just unstylable popup).
+ */
+.vibe-themed-select,
+.vibe-themed-select::picker(select) {
+	appearance: base-select;
+}
+.vibe-themed-select {
+	box-sizing: border-box;
+	background-color: var(--vscode-commandCenter-background, var(--vscode-input-background));
+	color: var(--vibe-fg-2, var(--vscode-input-foreground, var(--vscode-foreground)));
+	border: 1px solid var(
+		--vscode-commandCenter-border,
+		var(--vscode-input-border, transparent)
+	);
+	border-radius: var(--vscode-cornerRadius-medium, 4px);
+	font-family: var(--vscode-font-family);
+	font-size: inherit;
+}
+.vibe-themed-select:focus {
+	outline: none;
+}
+
+/* ── Picker popup (Chromium 132+: ::picker(select) pseudo-element) ────── */
+.vibe-themed-select::picker(select) {
+	background-color: var(--vscode-commandCenter-background, var(--vscode-input-background));
+	color: var(--vibe-fg-2, var(--vscode-input-foreground, var(--vscode-foreground)));
+	border: 1px solid var(
+		--vscode-commandCenter-border,
+		var(--vscode-input-border, transparent)
+	);
+	border-radius: var(--vscode-cornerRadius-medium, 4px);
+	box-shadow: 0 2px 8px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.36));
+	padding: 4px 0;
+	font-family: var(--vscode-font-family);
+}
+
+/* ── Options inside the picker ───────────────────────────────────────── */
+.vibe-themed-select option {
+	background-color: transparent;
+	color: var(--vibe-fg-2, var(--vscode-input-foreground, var(--vscode-foreground)));
+	padding: 4px 12px;
+	border: none;
+}
+.vibe-themed-select option:hover {
+	background-color: var(--vscode-list-hoverBackground, rgba(255, 255, 255, 0.07));
+	color: var(--vscode-list-hoverForeground, inherit);
+}
+.vibe-themed-select option:checked,
+.vibe-themed-select option:focus {
+	background-color: var(--vscode-list-activeSelectionBackground, var(--vscode-focusBorder));
+	color: var(--vscode-list-activeSelectionForeground, var(--vscode-list-hoverForeground, inherit));
+}
+
+/**
+ * Pin toggle icon-button used in workspace command rows: clickable codicon
+ * whose color reflects the pinned state. Unpinned = disabled-fg (visually
+ * grayscale on every theme); pinned = textLink accent.
+ */
+.vibe-pin-toggle {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	background: transparent;
+	border: none;
+	padding: 2px 4px;
+	cursor: pointer;
+	color: var(--vscode-disabledForeground);
+	transition: color 120ms ease-out, transform 120ms ease-out;
+}
+.vibe-pin-toggle:hover:not(:disabled) {
+	transform: translateY(-1px);
+}
+.vibe-pin-toggle--active {
+	color: var(--vscode-textLink-foreground, var(--vscode-focusBorder));
+}
+.vibe-pin-toggle:disabled {
+	cursor: not-allowed;
+	opacity: 0.5;
+}
+
+/**
  * Pill buttons: chat quick actions & settings sidebar nav.
  * Uses VS Code theme tokens so light/dark and color themes apply correctly.
  */
