@@ -99,6 +99,17 @@ if ($hasPacks) {
     Write-Host "⏭ No locale bundles found — skipping language pack VSIX build" -ForegroundColor DarkGray
 }
 
+# ── 0c. Rebuild React tree (scope-tailwind shadow + tsup) ────────────────────
+# build.js full-build mode always regenerates `react/src2/`, which keeps the
+# shadow scope-tailwind copy in sync with edits in `react/src/`. Skipping this
+# step was the root cause of a release failure on 2026-05-12 where a fix in
+# `vibeSettingsRu.ts` had not propagated to the shadow tree.
+if (-not $SkipCompile) {
+    Step "Rebuilding React tree (scope-tailwind + tsup)..."
+    Npm "run buildreact"
+    OK "React tree rebuilt"
+}
+
 # ── 1. Compile TypeScript ─────────────────────────────────────────────────────
 if (-not $SkipCompile) {
     Step "Compiling TypeScript (npm run compile-build)..."
