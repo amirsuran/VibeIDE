@@ -156,6 +156,15 @@ export const chatS = {
 	planResumeLabel: 'Возобновить',
 	planAdvisoryReview: 'Совет ревьюера: ',
 	planStepAria: (n: number, status: string, desc: string) => `Шаг ${n}, ${status}: ${desc}`,
+	budgetFooterSessionLabel: 'Сессия',
+	budgetFooterContextLabel: 'Контекст',
+	budgetFooterDisabled: 'Лимит отключён',
+	budgetFooterUnknown: '—',
+	budgetFooterResetTitle: 'Сбросить счётчик сессии',
+	budgetFooterResetAria: 'Сбросить токены сессии',
+	budgetFooterSettingsTitle: 'Открыть Settings → Safety',
+	budgetFooterSettingsAria: 'Настройки лимита токенов',
+	budgetFooterCounts: (used: string, limit: string, pct: number) => `${used} / ${limit} (${pct}%)`,
 } as const;
 
 /** Russian UI strings for ErrorDisplay (sidebar-tsx/ErrorDisplay.tsx). */

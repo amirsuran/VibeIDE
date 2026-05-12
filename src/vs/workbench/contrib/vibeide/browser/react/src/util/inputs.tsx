@@ -2070,13 +2070,9 @@ const SingleDiffEditor = ({ block, lang }: { block: ExtractedSearchReplaceBlock,
 		[block.final, languageSelection, modelService]
 	);
 
-	// Clean up models on unmount
-	useEffect(() => {
-		return () => {
-			originalModel.dispose();
-			modifiedModel.dispose();
-		};
-	}, [originalModel, modifiedModel]);
+	// Models are disposed inside the editor effect's cleanup AFTER the widget is torn
+	// down — disposing them earlier triggers `TextModel got disposed before DiffEditorWidget
+	// model got reset` from DiffEditorWidget's onWillDispose listener.
 
 	// Imperatively mount the DiffEditorWidget
 	const divRef = useRef<HTMLDivElement | null>(null);
@@ -2144,8 +2140,13 @@ const SingleDiffEditor = ({ block, lang }: { block: ExtractedSearchReplaceBlock,
 		return () => {
 			disposable1.dispose();
 			disposable2.dispose();
+			// Detach models before disposing the widget so DiffEditorWidget releases
+			// its onWillDispose subscription cleanly.
+			editor.setModel(null);
 			editor.dispose();
 			editorRef.current = null;
+			originalModel.dispose();
+			modifiedModel.dispose();
 		};
 	}, [originalModel, modifiedModel, instantiationService]);
 

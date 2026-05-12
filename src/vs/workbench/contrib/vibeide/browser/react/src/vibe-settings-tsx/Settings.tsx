@@ -538,8 +538,11 @@ export const ModelDump = ({ filteredProviders }: { filteredProviders?: ProviderN
 
 	useEffect(() => {
 		let cancelled = false;
+		// Deps are the joined key — NOT the array — otherwise useMemo re-runs (triggered by
+		// any settings change) hand us a fresh reference each render and we burst-fetch.
+		const providers = configuredProvidersKey ? configuredProvidersKey.split(',') as ProviderName[] : [];
 		void (async () => {
-			for (const p of configuredProviders) {
+			for (const p of providers) {
 				if (cancelled) {
 					break;
 				}
@@ -554,7 +557,7 @@ export const ModelDump = ({ filteredProviders }: { filteredProviders?: ProviderN
 			}
 		})();
 		return () => { cancelled = true; };
-	}, [configuredProvidersKey, configuredProviders, refreshModelService]);
+	}, [configuredProvidersKey, refreshModelService]);
 
 	const toggleProviderSection = (pn: ProviderName) => {
 		setExpandedByProvider(prev => ({ ...prev, [pn]: !(prev[pn] ?? false) }));

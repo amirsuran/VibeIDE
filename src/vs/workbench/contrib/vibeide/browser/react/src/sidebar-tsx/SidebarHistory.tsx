@@ -3,14 +3,16 @@
  *  Licensed under the MIT License. See LICENSE.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useIsDark, useAccessor, useChatThreadsState, useFullChatThreadsStreamState } from '../util/services.js';
 import { PastThreadElement } from './SidebarThreadSelector.js';
 import '../styles.css';
 import ErrorBoundary from './ErrorBoundary.js';
-import { Search } from 'lucide-react';
+import { Search, RotateCcw, Settings as SettingsIcon } from 'lucide-react';
 import { IsRunningType, ThreadType } from '../../../chatThreadService.js';
 import { chatS } from '../vibe-settings-tsx/vibeSettingsRu.js';
+import type { TokenBudgetStatus } from '../../../../common/vibeTokenBudgetService.js';
+import type { ContextLimitStatus } from '../../../vibeContextGuardService.js';
 
 const OPEN_CHAT_CMD = 'vibeide.chat.open';
 
@@ -96,6 +98,99 @@ const DateGroupSection = ({
 						onAfterSwitch={onAfterSwitch}
 					/>
 				))}
+			</div>
+		</div>
+	);
+};
+
+// ---------------------------------------------------------------------------
+// TokenBudgetFooter — session token budget + per-message context window readout
+// ---------------------------------------------------------------------------
+
+const formatTokens = (n: number): string => n.toLocaleString('ru-RU');
+
+const TokenBudgetFooter = () => {
+	const accessor = useAccessor();
+	const budgetService = accessor.get('IVibeTokenBudgetService');
+	const contextGuard = accessor.get('IVibeContextGuardService');
+	const commandService = accessor.get('ICommandService');
+
+	const [budget, setBudget] = useState<TokenBudgetStatus>(() => budgetService.getStatus());
+	const [ctx, setCtx] = useState<ContextLimitStatus>(() => contextGuard.getStatus());
+
+	useEffect(() => {
+		const d1 = budgetService.onBudgetStatusChanged((s: TokenBudgetStatus) => setBudget(s));
+		const d2 = contextGuard.onUsageUpdated((s: ContextLimitStatus) => setCtx(s));
+		return () => { d1.dispose(); d2.dispose(); };
+	}, [budgetService, contextGuard]);
+
+	const onReset = useCallback(() => {
+		void commandService.executeCommand('vibeide.tokenBudget.reset');
+	}, [commandService]);
+
+	const onOpenSettings = useCallback(() => {
+		void commandService.executeCommand('workbench.action.openSettings', 'vibeide.safety');
+	}, [commandService]);
+
+	const sessionEnabled = budget.sessionTokensLimit > 0;
+	const sessionPct = sessionEnabled ? Math.min(100, Math.max(0, Math.round(budget.percentUsed))) : 0;
+	const sessionBarClass = budget.isExceeded
+		? 'bg-red-500'
+		: budget.isWarning ? 'bg-amber-500' : 'bg-green-500';
+
+	const ctxKnown = ctx.maxTokens > 0;
+	const ctxPct = ctxKnown ? Math.min(100, Math.max(0, Math.round(ctx.percentUsed))) : 0;
+	const ctxBarClass = ctx.isCritical
+		? 'bg-red-500'
+		: ctx.isWarning ? 'bg-amber-500' : 'bg-vibe-fg-4';
+
+	return (
+		<div className="flex-shrink-0 border-t border-vibe-border-1 px-2 py-2 text-[11px] text-vibe-fg-2 select-none">
+			<div className="flex items-center justify-between gap-2 mb-1">
+				<span className="text-vibe-fg-3 truncate">{chatS.budgetFooterSessionLabel}</span>
+				<span className="font-mono text-[10.5px] truncate">
+					{sessionEnabled
+						? chatS.budgetFooterCounts(formatTokens(budget.sessionTokensUsed), formatTokens(budget.sessionTokensLimit), sessionPct)
+						: `${formatTokens(budget.sessionTokensUsed)} · ${chatS.budgetFooterDisabled}`}
+				</span>
+			</div>
+			{sessionEnabled && (
+				<div className="h-1 w-full bg-vibe-bg-1 rounded overflow-hidden mb-1.5">
+					<div className={`h-full ${sessionBarClass}`} style={{ width: `${sessionPct}%` }} />
+				</div>
+			)}
+			<div className="flex items-center justify-between gap-2 mb-1">
+				<span className="text-vibe-fg-3 truncate">{chatS.budgetFooterContextLabel}</span>
+				<span className="font-mono text-[10.5px] truncate">
+					{ctxKnown
+						? chatS.budgetFooterCounts(formatTokens(ctx.currentTokens), formatTokens(ctx.maxTokens), ctxPct)
+						: chatS.budgetFooterUnknown}
+				</span>
+			</div>
+			{ctxKnown && (
+				<div className="h-1 w-full bg-vibe-bg-1 rounded overflow-hidden mb-2">
+					<div className={`h-full ${ctxBarClass}`} style={{ width: `${ctxPct}%` }} />
+				</div>
+			)}
+			<div className="flex gap-1">
+				<button
+					type="button"
+					onClick={onReset}
+					title={chatS.budgetFooterResetTitle}
+					aria-label={chatS.budgetFooterResetAria}
+					className="flex-1 flex items-center justify-center gap-1 px-2 py-1 rounded bg-vibe-bg-1 hover:bg-vibe-bg-3 text-vibe-fg-2"
+				>
+					<RotateCcw size={12} />
+				</button>
+				<button
+					type="button"
+					onClick={onOpenSettings}
+					title={chatS.budgetFooterSettingsTitle}
+					aria-label={chatS.budgetFooterSettingsAria}
+					className="flex items-center justify-center px-2 py-1 rounded bg-vibe-bg-1 hover:bg-vibe-bg-3 text-vibe-fg-2"
+				>
+					<SettingsIcon size={12} />
+				</button>
 			</div>
 		</div>
 	);
@@ -213,6 +308,9 @@ const HistoryContent = () => {
 					))
 				)}
 			</div>
+
+			{/* Sticky footer: session token budget + context window readout */}
+			<TokenBudgetFooter />
 		</div>
 	);
 };

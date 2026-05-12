@@ -11,6 +11,7 @@ import { registerSingleton, InstantiationType } from '../../../../platform/insta
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { IRequestService, asTextOrError } from '../../../../platform/request/common/request.js';
 import { IMainProcessService } from '../../../../platform/ipc/common/mainProcessService.js';
+import { ILogService } from '../../../../platform/log/common/log.js';
 
 /**
  * Model information from remote provider catalogs
@@ -94,10 +95,21 @@ export class RemoteCatalogService implements IRemoteCatalogService {
 	private cache: Map<ProviderName, CachedCatalog> = new Map();
 	private readonly DEFAULT_TTL = 3600_000; // 1 hour
 
+	// Concurrent calls for the same provider share one promise — prevents fetch storms
+	// when React re-renders or auto-polling and Settings effect both fire at once.
+	private readonly inFlight = new Map<ProviderName, Promise<RemoteModelInfo[]>>();
+	// Negative cache: after a failure/empty result, skip the network for this window.
+	private readonly errorCooldownUntil = new Map<ProviderName, number>();
+	private readonly ERROR_COOLDOWN_MS = 60_000;
+	// Rate-limit identical error logs so a single unreachable provider can't drown the console.
+	private readonly lastErrLogAt = new Map<ProviderName, number>();
+	private readonly ERROR_LOG_INTERVAL_MS = 5 * 60_000;
+
 	constructor(
 		@IVibeideSettingsService private readonly settingsService: IVibeideSettingsService,
 		@IRequestService private readonly requestService: IRequestService,
 		@IMainProcessService private readonly mainProcessService: IMainProcessService,
+		@ILogService private readonly logService: ILogService,
 	) {}
 
 	/**
@@ -122,7 +134,7 @@ export class RemoteCatalogService implements IRemoteCatalogService {
 					Accept: 'application/json',
 					...headers,
 				},
-				timeout: 45_000,
+				timeout: 10_000,
 				callSite: `vibeideRemoteCatalog.${callSiteSuffix}`,
 			}, CancellationToken.None);
 			raw = await asTextOrError(context);
@@ -148,23 +160,42 @@ export class RemoteCatalogService implements IRemoteCatalogService {
 			if (cached && Date.now() - cached.timestamp < cached.ttl) {
 				return cached.models;
 			}
+			// Negative cache — after a recent failure return [] immediately without hitting the network.
+			const cooldownUntil = this.errorCooldownUntil.get(providerName);
+			if (cooldownUntil && cooldownUntil > Date.now()) {
+				return [];
+			}
 		}
 
-		// Fetch from provider
-		const models = await this.fetchFromProvider(providerName);
-
-		// Never cache empty results — avoids sticking on transient errors and clears stale catalogs when credentials were removed.
-		if (models.length > 0) {
-			this.cache.set(providerName, {
-				models,
-				timestamp: Date.now(),
-				ttl: this.DEFAULT_TTL,
-			});
-		} else {
-			this.cache.delete(providerName);
+		// Coalesce concurrent callers (React effect + auto-polling) onto a single fetch.
+		const existing = this.inFlight.get(providerName);
+		if (existing) {
+			return existing;
 		}
 
-		return models;
+		const promise = (async (): Promise<RemoteModelInfo[]> => {
+			try {
+				const models = await this.fetchFromProvider(providerName);
+				// Never cache empty results — avoids sticking on transient errors and clears stale catalogs when credentials were removed.
+				if (models.length > 0) {
+					this.cache.set(providerName, {
+						models,
+						timestamp: Date.now(),
+						ttl: this.DEFAULT_TTL,
+					});
+					this.errorCooldownUntil.delete(providerName);
+				} else {
+					this.cache.delete(providerName);
+					this.errorCooldownUntil.set(providerName, Date.now() + this.ERROR_COOLDOWN_MS);
+				}
+				return models;
+			} finally {
+				this.inFlight.delete(providerName);
+			}
+		})();
+
+		this.inFlight.set(providerName, promise);
+		return promise;
 	}
 
 	/** Best-effort context limit from OpenAI-compatible /v1/models entries (OpenRouter, future Zen fields, etc.). */
@@ -345,7 +376,13 @@ export class RemoteCatalogService implements IRemoteCatalogService {
 					return [];
 			}
 		} catch (error) {
-			console.error(`Failed to fetch catalog for ${providerName}:`, error);
+			const now = Date.now();
+			const last = this.lastErrLogAt.get(providerName) ?? 0;
+			if (now - last >= this.ERROR_LOG_INTERVAL_MS) {
+				this.lastErrLogAt.set(providerName, now);
+				const msg = error instanceof Error ? error.message : String(error);
+				this.logService.warn(`[VibeIDE RemoteCatalog] Failed to fetch catalog for ${providerName}: ${msg}`);
+			}
 			return [];
 		}
 	}
@@ -576,6 +613,8 @@ export class RemoteCatalogService implements IRemoteCatalogService {
 
 	clearCache(providerName: ProviderName): void {
 		this.cache.delete(providerName);
+		this.errorCooldownUntil.delete(providerName);
+		this.lastErrLogAt.delete(providerName);
 	}
 }
 
