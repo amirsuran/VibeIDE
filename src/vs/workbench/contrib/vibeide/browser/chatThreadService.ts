@@ -33,7 +33,7 @@ import { VibeideFileSnapshot } from '../common/editCodeServiceTypes.js';
 import { INotificationHandle, INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
 import { truncate } from '../../../../base/common/strings.js';
 import { THREAD_STORAGE_KEY } from '../common/storageKeys.js';
-import { IConvertToLLMMessageService } from './convertToLLMMessageService.js';
+import { IConvertToLLMMessageService, ContextOverflowError } from './convertToLLMMessageService.js';
 import { timeout } from '../../../../base/common/async.js';
 import { deepClone } from '../../../../base/common/objects.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
@@ -5723,6 +5723,14 @@ We only need to do it for files that were edited since `from`, ie files between 
 		p.then(() => {
 			if (threadId !== this.state.currentThreadId) notify({ error: null })
 		}).catch((e) => {
+			// Context overflow surfaced from prepareLLMChatMessages: always notify the
+			// active user (not just other threads) and stop the stream cleanly, since
+			// the request never reached the model — no provider-level abort to chain.
+			if (e instanceof ContextOverflowError) {
+				this._notificationService.error(e.message)
+				this._setStreamState(threadId, { isRunning: 'idle', interrupt: 'not_needed' })
+				return
+			}
 			if (threadId !== this.state.currentThreadId) notify({ error: getErrorMessage(e) })
 			throw e
 		})

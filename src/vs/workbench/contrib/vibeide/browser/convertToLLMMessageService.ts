@@ -76,6 +76,19 @@ import { buildResponseLanguageDirective } from '../common/vibeAgentResponseLangu
 
 export const EMPTY_MESSAGE = '(empty message)'
 
+// Thrown by prepareLLMChatMessages when even aggressive trimming (head summary,
+// tail tool-output elision, oldest-tail drops) cannot fit the request under the
+// model's context window. Callers should surface this to the user instead of
+// letting the request fly and fail later as an empty/oversized response.
+export class ContextOverflowError extends Error {
+	readonly info: { provider: string; model: string; finalTokens: number; contextWindow: number };
+	constructor(info: { provider: string; model: string; finalTokens: number; contextWindow: number }) {
+		super(`Context overflow: ${info.finalTokens.toLocaleString()} tokens > ${info.contextWindow.toLocaleString()} window for ${info.provider}/${info.model}. Start a new thread or remove large attachments.`);
+		this.name = 'ContextOverflowError';
+		this.info = info;
+	}
+}
+
 
 
 type SimpleLLMMessage = {
@@ -1753,6 +1766,54 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 			// Update status bar to reflect post-truncation size; suppress popup (user sees % in status bar)
 			try { this.contextGuardService.updateUsage(afterTokens, contextWindow) } catch { }
 			console.debug(`[VibeIDE] Context smart truncation: ~${beforeTokens} → ~${afterTokens} tokens`)
+		}
+
+		// Second pass — active guard. If we are still over the model's real context window,
+		// aggressively elide oversized tool/assistant outputs and drop oldest tail messages
+		// before the request is sent. This prevents the empty-response failure mode that
+		// happens when the model refuses or truncates oversized prompts.
+		const hardCap = Math.floor(contextWindow * 0.92) // 8% headroom for output/reasoning
+		const TOOL_RESULT_TOKEN_THRESHOLD = 5000
+		let currentTokens = approximateTotalTokens(llmMessages, systemMessage, aiInstructions)
+
+		if (currentTokens > hardCap) {
+			// Step A — elide oversized tool / assistant outputs in remaining tail
+			llmMessages = llmMessages.map(m => {
+				const tokens = estimateTokens(m.content)
+				if ((m.role === 'tool' || m.role === 'assistant') && tokens > TOOL_RESULT_TOKEN_THRESHOLD) {
+					return { ...m, content: `[elided ${m.role} output: ~${tokens.toLocaleString()} tokens]` }
+				}
+				return m
+			})
+			currentTokens = approximateTotalTokens(llmMessages, systemMessage, aiInstructions)
+		}
+
+		if (currentTokens > hardCap && llmMessages.length > 2) {
+			// Step B — iteratively drop the OLDEST tail messages, but always keep the
+			// last user message and the last assistant message so the current turn flow
+			// stays coherent. Hard floor of 2 messages to avoid pathological prompts.
+			const beforeStepB = currentTokens
+			let dropped = 0
+			while (currentTokens > hardCap && llmMessages.length > 2) {
+				llmMessages = llmMessages.slice(1)
+				dropped++
+				currentTokens = approximateTotalTokens(llmMessages, systemMessage, aiInstructions)
+			}
+			if (dropped > 0) {
+				console.debug(`[VibeIDE ContextGuard] Step B dropped ${dropped} oldest tail messages: ~${beforeStepB} → ~${currentTokens} tokens`)
+			}
+		}
+
+		// Reflect the final number on the status bar.
+		try { this.contextGuardService.updateUsage(currentTokens, contextWindow) } catch { }
+
+		if (currentTokens > contextWindow) {
+			throw new ContextOverflowError({
+				provider: validProviderName,
+				model: modelName,
+				finalTokens: currentTokens,
+				contextWindow,
+			})
 		}
 
 		const { messages, separateSystemMessage } = prepareMessages({

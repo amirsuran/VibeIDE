@@ -741,6 +741,7 @@ const _sendOpenAICompatibleChat = async ({ messages, onText, onFinalMessage, onE
 			}, firstTokenTimeout)
 		}
 
+		let lastFinishReason: string | null = null
 		try {
 			// when receive text
 			for await (const chunk of response) {
@@ -765,6 +766,9 @@ const _sendOpenAICompatibleChat = async ({ messages, onText, onFinalMessage, onE
 
 				// Rolling timeout: reset on each chunk for local so we only fire on real stall
 				if (isLocalChat) scheduleOverallTimeout()
+
+				// finish_reason is usually only present on the terminal chunk; remember the last non-null value
+				lastFinishReason = chunk.choices?.[0]?.finish_reason ?? lastFinishReason
 
 				// message
 				const newText = chunk.choices[0]?.delta?.content ?? ''
@@ -824,7 +828,7 @@ const _sendOpenAICompatibleChat = async ({ messages, onText, onFinalMessage, onE
 			// on final (skip if timeout already fired and committed partial)
 			if (timeoutFired) return
 			if (!fullTextSoFar && !fullReasoningSoFar && !toolName) {
-				onError({ message: 'VibeIDE: Response from model was empty.', fullError: null })
+				onError({ message: `VibeIDE: Empty response from ${providerName}/${modelName} (reason: ${lastFinishReason ?? 'unknown'}).`, fullError: null })
 			}
 			else {
 				const toolCall = rawToolCallObjOfParamsStr(toolName, toolParamsStr, toolId)
@@ -841,9 +845,9 @@ const _sendOpenAICompatibleChat = async ({ messages, onText, onFinalMessage, onE
 
 	// Helper function to process non-streaming response
 	const processNonStreamingResponse = async (response: any) => {
-		const choice = response.choices[0]
+		const choice = response.choices?.[0]
 		if (!choice) {
-			onError({ message: 'VibeIDE: Response from model was empty.', fullError: null })
+			onError({ message: `VibeIDE: Empty response from ${providerName}/${modelName} (reason: no_choices).`, fullError: null })
 			return
 		}
 
@@ -1460,6 +1464,9 @@ const sendGeminiChat = async ({
 		.then(async (stream) => {
 			_setAborter(() => { stream.return(fullTextSoFar); });
 
+			let lastFinishReason: string | null = null
+			let promptBlockReason: string | null = null
+
 			// Process the stream
 			for await (const chunk of stream) {
 				// message
@@ -1477,6 +1484,12 @@ const sendGeminiChat = async ({
 
 				// (do not handle reasoning yet)
 
+				// Track finish reason from candidates and any prompt-level safety block (Gemini-specific)
+				const candidateFinish = (chunk as any).candidates?.[0]?.finishReason
+				if (candidateFinish) lastFinishReason = candidateFinish
+				const blockReason = (chunk as any).promptFeedback?.blockReason
+				if (blockReason) promptBlockReason = blockReason
+
 				// call onText
 				onText({
 					fullText: fullTextSoFar,
@@ -1487,7 +1500,8 @@ const sendGeminiChat = async ({
 
 			// on final
 			if (!fullTextSoFar && !fullReasoningSoFar && !toolName) {
-				onError({ message: 'VibeIDE: Response from model was empty.', fullError: null })
+				const reason = promptBlockReason ? `blocked:${promptBlockReason}` : (lastFinishReason ?? 'unknown')
+				onError({ message: `VibeIDE: Empty response from ${providerName}/${modelName} (reason: ${reason}).`, fullError: null })
 			} else {
 				if (!toolId) toolId = generateUuid() // ids are empty, but other providers might expect an id
 				const toolCall = rawToolCallObjOfParamsStr(toolName, toolParamsStr, toolId)
