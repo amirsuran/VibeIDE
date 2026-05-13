@@ -30,6 +30,15 @@
 	--vscode-sideBar-background: var(--vscode-editor-background);
 }
 
+/* Read-only chat code-block Monaco previews: keep the hidden IME textarea
+ * non-clickable so a mousedown on the body cannot route focus into it.
+ * Pairs with the editor.onDidFocusEditorText → blur() guard in BlockCode;
+ * either alone is enough, both together cover edge cases (drag-select,
+ * keyboard tab-in) without breaking native text selection on view-lines. */
+.bg-editor-style-override .monaco-editor .inputarea {
+	pointer-events: none !important;
+}
+
 /* Sticky label for diff blocks in VibeIDE diff viewer */
 .vibe-diff-block-header {
 	position: sticky;

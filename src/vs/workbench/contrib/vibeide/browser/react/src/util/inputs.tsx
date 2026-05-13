@@ -3,7 +3,7 @@
  *  Licensed under the Apache License, Version 2.0. See LICENSE.txt for more information.
  *--------------------------------------------------------------------------------------*/
 
-import React, { forwardRef, ForwardRefExoticComponent, MutableRefObject, RefAttributes, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { forwardRef, ForwardRefExoticComponent, MutableRefObject, RefAttributes, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { IInputBoxStyles, InputBox } from '../../../../../../../base/browser/ui/inputbox/inputBox.js';
 import { defaultCheckboxStyles, defaultInputBoxStyles, defaultSelectBoxStyles } from '../../../../../../../platform/theme/browser/defaultStyles.js';
 import { SelectBox } from '../../../../../../../base/browser/ui/selectBox/selectBox.js';
@@ -1784,7 +1784,6 @@ const normalizeIndentation = (code: string): string => {
 }
 
 
-const modelOfEditorId: { [id: string]: ITextModel | undefined } = {}
 export type BlockCodeProps = { initValue: string, language?: string, maxHeight?: number, showScrollbars?: boolean }
 export const BlockCode = ({ initValue, language, maxHeight, showScrollbars }: BlockCodeProps) => {
 
@@ -1800,8 +1799,6 @@ export const BlockCode = ({ initValue, language, maxHeight, showScrollbars }: Bl
 	const instantiationService = accessor.get('IInstantiationService')
 	// const languageDetectionService = accessor.get('ILanguageDetectionService')
 	const modelService = accessor.get('IModelService')
-
-	const id = useId()
 
 	// these are used to pass to the model creation of modelRef
 	const initValueRef = useRef(initValue)
@@ -1883,7 +1880,7 @@ export const BlockCode = ({ initValue, language, maxHeight, showScrollbars }: Bl
 			onCreateInstance={useCallback((editor: CodeEditorWidget) => {
 				const languageId = languageRef.current ? languageRef.current : 'plaintext'
 
-				const model = modelOfEditorId[id] ?? modelService.createModel(
+				const model = modelService.createModel(
 					initValueRef.current, {
 					languageId: languageId,
 					onDidChange: (e) => { return { dispose: () => { } } } // no idea why they'd require this
@@ -1904,9 +1901,18 @@ export const BlockCode = ({ initValue, language, maxHeight, showScrollbars }: Bl
 				}
 
 				resize()
-				const disposable = editor.onDidContentSizeChange(() => { resize() });
+				const resizeDisposable = editor.onDidContentSizeChange(() => { resize() });
 
-				return [disposable, model]
+				// Read-only preview: refuse focus. Clicking the body otherwise puts Monaco
+				// into .focused state, where view-lines re-render against a different
+				// foreground stack and end up invisible (DOM still has the text — Copy
+				// works — but nothing is painted).
+				const focusDisposable = editor.onDidFocusEditorText(() => {
+					const active = document.activeElement
+					if (active instanceof HTMLElement) active.blur()
+				})
+
+				return [resizeDisposable, focusDisposable, model]
 			}, [modelService])}
 
 			dispose={useCallback((editor: CodeEditorWidget) => {
