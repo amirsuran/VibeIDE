@@ -27,7 +27,7 @@ import { computeDirectoryTree1Deep, IDirectoryStrService, stringifyDirectoryTree
 import { IMarkerService, MarkerSeverity } from '../../../../platform/markers/common/markers.js'
 import { timeout } from '../../../../base/common/async.js'
 import { RawToolParamsObj } from '../common/sendLLMMessageTypes.js'
-import { MAX_CHILDREN_URIs_PAGE, MAX_FILE_CHARS_PAGE, MAX_TERMINAL_BG_COMMAND_TIME, MAX_TERMINAL_INACTIVE_TIME } from '../common/prompt/prompts.js'
+import { MAX_CHILDREN_URIs_PAGE, MAX_FILE_CHARS_PAGE, MAX_TERMINAL_BG_COMMAND_TIME, MAX_TERMINAL_INACTIVE_TIME, READ_FILE_DEFAULT_LINE_LIMIT, READ_FILE_MAX_LINE_LIMIT } from '../common/prompt/prompts.js'
 import { IVibeideSettingsService } from '../common/vibeideSettingsService.js'
 import { generateUuid } from '../../../../base/common/uuid.js'
 import { INotificationService } from '../../../../platform/notification/common/notification.js'
@@ -51,6 +51,7 @@ import { formatProvenanceMarker, shouldMarkProvenance } from '../common/vibeAiPr
 import { IGitAutoStashService } from '../common/gitAutoStashService.js'
 import { decideAutoStash } from '../common/autoStashPolicy.js'
 import { ITextFileService } from '../../../services/textfile/common/textfiles.js'
+import { detectShellMisuse, ToolValidationError, truncateHeadTail } from '../common/toolHardening.js'
 
 // tool use for AI
 type ValidateBuiltinParams = { [T in BuiltinToolName]: (p: RawToolParamsObj) => BuiltinToolCallParams[T] }
@@ -215,6 +216,11 @@ export class ToolsService implements IToolsService {
 	private readonly _browseCache = new LRUCache<string, { content: string, title?: string, url: string, metadata?: { publishedDate?: string }, timestamp: number }>(100);
 	private readonly _cacheTTL = 60 * 60 * 1000; // 1 hour
 	private readonly _offlineGate: OfflinePrivacyGate;
+	// Tracks which files were read in this session so edit_file can require a prior read
+	// (Claude-Code-style "must read before edit" guard). Persists for the lifetime of the singleton.
+	private readonly _filesReadInSession = new Set<string>();
+	// Tracks pending background commands so kill_background_command can address them.
+	private readonly _backgroundCommands = new Map<string, { persistentTerminalId: string; command: string; startedAt: number }>();
 
 	constructor(
 		@IFileService fileService: IFileService,
@@ -252,7 +258,7 @@ export class ToolsService implements IToolsService {
 
 		this.validateParams = {
 			read_file: (params: RawToolParamsObj) => {
-				const { uri: uriStr, start_line: startLineUnknown, end_line: endLineUnknown, page_number: pageNumberUnknown } = params
+				const { uri: uriStr, start_line: startLineUnknown, end_line: endLineUnknown, page_number: pageNumberUnknown, line_limit: lineLimitUnknown, with_line_numbers: withLineNumbersUnknown } = params
 				const uri = validateURI(uriStr, workspaceContextService, true)
 				const pageNumber = validatePageNum(pageNumberUnknown)
 
@@ -262,7 +268,16 @@ export class ToolsService implements IToolsService {
 				if (startLine !== null && startLine < 1) startLine = null
 				if (endLine !== null && endLine < 1) endLine = null
 
-				return { uri, startLine, endLine, pageNumber }
+				let lineLimit = validateNumber(lineLimitUnknown, { default: null })
+				if (lineLimit !== null) {
+					if (lineLimit < 1) lineLimit = null
+					else if (lineLimit > READ_FILE_MAX_LINE_LIMIT) lineLimit = READ_FILE_MAX_LINE_LIMIT
+				}
+
+				// Default true — numbered output is strictly more useful for subsequent edit_file calls.
+				const withLineNumbers = validateBoolean(withLineNumbersUnknown, { default: true })
+
+				return { uri, startLine, endLine, pageNumber, lineLimit, withLineNumbers }
 			},
 			ls_dir: (params: RawToolParamsObj) => {
 				const { uri: uriStr, page_number: pageNumberUnknown } = params
@@ -314,6 +329,45 @@ export class ToolsService implements IToolsService {
 				const query = validateStr('query', queryUnknown);
 				const isRegex = validateBoolean(isRegexUnknown, { default: false });
 				return { uri, query, isRegex };
+			},
+
+			glob: (params: RawToolParamsObj) => {
+				const { pattern: patternUnknown, search_in_folder: folderUnknown, page_number: pageNumberUnknown } = params
+				const pattern = validateStr('pattern', patternUnknown)
+				const searchInFolder = validateOptionalURI(folderUnknown, workspaceContextService)
+				const pageNumber = validatePageNum(pageNumberUnknown)
+				return { pattern, searchInFolder, pageNumber }
+			},
+
+			grep: (params: RawToolParamsObj) => {
+				const {
+					pattern: patternUnknown,
+					glob: globUnknown,
+					file_type: fileTypeUnknown,
+					search_in_folder: folderUnknown,
+					output_mode: outputModeUnknown,
+					context_before: contextBeforeUnknown,
+					context_after: contextAfterUnknown,
+					case_insensitive: caseInsensitiveUnknown,
+					multiline: multilineUnknown,
+					head_limit: headLimitUnknown,
+					page_number: pageNumberUnknown,
+				} = params
+				const pattern = validateStr('pattern', patternUnknown)
+				const globPat = validateOptionalStr('glob', globUnknown)
+				const fileType = validateOptionalStr('file_type', fileTypeUnknown)
+				const searchInFolder = validateOptionalURI(folderUnknown, workspaceContextService)
+				const outputModeRaw = (typeof outputModeUnknown === 'string' ? outputModeUnknown : 'content').toLowerCase()
+				const outputMode = (outputModeRaw === 'files_with_matches' || outputModeRaw === 'count' ? outputModeRaw : 'content') as 'content' | 'files_with_matches' | 'count'
+				const contextBefore = Math.max(0, validateNumber(contextBeforeUnknown, { default: 0 }) ?? 0)
+				const contextAfter = Math.max(0, validateNumber(contextAfterUnknown, { default: 0 }) ?? 0)
+				const caseInsensitive = validateBoolean(caseInsensitiveUnknown, { default: false })
+				const multiline = validateBoolean(multilineUnknown, { default: false })
+				let headLimit = validateNumber(headLimitUnknown, { default: 250 }) ?? 250
+				if (headLimit < 1) headLimit = 1
+				if (headLimit > 10_000) headLimit = 10_000
+				const pageNumber = validatePageNum(pageNumberUnknown)
+				return { pattern, glob: globPat, fileType, searchInFolder, outputMode, contextBefore, contextAfter, caseInsensitive, multiline, headLimit, pageNumber }
 			},
 
 			read_lint_errors: (params: RawToolParamsObj) => {
@@ -434,11 +488,28 @@ export class ToolsService implements IToolsService {
 			// ---
 
 			run_command: (params: RawToolParamsObj) => {
-				const { command: commandUnknown, cwd: cwdUnknown } = params
+				const { command: commandUnknown, cwd: cwdUnknown, timeout_ms: timeoutMsUnknown, run_in_background: runInBackgroundUnknown } = params
 				const command = validateStr('command', commandUnknown)
+				// Anti-shell contract: bounce commands that duplicate dedicated tools (read_file/grep/glob/edit_file/…).
+				// Prevents the model from collapsing into shell pipes and hanging the IDE on large stdout.
+				const misuse = detectShellMisuse(command)
+				if (misuse) {
+					throw new ToolValidationError({
+						code: 'shell_misuse',
+						message: `Command "${command.split('\n')[0].slice(0, 120)}" duplicates the ${misuse.suggestedTool} tool. ${misuse.hint}`,
+						hint: misuse.hint,
+						suggestedTool: misuse.suggestedTool,
+					})
+				}
 				const cwd = validateOptionalStr('cwd', cwdUnknown)
 				const terminalId = generateUuid()
-				return { command, cwd, terminalId }
+				let timeoutMs = validateNumber(timeoutMsUnknown, { default: null })
+				if (timeoutMs !== null) {
+					if (timeoutMs < 1_000) timeoutMs = 1_000
+					else if (timeoutMs > 600_000) timeoutMs = 600_000 // 10 min hard cap (matches Claude-Code Bash)
+				}
+				const runInBackground = validateBoolean(runInBackgroundUnknown, { default: false })
+				return { command, cwd, terminalId, timeoutMs, runInBackground }
 			},
 			run_nl_command: (params: RawToolParamsObj) => {
 				const { nl_input: nlInputUnknown, cwd: cwdUnknown } = params
@@ -448,10 +519,24 @@ export class ToolsService implements IToolsService {
 				return { nlInput, cwd, terminalId }
 			},
 			run_persistent_command: (params: RawToolParamsObj) => {
-				const { command: commandUnknown, persistent_terminal_id: persistentTerminalIdUnknown } = params;
+				const { command: commandUnknown, persistent_terminal_id: persistentTerminalIdUnknown, timeout_ms: timeoutMsUnknown } = params;
 				const command = validateStr('command', commandUnknown);
+				const misuse = detectShellMisuse(command)
+				if (misuse) {
+					throw new ToolValidationError({
+						code: 'shell_misuse',
+						message: `Command "${command.split('\n')[0].slice(0, 120)}" duplicates the ${misuse.suggestedTool} tool. ${misuse.hint}`,
+						hint: misuse.hint,
+						suggestedTool: misuse.suggestedTool,
+					})
+				}
 				const persistentTerminalId = validateProposedTerminalId(persistentTerminalIdUnknown)
-				return { command, persistentTerminalId };
+				let timeoutMs = validateNumber(timeoutMsUnknown, { default: null })
+				if (timeoutMs !== null) {
+					if (timeoutMs < 1_000) timeoutMs = 1_000
+					else if (timeoutMs > 600_000) timeoutMs = 600_000
+				}
+				return { command, persistentTerminalId, timeoutMs };
 			},
 			open_persistent_terminal: (params: RawToolParamsObj) => {
 				const { cwd: cwdUnknown } = params;
@@ -463,6 +548,16 @@ export class ToolsService implements IToolsService {
 				const { persistent_terminal_id: terminalIdUnknown } = params;
 				const persistentTerminalId = validateProposedTerminalId(terminalIdUnknown);
 				return { persistentTerminalId };
+			},
+			kill_background_command: (params: RawToolParamsObj) => {
+				const { background_id: backgroundIdUnknown } = params;
+				const backgroundId = validateStr('background_id', backgroundIdUnknown);
+				return { backgroundId };
+			},
+			read_background_output: (params: RawToolParamsObj) => {
+				const { background_id: backgroundIdUnknown } = params;
+				const backgroundId = validateStr('background_id', backgroundIdUnknown);
+				return { backgroundId };
 			},
 
 			// ---
@@ -505,7 +600,7 @@ export class ToolsService implements IToolsService {
 
 
 		this.callTool = {
-			read_file: async ({ uri, startLine, endLine, pageNumber }) => {
+			read_file: async ({ uri, startLine, endLine, pageNumber, lineLimit, withLineNumbers }) => {
 				// VibeIDE: Large file policy — warn on files >200KB (first page only)
 				if (pageNumber === 1 && startLine === null && endLine === null) {
 					try {
@@ -537,23 +632,52 @@ export class ToolsService implements IToolsService {
 					if (model === null) { throw new Error(`No contents; File does not exist.`) }
 				}
 
-				let contents: string
-				if (startLine === null && endLine === null) {
-					contents = model.getValue(EndOfLinePreference.LF)
-				}
-				else {
-					const startLineNumber = startLine === null ? 1 : startLine
-					const endLineNumber = endLine === null ? model.getLineCount() : endLine
-					contents = model.getValueInRange({ startLineNumber, startColumn: 1, endLineNumber, endColumn: Number.MAX_SAFE_INTEGER }, EndOfLinePreference.LF)
-				}
-
 				const totalNumLines = model.getLineCount()
 
+				// Line-based slice (Claude-Code style): start_line + line_limit drives the window.
+				// Falls back to legacy whole-file path when caller passes neither.
+				const effectiveLineLimit = lineLimit ?? READ_FILE_DEFAULT_LINE_LIMIT
+				const isLineRangeMode = startLine !== null || endLine !== null || lineLimit !== null
+
+				let startLineReturned: number
+				let endLineReturned: number
+				let truncatedByLineLimit = false
+
+				if (isLineRangeMode || pageNumber === 1) {
+					// Window-by-lines first; pageNumber still applies for very long requested ranges.
+					const requestedStart = startLine ?? 1
+					const requestedEnd = endLine ?? Math.min(totalNumLines, requestedStart + effectiveLineLimit - 1)
+					const windowEnd = Math.min(requestedEnd, requestedStart + effectiveLineLimit - 1, totalNumLines)
+					if (windowEnd < requestedEnd) truncatedByLineLimit = true
+					startLineReturned = Math.max(1, requestedStart)
+					endLineReturned = Math.max(startLineReturned, windowEnd)
+				}
+				else {
+					// pageNumber > 1: legacy char-window kicks in (handled below).
+					startLineReturned = 1
+					endLineReturned = totalNumLines
+				}
+
+				let contents: string
+				if (isLineRangeMode || pageNumber === 1) {
+					contents = model.getValueInRange({
+						startLineNumber: startLineReturned,
+						startColumn: 1,
+						endLineNumber: endLineReturned,
+						endColumn: Number.MAX_SAFE_INTEGER,
+					}, EndOfLinePreference.LF)
+				}
+				else {
+					contents = model.getValue(EndOfLinePreference.LF)
+				}
+
+				// Byte-level paginate as a hard cap (huge minified files etc).
 				const fromIdx = MAX_FILE_CHARS_PAGE * (pageNumber - 1)
 				const toIdx = MAX_FILE_CHARS_PAGE * pageNumber - 1
-				let fileContents = contents.slice(fromIdx, toIdx + 1) // paginate
-				const hasNextPage = (contents.length - 1) - toIdx >= 1
+				let fileContents = contents.slice(fromIdx, toIdx + 1)
+				const hasNextPage = (contents.length - 1) - toIdx >= 1 || truncatedByLineLimit
 				const totalFileLen = contents.length
+				const linesReturned = endLineReturned - startLineReturned + 1
 
 				// VibeIDE: Prompt injection guard — sanitize file content before LLM context
 				const guardResult = this.vibePromptGuardService.sanitizeFileContent(fileContents, uri.fsPath);
@@ -561,7 +685,27 @@ export class ToolsService implements IToolsService {
 					fileContents = guardResult.sanitized;
 				}
 
-				return { result: { fileContents, totalFileLen, hasNextPage, totalNumLines } }
+				// Apply line-number prefixes (1-based, tab-separated — `cat -n` style).
+				if (withLineNumbers && (isLineRangeMode || pageNumber === 1)) {
+					const lines = fileContents.split('\n')
+					// Last split element is empty if the slice ended with '\n' — keep it as terminator.
+					const labelled: string[] = []
+					for (let i = 0; i < lines.length; i++) {
+						const ln = startLineReturned + i
+						if (ln > endLineReturned + 1) break
+						if (i === lines.length - 1 && lines[i] === '' && fileContents.endsWith('\n')) {
+							labelled.push('')
+						} else {
+							labelled.push(`${ln}\t${lines[i]}`)
+						}
+					}
+					fileContents = labelled.join('\n')
+				}
+
+				// Mark the call so edit_file can later require "must read first".
+				this._markFileRead(uri)
+
+				return { result: { fileContents, totalFileLen, hasNextPage, totalNumLines, linesReturned, startLineReturned, endLineReturned, truncatedByLineLimit } }
 			},
 
 			ls_dir: async ({ uri, pageNumber }) => {
@@ -635,6 +779,98 @@ export class ToolsService implements IToolsService {
 				const hasNextPage = (data.results.length - 1) - toIdx >= 1
 				return { result: { queryStr, uris, hasNextPage } }
 			},
+			glob: async ({ pattern, searchInFolder, pageNumber }) => {
+				const folders = searchInFolder === null
+					? workspaceContextService.getWorkspace().folders.map(f => f.uri)
+					: [searchInFolder]
+				const query = queryBuilder.file(folders, {
+					includePattern: pattern,
+					expandPatterns: true,
+					sortByScore: false,
+				})
+				const data = await searchService.fileSearch(query, CancellationToken.None)
+				const fromIdx = MAX_CHILDREN_URIs_PAGE * (pageNumber - 1)
+				const toIdx = MAX_CHILDREN_URIs_PAGE * pageNumber - 1
+				const all = data.results.map(r => r.resource)
+				const uris = all.slice(fromIdx, toIdx + 1)
+				const hasNextPage = (all.length - 1) - toIdx >= 1
+				return { result: { uris, hasNextPage, totalMatches: all.length } }
+			},
+
+			grep: async ({ pattern, glob: globPat, fileType, searchInFolder, outputMode, contextBefore, contextAfter, caseInsensitive, multiline, headLimit, pageNumber }) => {
+				const folders = searchInFolder === null
+					? workspaceContextService.getWorkspace().folders.map(f => f.uri)
+					: [searchInFolder]
+				// File-type → glob convenience expansion (subset of common ripgrep types).
+				const typeToGlob: Record<string, string> = {
+					js: '**/*.{js,jsx,mjs,cjs}', ts: '**/*.{ts,tsx}', py: '**/*.py',
+					rust: '**/*.rs', go: '**/*.go', java: '**/*.java', md: '**/*.md',
+					json: '**/*.json', yaml: '**/*.{yml,yaml}', css: '**/*.{css,scss,less}',
+					html: '**/*.{html,htm}',
+				}
+				const includePattern = globPat ?? (fileType && typeToGlob[fileType.toLowerCase()]) ?? undefined
+				// VS Code search has a single `surroundingContext` knob (not split before/after).
+				const surroundingContext = outputMode === 'content' ? Math.max(contextBefore, contextAfter) : 0
+				const textQuery = queryBuilder.text({
+					pattern,
+					isRegExp: true,
+					isCaseSensitive: !caseInsensitive,
+					isMultiline: multiline,
+				}, folders, {
+					includePattern,
+					expandPatterns: true,
+					surroundingContext: surroundingContext || undefined,
+					maxResults: headLimit,
+				})
+				const data = await searchService.textSearch(textQuery, CancellationToken.None)
+
+				const matches: Array<{ uri: URI, line: number, column: number, preview: string }> = []
+				const files: Array<{ uri: URI, count?: number }> = []
+				let totalMatches = 0
+				for (const fileMatch of data.results) {
+					const fmAny: any = fileMatch
+					if (Array.isArray(fmAny.results)) {
+						let perFile = 0
+						for (const r of fmAny.results) {
+							const anyR: any = r
+							const previewObj = anyR.preview
+							if (!previewObj) continue
+							perFile++
+							totalMatches++
+							const rangeArr = Array.isArray(anyR.rangeLocations) ? anyR.rangeLocations[0] : null
+							const startLine = (
+								rangeArr?.source?.startLineNumber
+								?? anyR.rangeStartLineNumber
+								?? anyR.range?.startLineNumber
+								?? 1
+							) as number
+							const startCol = (
+								rangeArr?.source?.startColumn
+								?? anyR.rangeStartColumn
+								?? anyR.range?.startColumn
+								?? 1
+							) as number
+							if (outputMode === 'content' && matches.length < headLimit) {
+								const previewText = typeof previewObj.text === 'string' ? previewObj.text : String(previewObj)
+								matches.push({ uri: fileMatch.resource, line: startLine, column: startCol, preview: truncateHeadTail(previewText, 500) })
+							}
+						}
+						files.push({ uri: fileMatch.resource, count: perFile })
+					}
+				}
+
+				const fromIdx = MAX_CHILDREN_URIs_PAGE * (pageNumber - 1)
+				const toIdx = MAX_CHILDREN_URIs_PAGE * pageNumber - 1
+				if (outputMode === 'content') {
+					const paged = matches.slice(fromIdx, toIdx + 1)
+					const hasNextPage = (matches.length - 1) - toIdx >= 1
+					return { result: { mode: outputMode, matches: paged, files: [], hasNextPage, totalMatches } }
+				}
+				const pagedFiles = files.slice(fromIdx, toIdx + 1)
+				const hasNextPage = (files.length - 1) - toIdx >= 1
+				return { result: { mode: outputMode, matches: [], files: pagedFiles, hasNextPage, totalMatches } }
+			},
+
 			search_in_file: async ({ uri, query, isRegex }) => {
 				await vibeideModelService.initializeModel(uri);
 				let { model } = await vibeideModelService.getModelSafe(uri);
@@ -1087,10 +1323,40 @@ export class ToolsService implements IToolsService {
 				if (!isFolder) {
 					await this._checkAdvisoryTerritorialLocks(uri);
 				}
+				// Pre-flight: if creating a file, ensure the parent directory exists.
+				// Without this the underlying createFile fails with an obscure FS error;
+				// surface a structured error the model can act on (suggest mkdir / create folder).
+				if (!isFolder) {
+					const parentUri = URI.from({
+						scheme: uri.scheme,
+						authority: uri.authority,
+						path: uri.path.replace(/[/\\][^/\\]*$/, '') || '/',
+					})
+					try {
+						const parentStat = await fileService.stat(parentUri)
+						if (!parentStat.isDirectory) {
+							throw new ToolValidationError({
+								code: 'parent_not_directory',
+								message: `Cannot create ${uri.fsPath}: parent path ${parentUri.fsPath} exists but is not a directory.`,
+								hint: 'Pick a different location or delete the colliding entry.',
+							})
+						}
+					} catch (e) {
+						if (e instanceof ToolValidationError) throw e
+						throw new ToolValidationError({
+							code: 'parent_dir_missing',
+							message: `Cannot create ${uri.fsPath}: parent directory ${parentUri.fsPath} does not exist.`,
+							hint: 'Create the parent directory first by calling create_file_or_folder with a trailing "/" on the path.',
+							suggestedTool: 'create_file_or_folder',
+						})
+					}
+				}
 				if (isFolder)
 					await fileService.createFolder(uri)
 				else {
 					await fileService.createFile(uri)
+					// Newly-created file is implicitly "known" content — allow subsequent edit_file without a re-read.
+					this._markFileRead(uri)
 				}
 				return { result: {} }
 			},
@@ -1141,6 +1407,8 @@ export class ToolsService implements IToolsService {
 					}
 				}
 				editCodeService.instantlyRewriteFile({ uri, newContent: effectiveContent })
+				// After rewrite we know the exact content — subsequent edit_file does not need a re-read.
+				this._markFileRead(uri)
 				// at end, get lint errors
 				const lintErrorsPromise = Promise.resolve().then(async () => {
 					await timeout(2000)
@@ -1160,6 +1428,18 @@ export class ToolsService implements IToolsService {
 					}
 					throw e;
 				}
+				// Pre-flight: SEARCH/REPLACE editing without prior knowledge of the file content
+				// is almost certainly hallucinated. Require a read_file call in this session for
+				// pre-existing files. Skip for files we just created (not yet on disk).
+				const fileExistsForEdit = await fileService.exists(uri)
+				if (fileExistsForEdit && !this._hasBeenRead(uri)) {
+					throw new ToolValidationError({
+						code: 'edit_without_read',
+						message: `Refusing to edit ${uri.fsPath}: it has not been read in this session. SEARCH/REPLACE blocks against unseen file content are unreliable.`,
+						hint: 'Call read_file first, then issue edit_file using the exact text you observed.',
+						suggestedTool: 'read_file',
+					})
+				}
 				await this._checkAdvisoryTerritorialLocks(uri);
 				await vibeideModelService.initializeModel(uri)
 				const streamState = this.commandBarService.getStreamState(uri)
@@ -1178,6 +1458,8 @@ export class ToolsService implements IToolsService {
 				}
 				await editCodeService.callBeforeApplyOrEdit(uri)
 				editCodeService.instantlyApplySearchReplaceBlocks({ uri, searchReplaceBlocks })
+				// File content has just been mutated — re-mark as read so chained edits still pass the guard.
+				this._markFileRead(uri)
 
 				// at end, get lint errors
 				const lintErrorsPromise = Promise.resolve().then(async () => {
@@ -1189,7 +1471,7 @@ export class ToolsService implements IToolsService {
 				return { result: lintErrorsPromise }
 			},
 			// ---
-			run_command: async ({ command, cwd, terminalId }) => {
+			run_command: async ({ command, cwd, terminalId, timeoutMs, runInBackground }) => {
 				// Check for dangerous commands and warn
 				const dangerLevel = this._detectCommandDanger(command);
 				if (dangerLevel === 'high') {
@@ -1197,12 +1479,43 @@ export class ToolsService implements IToolsService {
 				} else if (dangerLevel === 'medium') {
 					this.notificationService.info(`⚠️ Potentially risky command: ${command}\nReview before execution.`);
 				}
-				const { resPromise, interrupt } = await this.terminalToolService.runCommand(command, { type: 'temporary', cwd, terminalId })
+
+				// Background mode: spin up a persistent (but hidden) terminal, kick off the command,
+				// and return immediately with a backgroundId. The caller polls via read_background_output
+				// or kills via kill_background_command.
+				if (runInBackground) {
+					const persistentTerminalId = await this.terminalToolService.createPersistentTerminal({ cwd })
+					const backgroundId = generateUuid()
+					// Fire-and-forget; collect output later via read_terminal.
+					void this.terminalToolService.runCommand(command, { type: 'persistent', persistentTerminalId, timeoutMs: timeoutMs ?? 600_000 })
+					this._backgroundCommands.set(backgroundId, { persistentTerminalId, command, startedAt: Date.now() })
+					return {
+						result: Promise.resolve({
+							result: `Command started in background. Use read_background_output with background_id="${backgroundId}" to fetch output, or kill_background_command to stop it.`,
+							resolveReason: { type: 'done' as const, exitCode: 0 },
+							backgroundId,
+						}),
+					}
+				}
+
+				const { resPromise, interrupt } = await this.terminalToolService.runCommand(command, { type: 'temporary', cwd, terminalId, timeoutMs: timeoutMs ?? undefined })
 				return { result: resPromise, interruptTool: interrupt }
 			},
 			run_nl_command: async ({ nlInput, cwd, terminalId }) => {
 				// Parse natural language to shell command.
 				const parsed = await this.nlShellParserService.parseNLToShell(nlInput, cwd, CancellationToken.None);
+
+				// Anti-shell contract still applies AFTER parsing — the parser may have produced
+				// a `cat`/`grep`/`findstr` form which we want to redirect to dedicated tools.
+				const misuse = detectShellMisuse(parsed.command)
+				if (misuse) {
+					throw new ToolValidationError({
+						code: 'shell_misuse',
+						message: `Parsed command "${parsed.command.slice(0, 120)}" duplicates the ${misuse.suggestedTool} tool. ${misuse.hint}`,
+						hint: misuse.hint,
+						suggestedTool: misuse.suggestedTool,
+					})
+				}
 
 				// L1053 — chat-mode confirm dialog UI. Service sets
 				// `requiresConfirmation = estimatedRisk !== 'low'`; both medium (ambiguous)
@@ -1249,7 +1562,7 @@ export class ToolsService implements IToolsService {
 
 				return { result: maskedResPromise, interruptTool: interrupt };
 			},
-			run_persistent_command: async ({ command, persistentTerminalId }) => {
+			run_persistent_command: async ({ command, persistentTerminalId, timeoutMs }) => {
 				// Check for dangerous commands and warn
 				const dangerLevel = this._detectCommandDanger(command);
 				if (dangerLevel === 'high') {
@@ -1257,7 +1570,7 @@ export class ToolsService implements IToolsService {
 				} else if (dangerLevel === 'medium') {
 					this.notificationService.info(`⚠️ Potentially risky command: ${command}\nReview before execution.`);
 				}
-				const { resPromise, interrupt } = await this.terminalToolService.runCommand(command, { type: 'persistent', persistentTerminalId })
+				const { resPromise, interrupt } = await this.terminalToolService.runCommand(command, { type: 'persistent', persistentTerminalId, timeoutMs: timeoutMs ?? undefined })
 				return { result: resPromise, interruptTool: interrupt }
 			},
 			open_persistent_terminal: async ({ cwd }) => {
@@ -1268,6 +1581,37 @@ export class ToolsService implements IToolsService {
 				// Close the background terminal by sending exit
 				await this.terminalToolService.killPersistentTerminal(persistentTerminalId)
 				return { result: {} }
+			},
+			kill_background_command: async ({ backgroundId }) => {
+				const entry = this._backgroundCommands.get(backgroundId)
+				if (!entry) {
+					return { result: { killed: false, backgroundId } }
+				}
+				try {
+					await this.terminalToolService.killPersistentTerminal(entry.persistentTerminalId)
+				} catch { /* already gone — treat as killed */ }
+				this._backgroundCommands.delete(backgroundId)
+				return { result: { killed: true, backgroundId } }
+			},
+			read_background_output: async ({ backgroundId }) => {
+				const entry = this._backgroundCommands.get(backgroundId)
+				if (!entry) {
+					throw new ToolValidationError({
+						code: 'unknown_background_id',
+						message: `No background command with id "${backgroundId}". It may have been killed or never started.`,
+						hint: 'Start a command with run_command + run_in_background=true to obtain a background_id.',
+					})
+				}
+				const isRunning = this.terminalToolService.persistentTerminalExists(entry.persistentTerminalId)
+				let output = ''
+				try {
+					output = await this.terminalToolService.readTerminal(entry.persistentTerminalId)
+				} catch (e) {
+					output = `(failed to read background terminal: ${(e as Error)?.message ?? e})`
+				}
+				// Apply head+tail cap so we never blow the chat with a multi-MB tail.
+				output = truncateHeadTail(output, 80_000)
+				return { result: { backgroundId, output, isRunning } }
 			},
 
 			// ---
@@ -1655,7 +1999,16 @@ export class ToolsService implements IToolsService {
 		// given to the LLM after the call for successful tool calls
 		this.stringOfResult = {
 			read_file: (params, result) => {
-				return `${params.uri.fsPath}\n\`\`\`\n${result.fileContents}\n\`\`\`${nextPageStr(result.hasNextPage)}${result.hasNextPage ? `\nMore info because truncated: this file has ${result.totalNumLines} lines, or ${result.totalFileLen} characters.` : ''}`
+				const window = result.startLineReturned && result.endLineReturned
+					? `lines ${result.startLineReturned}-${result.endLineReturned} of ${result.totalNumLines}`
+					: `${result.totalNumLines} lines`
+				const truncNote = result.truncatedByLineLimit
+					? `\n(Truncated by line_limit. To continue, call read_file with start_line=${result.endLineReturned + 1}.)`
+					: ''
+				const pageNote = result.hasNextPage && !result.truncatedByLineLimit
+					? `\nMore info because truncated: this file has ${result.totalNumLines} lines, or ${result.totalFileLen} characters.`
+					: ''
+				return `${params.uri.fsPath} (${window})\n\`\`\`\n${result.fileContents}\n\`\`\`${nextPageStr(result.hasNextPage)}${truncNote}${pageNote}`
 			},
 			ls_dir: (params, result) => {
 				const dirTreeStr = stringifyDirectoryTree1Deep(params, result)
@@ -1669,6 +2022,28 @@ export class ToolsService implements IToolsService {
 			},
 			search_for_files: (params, result) => {
 				return result.uris.map(uri => uri.fsPath).join('\n') + nextPageStr(result.hasNextPage)
+			},
+			glob: (params, result) => {
+				if (result.uris.length === 0) {
+					return `No files match pattern "${params.pattern}".`
+				}
+				const header = `Matched ${result.totalMatches} file${result.totalMatches === 1 ? '' : 's'} for "${params.pattern}":\n`
+				return header + result.uris.map(uri => uri.fsPath).join('\n') + nextPageStr(result.hasNextPage)
+			},
+			grep: (params, result) => {
+				if (result.totalMatches === 0) {
+					return `No matches for "${params.pattern}".`
+				}
+				if (result.mode === 'files_with_matches') {
+					return `${result.totalMatches} match${result.totalMatches === 1 ? '' : 'es'} across ${result.files.length} file${result.files.length === 1 ? '' : 's'}:\n` +
+						result.files.map(f => f.uri.fsPath).join('\n') + nextPageStr(result.hasNextPage)
+				}
+				if (result.mode === 'count') {
+					return `${result.totalMatches} match${result.totalMatches === 1 ? '' : 'es'} across ${result.files.length} file${result.files.length === 1 ? '' : 's'}:\n` +
+						result.files.map(f => `${f.uri.fsPath}: ${f.count ?? 0}`).join('\n') + nextPageStr(result.hasNextPage)
+				}
+				return `${result.totalMatches} match${result.totalMatches === 1 ? '' : 'es'}:\n` +
+					result.matches.map(m => `${m.uri.fsPath}:${m.line}:${m.column}\n${m.preview}`).join('\n\n') + nextPageStr(result.hasNextPage)
 			},
 			search_in_file: (params, result) => {
 				const { model } = vibeideModelService.getModel(params.uri)
@@ -1771,14 +2146,18 @@ export class ToolsService implements IToolsService {
 				return `Change successfully made to ${params.uri.fsPath}.${lintErrsString}`
 			},
 			run_command: (params, result) => {
-				const { resolveReason, result: result_, } = result
+				const { resolveReason, result: result_, backgroundId } = result
+				if (backgroundId) {
+					return `${result_}\n(background_id=${backgroundId})`
+				}
 				// success
 				if (resolveReason.type === 'done') {
 					return `${result_}\n(exit code ${resolveReason.exitCode})`
 				}
 				// normal command
 				if (resolveReason.type === 'timeout') {
-					return `${result_}\nTerminal command ran, but was automatically killed by VibeIDE after ${MAX_TERMINAL_INACTIVE_TIME}s of inactivity and did not finish successfully. To try with more time, open a persistent terminal and run the command there.`
+					const usedTimeoutMs = params.timeoutMs ?? MAX_TERMINAL_INACTIVE_TIME * 1000
+					return `${result_}\nTerminal command timed out after ${Math.round(usedTimeoutMs / 1000)}s of inactivity. Re-run with a larger timeout_ms (max 600000), or set run_in_background=true to keep it running and poll output via read_background_output.`
 				}
 				throw new Error(`Unexpected internal error: Terminal command did not resolve with a valid reason.`)
 			},
@@ -1816,6 +2195,15 @@ export class ToolsService implements IToolsService {
 			},
 			kill_persistent_terminal: (params, _result) => {
 				return `Successfully closed terminal "${params.persistentTerminalId}".`;
+			},
+			kill_background_command: (_params, result) => {
+				return result.killed
+					? `Killed background command "${result.backgroundId}".`
+					: `No active background command with id "${result.backgroundId}" — it may have already exited.`
+			},
+			read_background_output: (_params, result) => {
+				const status = result.isRunning ? 'still running' : 'finished'
+				return `Background command "${result.backgroundId}" (${status}):\n\`\`\`\n${result.output}\n\`\`\``
 			},
 
 			// ---
@@ -1938,6 +2326,14 @@ export class ToolsService implements IToolsService {
 		}
 
 		return 'low';
+	}
+
+	private _markFileRead(uri: URI): void {
+		this._filesReadInSession.add(uri.toString());
+	}
+
+	private _hasBeenRead(uri: URI): boolean {
+		return this._filesReadInSession.has(uri.toString());
 	}
 
 	private _getLintErrors(uri: URI): { lintErrors: LintErrorItem[] | null } {

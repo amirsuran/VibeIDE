@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="LICENSE.txt"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License" /></a>
-  <a href="https://github.com/VibeIDETeam/VibeIDE/releases"><img src="https://img.shields.io/badge/версия-0.7.3-green.svg" alt="Версия" /></a>
+  <a href="https://github.com/VibeIDETeam/VibeIDE/releases"><img src="https://img.shields.io/badge/версия-0.7.4-green.svg" alt="Версия" /></a>
   <a href="https://github.com/VibeIDETeam/VibeIDE/issues"><img src="https://img.shields.io/github/issues/VibeIDETeam/VibeIDE.svg" alt="Issues" /></a>
   <a href="https://open-vsx.org"><img src="https://img.shields.io/badge/extensions-Open%20VSX-purple.svg" alt="Open VSX" /></a>
 </p>
@@ -62,7 +62,7 @@ VibeIDE — форк [VS Code open source (Code-OSS)](https://github.com/microso
 
 Идея: чем дольше тянется один чат и чем плотнее набито контекстное окно, тем выше шанс, что модель начнёт **галлюцинировать** — забывать ранние инструкции, путать файлы, выдумывать API, повторять уже сделанные правки. Параллельно растёт счёт за токены. Два независимых guard'а защищают от обоих сценариев — стоимости и качества.
 
-- **Session token limit** — потолок суммы input+output токенов на одну chat-сессию. По умолчанию **500 000 ≈ $20** на усреднённых ценах. При 80% использования — warning, при 100% агентские запросы блокируются до явного reset. Настройка: `vibeide.safety.sessionTokenLimit`, `…sessionTokenLimitEnabled` (Settings → VibeIDE → Safety).
+- **Session token limit** — потолок суммы input+output токенов на одну chat-сессию. По умолчанию **2 000 000** — рассчитан на длинные autopilot-сессии без постоянных сбросов. При 80% использования — warning, при 100% агентские запросы блокируются до явного reset. **Если включён `chatAgentAutopilot`** — превышение не блокирует запрос: счётчик автоматически сбрасывается с записью в лог (с rate-limit 1 сек, чтобы зацикленный run не сбрасывал лимит сотни раз в секунду). Настройка: `vibeide.safety.sessionTokenLimit`, `…sessionTokenLimitEnabled` (Settings → VibeIDE → Safety).
 - **Context window guard** — следит за заполнением контекстного окна модели в реальном времени и предупреждает **до** того, как модель начнёт деградировать. На **75%** — non-blocking warning, на **90%** — blocking-диалог *compact / continue / cancel* со снапшотом состояния. Пороги: `vibeide.context.warningThresholdPercent`, `vibeide.context.criticalThresholdPercent`.
 - **Сброс счётчика** — кнопка «Сбросить сессию» в футере панели истории чата, либо команда `vibeide.tokenBudget.reset` через `executeCommand`. Сбрасывает только session-токены; контекст чата сбрасывается отдельно — кнопкой «New Chat» или командой `/clear`.
 - **Per-task split (опционально)** — `vibeide.safety.taskQueueTokenSplitEnabled` делит session-budget между активными задачами очереди агентов пропорционально, чтобы одна жадная задача не съела весь лимит.

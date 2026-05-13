@@ -88,7 +88,8 @@ import { IVibeAIDebuggingService } from './vibeAIDebuggingContribution.js';
 const CHAT_RETRIES = 3
 const INITIAL_RETRY_DELAY = 1000 // Start with 1s for faster recovery
 const MAX_RETRY_DELAY = 5000 // Cap at 5s
-const MAX_AGENT_LOOP_ITERATIONS = 20 // Maximum iterations to prevent infinite loops
+const DEFAULT_MAX_AGENT_LOOP_ITERATIONS = 30 // Default cap; overridable via `vibeide.agent.maxLoopIterations`. 0 in the setting disables the cap.
+const MAX_AGENT_LOOP_ITERATIONS_UPPER_BOUND = 200 // Hard ceiling for user-supplied values to avoid runaway loops via accidental large input.
 const MAX_FILES_READ_PER_QUERY = 10 // Maximum files to read in a single query to prevent excessive reads
 
 // Stall detection: notify user if LLM stops producing tokens unexpectedly.
@@ -3730,11 +3731,19 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 		// Track tools executed in this request to detect incomplete workflows
 		let toolsExecutedInRequest: string[] = []
 
+		// Resolve max iterations once per run. Reading on every iteration would let a mid-run
+		// settings tweak chop off an in-flight loop unexpectedly.
+		const rawMaxIter = this._configurationService.getValue<unknown>('vibeide.agent.maxLoopIterations')
+		const maxLoopIterations = (typeof rawMaxIter === 'number' && Number.isFinite(rawMaxIter) && rawMaxIter >= 0)
+			? Math.min(MAX_AGENT_LOOP_ITERATIONS_UPPER_BOUND, Math.floor(rawMaxIter))
+			: DEFAULT_MAX_AGENT_LOOP_ITERATIONS
+		// 0 = no cap (user opted out)
+
 		// tool use loop
 		while (shouldSendAnotherMessage) {
-			// CRITICAL: Check for maximum iterations to prevent infinite loops
-			if (nMessagesSent >= MAX_AGENT_LOOP_ITERATIONS) {
-				this._notificationService.warn(`Agent loop reached maximum iterations (${MAX_AGENT_LOOP_ITERATIONS}). Stopping to prevent infinite loop.`)
+			// CRITICAL: Check for maximum iterations to prevent infinite loops (skipped when user disabled the cap with 0)
+			if (maxLoopIterations > 0 && nMessagesSent >= maxLoopIterations) {
+				this._notificationService.warn(`Agent loop reached maximum iterations (${maxLoopIterations}). Stopping to prevent infinite loop.`)
 				this._setStreamState(threadId, { isRunning: undefined })
 				return
 			}

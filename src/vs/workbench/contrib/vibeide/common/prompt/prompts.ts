@@ -24,6 +24,10 @@ export const MAX_DIRSTR_RESULTS_TOTAL_TOOL = 100
 // tool info
 export const MAX_FILE_CHARS_PAGE = 500_000
 export const MAX_CHILDREN_URIs_PAGE = 500
+// read_file line-based defaults (Claude-Code-style): cap how many lines reach the model
+// per call, separate from MAX_FILE_CHARS_PAGE which is a byte hard-cap per page.
+export const READ_FILE_DEFAULT_LINE_LIMIT = 2_000
+export const READ_FILE_MAX_LINE_LIMIT = 10_000
 
 // terminal tool info
 export const MAX_TERMINAL_CHARS = 100_000
@@ -149,7 +153,16 @@ const paginationParam = {
 
 
 
-const terminalDescHelper = `You can use this tool to run any command: sed, grep, etc. Do not edit any files with this tool; use edit_file instead. When working with git and other tools that open an editor (e.g. git diff), you should pipe to cat to get all results and not get stuck in vim.`
+const terminalDescHelper = `Use this for build/test/git/package-manager/dev-server commands.
+DO NOT use this to read files, list directories, search file names, or search content. Those duplicate dedicated tools, blow up stdout on large inputs, and can hang the chat.
+Instead of  →  use:
+- cat/Get-Content/type/head/tail  →  read_file (paginated, returns numbered lines)
+- ls -R / dir /s / tree            →  ls_dir / get_dir_tree (workspace-aware, paginated)
+- find -name / where               →  glob (pattern like **/*.ts)
+- grep/rg/findstr/Select-String    →  grep (ripgrep-backed; supports glob/type/output_mode)
+- sed -i / awk -i                  →  edit_file (SEARCH/REPLACE; integrates with diff view)
+The validator will reject these shell forms with a structured error and suggest the correct tool.
+When piping git or other paged commands, pipe through cat to avoid getting stuck in a pager.`
 
 const cwdHelper = 'Optional. The directory in which to run the command. Defaults to the first workspace folder.'
 
@@ -181,18 +194,20 @@ export const builtinTools: {
 
 	read_file: {
 		name: 'read_file',
-		description: `Returns full contents of a given file.`,
+		description: `ALWAYS use this tool to read file contents. NEVER use run_command with cat/Get-Content/type/head/tail — those stream through stdout and can hang the IDE on large files. Returns the file contents with line numbers (1-based, prefix "<line>\\t<content>"), so the result is directly usable for subsequent edit_file calls. Defaults to the first 2000 lines; raise line_limit only when necessary. Paginated via page_number for very large files. PDF / Jupyter / image files are routed automatically.`,
 		params: {
 			...uriParam('file'),
-			start_line: { description: 'Optional. Do NOT fill this field in unless you were specifically given exact line numbers to search. Defaults to the beginning of the file.' },
-			end_line: { description: 'Optional. Do NOT fill this field in unless you were specifically given exact line numbers to search. Defaults to the end of the file.' },
+			start_line: { description: 'Optional. 1-based. Start reading from this line. Defaults to the beginning of the file.' },
+			end_line: { description: 'Optional. 1-based, inclusive. Stop reading at this line. Defaults to start_line + line_limit (or end of file).' },
+			line_limit: { description: `Optional. Maximum number of lines to return. Default ${2000}, max ${10_000}. Use a tighter value when scanning, a larger one when you need full context.` },
+			with_line_numbers: { description: 'Optional. Default true. When true, each returned line is prefixed with "<line_num>\\t". Set to false only when feeding into systems that do not expect numbers.' },
 			...paginationParam,
 		},
 	},
 
 	ls_dir: {
 		name: 'ls_dir',
-		description: `Lists all files and folders in the given URI.`,
+		description: `Lists files and folders in the given URI (one level deep, paginated). NEVER use run_command with ls/dir/Get-ChildItem — those duplicate this functionality and recursive forms blow up stdout. For recursive views use get_dir_tree; for pattern matching use glob.`,
 		params: {
 			uri: { description: `Optional. The FULL path to the ${'folder'}. Leave this as empty or "" to search all folders.` },
 			...paginationParam,
@@ -213,7 +228,7 @@ export const builtinTools: {
 
 	search_pathnames_only: {
 		name: 'search_pathnames_only',
-		description: `Returns all pathnames that match a given query (searches ONLY file names). You should use this when looking for a file with a specific name or path.`,
+		description: `Fuzzy search over file PATHNAMES (not contents). Use this when you remember a partial name. For exact glob patterns (e.g. "**/*.ts"), use the glob tool instead. NEVER use run_command with find/where/dir /s — those duplicate this functionality.`,
 		params: {
 			query: { description: `Your query for the search.` },
 			include_pattern: { description: 'Optional. Only fill this in if you need to limit your search because there were too many results.' },
@@ -225,11 +240,39 @@ export const builtinTools: {
 
 	search_for_files: {
 		name: 'search_for_files',
-		description: `Returns a list of file names whose content matches the given query. The query can be any substring or regex.`,
+		description: `Returns file names whose content matches a query. For richer content search (with line numbers, glob/type filters, multiline, head_limit), prefer the grep tool. NEVER use run_command with grep/rg/findstr/Select-String — those duplicate this functionality.`,
 		params: {
 			query: { description: `Your query for the search.` },
 			search_in_folder: { description: 'Optional. Leave as blank by default. ONLY fill this in if your previous search with the same query was truncated. Searches descendants of this folder only.' },
 			is_regex: { description: 'Optional. Default is false. Whether the query is a regex.' },
+			...paginationParam,
+		},
+	},
+
+	glob: {
+		name: 'glob',
+		description: `Returns workspace files matching a glob pattern (e.g. "**/*.ts", "src/**/*test*", "packages/*/package.json"). ALWAYS use this for filename patterns. NEVER use run_command with find/where/dir /s — those duplicate this functionality and blow up stdout on large repos.`,
+		params: {
+			pattern: { description: 'Glob pattern. Examples: "**/*.ts", "src/**/components/*.tsx", "**/{Dockerfile,docker-compose.yml}".' },
+			search_in_folder: { description: 'Optional. Restrict the search to descendants of this folder.' },
+			...paginationParam,
+		},
+	},
+
+	grep: {
+		name: 'grep',
+		description: `Ripgrep-backed content search across the workspace. ALWAYS use this for content search. NEVER use run_command with grep/rg/findstr/Select-String — those duplicate this functionality. Outputs are paginated and capped via head_limit. Choose output_mode based on what you need: "content" for matches with surrounding lines, "files_with_matches" for just file paths, "count" for per-file match counts.`,
+		params: {
+			pattern: { description: 'Regex pattern (Rust regex syntax — same as ripgrep).' },
+			glob: { description: 'Optional. Filter files by glob (e.g. "**/*.ts", "src/**").' },
+			file_type: { description: 'Optional. ripgrep file-type filter ("js", "ts", "py", "rust", "go", "java", "md", …).' },
+			search_in_folder: { description: 'Optional. Restrict to a folder.' },
+			output_mode: { description: 'Optional. "content" (default), "files_with_matches", or "count".' },
+			context_before: { description: 'Optional. Lines of context before each match (output_mode=content only). Default 0.' },
+			context_after: { description: 'Optional. Lines of context after each match (output_mode=content only). Default 0.' },
+			case_insensitive: { description: 'Optional. Default false.' },
+			multiline: { description: 'Optional. Default false. When true, "." matches newlines and patterns may span lines.' },
+			head_limit: { description: 'Optional. Cap number of results returned. Default 250.' },
 			...paginationParam,
 		},
 	},
@@ -368,10 +411,12 @@ export const builtinTools: {
 	},
 	run_command: {
 		name: 'run_command',
-		description: `Runs a terminal command and waits for the result (times out after ${MAX_TERMINAL_INACTIVE_TIME}s of inactivity). ${terminalDescHelper}`,
+		description: `Runs a terminal command and waits for the result. Default behavior: returns after ${MAX_TERMINAL_INACTIVE_TIME}s of inactivity. For long-running builds/tests/CI, pass timeout_ms (up to 600000 = 10 min). For dev servers / watch tasks / anything that never exits, pass run_in_background=true and use read_background_output / kill_background_command. ${terminalDescHelper}`,
 		params: {
 			command: { description: 'The terminal command to run.' },
 			cwd: { description: cwdHelper },
+			timeout_ms: { description: `Optional. Inactivity timeout in milliseconds. Default ${MAX_TERMINAL_INACTIVE_TIME * 1000}, min 1000, max 600000.` },
+			run_in_background: { description: 'Optional. Default false. When true, the command runs detached and returns a background_id immediately. Use this for dev servers, watchers, or anything that does not terminate. Poll output with read_background_output, stop with kill_background_command.' },
 		},
 	},
 	run_nl_command: {
@@ -385,10 +430,11 @@ export const builtinTools: {
 
 	run_persistent_command: {
 		name: 'run_persistent_command',
-		description: `Runs a terminal command in the persistent terminal that you created with open_persistent_terminal (results after ${MAX_TERMINAL_BG_COMMAND_TIME} are returned, and command continues running in background). ${terminalDescHelper}`,
+		description: `Runs a terminal command in the persistent terminal that you created with open_persistent_terminal (results after the wall-clock cap are returned and the command keeps running). Default cap ${MAX_TERMINAL_BG_COMMAND_TIME}s — override via timeout_ms (max 600000). ${terminalDescHelper}`,
 		params: {
 			command: { description: 'The terminal command to run.' },
 			persistent_terminal_id: { description: 'The ID of the terminal created using open_persistent_terminal.' },
+			timeout_ms: { description: `Optional. Wall-clock cap before returning partial output, in milliseconds. Default ${MAX_TERMINAL_BG_COMMAND_TIME * 1000}, min 1000, max 600000.` },
 		},
 	},
 
@@ -407,6 +453,18 @@ export const builtinTools: {
 		name: 'kill_persistent_terminal',
 		description: `Interrupts and closes a persistent terminal that you opened with open_persistent_terminal.`,
 		params: { persistent_terminal_id: { description: `The ID of the persistent terminal.` } }
+	},
+
+	kill_background_command: {
+		name: 'kill_background_command',
+		description: `Stops a background command started via run_command with run_in_background=true. Idempotent — calling on an already-exited command returns killed=false but does not error.`,
+		params: { background_id: { description: 'The background_id returned by run_command when run_in_background=true.' } }
+	},
+
+	read_background_output: {
+		name: 'read_background_output',
+		description: `Returns the current stdout buffer of a background command started via run_command with run_in_background=true. Result is truncated head+tail if huge. Reports whether the command is still running.`,
+		params: { background_id: { description: 'The background_id returned by run_command when run_in_background=true.' } }
 	},
 
 	// --- web search & browsing ---

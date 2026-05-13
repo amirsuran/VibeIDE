@@ -33,6 +33,8 @@ export const approvalTypeOfBuiltinToolName: Partial<{ [T in BuiltinToolName]?: '
 	'run_persistent_command': 'terminal',
 	'open_persistent_terminal': 'terminal',
 	'kill_persistent_terminal': 'terminal',
+	'kill_background_command': 'terminal',
+	'read_background_output': 'terminal',
 }
 
 
@@ -49,12 +51,14 @@ export const toolApprovalTypes = new Set<ToolApprovalType>([
 
 // PARAMS OF TOOL CALL
 export type BuiltinToolCallParams = {
-	'read_file': { uri: URI, startLine: number | null, endLine: number | null, pageNumber: number },
+	'read_file': { uri: URI, startLine: number | null, endLine: number | null, pageNumber: number, lineLimit: number | null, withLineNumbers: boolean },
 	'ls_dir': { uri: URI, pageNumber: number },
 	'get_dir_tree': { uri: URI },
 	'search_pathnames_only': { query: string, includePattern: string | null, pageNumber: number },
 	'search_for_files': { query: string, isRegex: boolean, searchInFolder: URI | null, pageNumber: number },
 	'search_in_file': { uri: URI, query: string, isRegex: boolean },
+	'glob': { pattern: string, searchInFolder: URI | null, pageNumber: number },
+	'grep': { pattern: string, glob: string | null, fileType: string | null, searchInFolder: URI | null, outputMode: 'content' | 'files_with_matches' | 'count', contextBefore: number, contextAfter: number, caseInsensitive: boolean, multiline: boolean, headLimit: number, pageNumber: number },
 	'read_lint_errors': { uri: URI },
 	'open_file': { uri: URI },
 	'go_to_definition': { uri: URI, line: number, column: number },
@@ -70,11 +74,13 @@ export type BuiltinToolCallParams = {
 	'create_file_or_folder': { uri: URI, isFolder: boolean },
 	'delete_file_or_folder': { uri: URI, isRecursive: boolean, isFolder: boolean },
 	// ---
-	'run_command': { command: string; cwd: string | null, terminalId: string },
+	'run_command': { command: string; cwd: string | null, terminalId: string, timeoutMs: number | null, runInBackground: boolean },
 	'run_nl_command': { nlInput: string; cwd: string | null, terminalId: string },
 	'open_persistent_terminal': { cwd: string | null },
-	'run_persistent_command': { command: string; persistentTerminalId: string },
+	'run_persistent_command': { command: string; persistentTerminalId: string, timeoutMs: number | null },
 	'kill_persistent_terminal': { persistentTerminalId: string },
+	'kill_background_command': { backgroundId: string },
+	'read_background_output': { backgroundId: string },
 	// ---
 	'web_search': { query: string, k?: number, refresh?: boolean },
 	'browse_url': { url: string, refresh?: boolean },
@@ -82,12 +88,14 @@ export type BuiltinToolCallParams = {
 
 // RESULT OF TOOL CALL
 export type BuiltinToolResultType = {
-	'read_file': { fileContents: string, totalFileLen: number, totalNumLines: number, hasNextPage: boolean },
+	'read_file': { fileContents: string, totalFileLen: number, totalNumLines: number, hasNextPage: boolean, linesReturned: number, startLineReturned: number, endLineReturned: number, truncatedByLineLimit: boolean },
 	'ls_dir': { children: ShallowDirectoryItem[] | null, hasNextPage: boolean, hasPrevPage: boolean, itemsRemaining: number },
 	'get_dir_tree': { str: string, },
 	'search_pathnames_only': { uris: URI[], hasNextPage: boolean },
 	'search_for_files': { uris: URI[], hasNextPage: boolean },
 	'search_in_file': { lines: number[]; },
+	'glob': { uris: URI[], hasNextPage: boolean, totalMatches: number },
+	'grep': { mode: 'content' | 'files_with_matches' | 'count', matches: Array<{ uri: URI, line: number, column: number, preview: string }>, files: Array<{ uri: URI, count?: number }>, hasNextPage: boolean, totalMatches: number },
 	'read_lint_errors': { lintErrors: LintErrorItem[] | null },
 	'open_file': {},
 	'go_to_definition': { locations: Array<{ uri: URI, startLine: number, startColumn: number, endLine: number, endColumn: number }> },
@@ -103,11 +111,13 @@ export type BuiltinToolResultType = {
 	'create_file_or_folder': {},
 	'delete_file_or_folder': {},
 	// ---
-	'run_command': { result: string; resolveReason: TerminalResolveReason; },
+	'run_command': { result: string; resolveReason: TerminalResolveReason; backgroundId?: string; },
 	'run_nl_command': { result: string; resolveReason: TerminalResolveReason; parsedCommand: string; explanation: string; },
 	'run_persistent_command': { result: string; resolveReason: TerminalResolveReason; },
 	'open_persistent_terminal': { persistentTerminalId: string },
 	'kill_persistent_terminal': {},
+	'kill_background_command': { killed: boolean; backgroundId: string; },
+	'read_background_output': { backgroundId: string; output: string; isRunning: boolean; },
 	// ---
 	'web_search': { results: Array<{ title: string, snippet: string, url: string }> },
 	'browse_url': { content: string, title?: string, url: string, metadata?: { publishedDate?: string } },

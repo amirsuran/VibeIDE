@@ -86,6 +86,11 @@ export const chatS = {
 	autopilotLabel: 'Автопилот',
 	autopilotTitle:
 		'Автопилот: запускать инструменты (правки, удаление, терминал, MCP) без подтверждения. Выключите — подтверждать каждый шаг.',
+	maxLoopIterationsLabel: 'итер.',
+	maxLoopIterationsOffLabel: '∞ итер.',
+	maxLoopIterationsOffHint: 'лимит снят',
+	maxLoopIterationsTitle:
+		'Максимум итераций tool-use loop в одном агентском прогоне (vibeide.agent.maxLoopIterations). Дефолт 30, диапазон 0–200. 0 = без лимита (для уверенных — есть риск зацикливания и расхода токенов).',
 	trainingUnknown: 'обуч.?',
 	trainingNone: 'без обуч.',
 	trainingOptIn: 'opt-in',

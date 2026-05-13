@@ -479,6 +479,97 @@ const ChatAgentAutopilotToggle = ({ className }: { className?: string }) => {
 }
 
 
+/** Toolbar control: cap on tool-use loop iterations per agent run. 0 = unlimited. Mirrors `vibeide.agent.maxLoopIterations`. */
+const MAX_LOOP_ITERATIONS_DEFAULT = 30
+const MAX_LOOP_ITERATIONS_UPPER = 200
+const MAX_LOOP_ITERATIONS_KEY = 'vibeide.agent.maxLoopIterations'
+
+const ChatMaxLoopIterationsControl = ({ className }: { className?: string }) => {
+	const accessor = useAccessor()
+	const configurationService = accessor.get('IConfigurationService')
+	const settingsState = useSettingsState()
+
+	const readValue = useCallback((): number => {
+		const raw = configurationService.getValue<unknown>(MAX_LOOP_ITERATIONS_KEY)
+		if (typeof raw === 'number' && Number.isFinite(raw) && raw >= 0) {
+			return Math.min(MAX_LOOP_ITERATIONS_UPPER, Math.floor(raw))
+		}
+		return MAX_LOOP_ITERATIONS_DEFAULT
+	}, [configurationService])
+
+	const [value, setValue] = useState<number>(readValue)
+	const [draft, setDraft] = useState<string>(() => String(readValue()))
+
+	useEffect(() => {
+		const d = configurationService.onDidChangeConfiguration(e => {
+			if (!e.affectsConfiguration(MAX_LOOP_ITERATIONS_KEY)) return
+			const next = readValue()
+			setValue(next)
+			setDraft(String(next))
+		})
+		return () => d.dispose()
+	}, [configurationService, readValue])
+
+	const commit = useCallback((next: number) => {
+		const clamped = Math.max(0, Math.min(MAX_LOOP_ITERATIONS_UPPER, Math.floor(next)))
+		setValue(clamped)
+		setDraft(String(clamped))
+		configurationService.updateValue(MAX_LOOP_ITERATIONS_KEY, clamped)
+	}, [configurationService])
+
+	const onInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+		setDraft(e.target.value)
+	}, [])
+
+	const onBlur = useCallback(() => {
+		const parsed = parseInt(draft, 10)
+		if (Number.isFinite(parsed)) {
+			commit(parsed)
+		} else {
+			setDraft(String(value))
+		}
+	}, [draft, value, commit])
+
+	const onKeyDown = useCallback((e: KeyboardEvent<HTMLInputElement>) => {
+		if (e.key === 'Enter') {
+			(e.target as HTMLInputElement).blur()
+		} else if (e.key === 'Escape') {
+			setDraft(String(value))
+			;(e.target as HTMLInputElement).blur()
+		}
+	}, [value])
+
+	const mode = settingsState.globalSettings.chatMode
+	if (mode !== 'agent' && mode !== 'plan') {
+		return null
+	}
+
+	const isDisabled = value === 0
+	const titleSuffix = isDisabled ? ` (${chatS.maxLoopIterationsOffHint})` : ` — ${value}`
+
+	return (
+		<div
+			className={`flex items-center gap-1 flex-shrink-0 ${className ?? ''}`}
+			title={chatS.maxLoopIterationsTitle + titleSuffix}
+		>
+			<input
+				type='number'
+				min={0}
+				max={MAX_LOOP_ITERATIONS_UPPER}
+				step={1}
+				value={draft}
+				onChange={onInputChange}
+				onBlur={onBlur}
+				onKeyDown={onKeyDown}
+				className='w-8 text-xs text-vibe-fg-3 bg-transparent border-0 outline-none text-center [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none'
+				aria-label={chatS.maxLoopIterationsTitle}
+			/>
+			<span className='text-vibe-fg-3 text-xs whitespace-nowrap select-none pointer-events-none'>
+				{isDisabled ? chatS.maxLoopIterationsOffLabel : chatS.maxLoopIterationsLabel}
+			</span>
+		</div>
+	)
+}
 
 
 
@@ -788,6 +879,7 @@ export const VibeChatArea: React.FC<VibeideChatAreaProps> = ({
 						<ModelDropdown featureName={featureName} className='text-xs text-vibe-fg-3 @@vibe-toolbar-pill rounded-xl overflow-hidden py-0.5 px-1.5' />
 						{featureName === 'Chat' && <ChatTrainingPolicyBadge />}
 						{featureName === 'Chat' && <ChatAgentAutopilotToggle />}
+						{featureName === 'Chat' && <ChatMaxLoopIterationsControl />}
 						<ReasoningOptionSlider featureName={featureName} />
 					</div>
 				)}

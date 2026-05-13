@@ -13,6 +13,7 @@ import { IConfigurationRegistry, Extensions as ConfigurationExtensions } from '.
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { localize } from '../../../../nls.js';
 import { IVibeAgentTaskQueueService } from './vibeAgentTaskQueueService.js';
+import { IVibeideSettingsService } from './vibeideSettingsService.js';
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 // Surface the token-budget safety knobs in VS Code's Settings UI. Without this
@@ -31,10 +32,10 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 		},
 		'vibeide.safety.sessionTokenLimit': {
 			type: 'number',
-			default: 500_000,
+			default: 2_000_000,
 			minimum: 10_000,
 			maximum: 100_000_000,
-			description: localize('vibeide.safety.sessionTokenLimit', 'Максимум input+output токенов на одну chat-сессию (default 500 000 ≈ $20 при усреднённой стоимости). Применяется только когда `sessionTokenLimitEnabled` = true.'),
+			description: localize('vibeide.safety.sessionTokenLimit', 'Максимум input+output токенов на одну chat-сессию (default 2 000 000 — рассчитан на длинные autopilot-сессии без постоянных сбросов). Применяется только когда `sessionTokenLimitEnabled` = true. Если включён `chatAgentAutopilot`, превышение лимита НЕ блокирует запрос: счётчик сбрасывается автоматически с записью в лог.'),
 		},
 		'vibeide.safety.taskQueueTokenSplitEnabled': {
 			type: 'boolean',
@@ -107,8 +108,11 @@ export function accumulateUsage(prev: number, inputTokens: number, outputTokens:
 
 /**
  * VibeIDE: Session token budget enforcement.
- * Default limit: 500,000 tokens per session.
- * Prevents runaway agents from generating unexpected costs.
+ * Default limit: 2,000,000 tokens per session (autopilot-friendly).
+ * Prevents runaway agents from generating unexpected costs while keeping headroom
+ * for long autonomous runs. When `chatAgentAutopilot` is on, hitting the cap
+ * auto-resets the counter instead of throwing — the user has already opted into
+ * unattended execution and we should not stop the run for a confirm dialog.
  */
 class VibeTokenBudgetService extends Disposable implements IVibeTokenBudgetService {
 	declare readonly _serviceBrand: undefined;
@@ -123,14 +127,18 @@ class VibeTokenBudgetService extends Disposable implements IVibeTokenBudgetServi
 
 	private _activeQueueTaskId: string | undefined;
 	private readonly _perTaskTokens = new Map<string, number>();
+	// Soft cooldown so a runaway loop in autopilot doesn't auto-reset hundreds of times per second.
+	private _lastAutopilotResetAt = 0;
+	private static readonly AUTOPILOT_RESET_COOLDOWN_MS = 1_000;
 
-	// Default: 500k tokens per session (~$20 at average pricing)
-	private static readonly DEFAULT_TOKEN_LIMIT = 500_000;
+	// Default: 2M tokens per session — chosen so autopilot sessions don't hit the cap on routine work.
+	private static readonly DEFAULT_TOKEN_LIMIT = 2_000_000;
 
 	constructor(
 		@IConfigurationService private readonly _configurationService: IConfigurationService,
 		@ILogService private readonly _logService: ILogService,
 		@IVibeAgentTaskQueueService private readonly _taskQueue: IVibeAgentTaskQueueService,
+		@IVibeideSettingsService private readonly _vibeideSettingsService: IVibeideSettingsService,
 	) {
 		super();
 		this._sessionTokensLimit = this._configurationService.getValue<number>('vibeide.safety.sessionTokenLimit')
@@ -198,6 +206,23 @@ class VibeTokenBudgetService extends Disposable implements IVibeTokenBudgetServi
 		if (!this._enabled) return;
 		const status = this.getStatus();
 		if (status.isExceeded) {
+			// Autopilot mode: user has opted into unattended execution. Throwing here would
+			// freeze the run waiting for a manual reset. Auto-reset with a clear log entry
+			// instead, but rate-limit to avoid pathological loops resetting every iteration.
+			const autopilotOn = this._vibeideSettingsService.state.globalSettings.chatAgentAutopilot === true;
+			if (autopilotOn) {
+				const now = Date.now();
+				if (now - this._lastAutopilotResetAt >= VibeTokenBudgetService.AUTOPILOT_RESET_COOLDOWN_MS) {
+					this._lastAutopilotResetAt = now;
+					this._logService.warn(
+						`[VibeIDE TokenBudget] Autopilot auto-reset: session reached ${this._sessionTokensUsed.toLocaleString()}/${this._sessionTokensLimit.toLocaleString()} tokens. Counter cleared, run continues.`
+					);
+					this.resetSession();
+					return;
+				}
+				// Inside cooldown: behave as if budget is still ok rather than throwing — autopilot must not stall.
+				return;
+			}
 			throw new Error(
 				localize(
 					'vibeTokenBudgetExceeded',

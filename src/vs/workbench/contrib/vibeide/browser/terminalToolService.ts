@@ -17,6 +17,7 @@ import { ITerminalService, ITerminalInstance, ICreateTerminalOptions } from '../
 import { MAX_TERMINAL_BG_COMMAND_TIME, MAX_TERMINAL_CHARS, MAX_TERMINAL_INACTIVE_TIME } from '../common/prompt/prompts.js';
 import { TerminalResolveReason } from '../common/toolsServiceTypes.js';
 import { timeout } from '../../../../base/common/async.js';
+import { truncateHeadTail } from '../common/toolHardening.js';
 
 
 
@@ -25,8 +26,8 @@ export interface ITerminalToolService {
 
 	listPersistentTerminalIds(): string[];
 	runCommand(command: string, opts:
-		| { type: 'persistent', persistentTerminalId: string }
-		| { type: 'temporary', cwd: string | null, terminalId: string }
+		| { type: 'persistent', persistentTerminalId: string, timeoutMs?: number }
+		| { type: 'temporary', cwd: string | null, terminalId: string, timeoutMs?: number }
 		// | { type: 'apply', terminalId: string }
 	): Promise<{ interrupt: () => void; resPromise: Promise<{ result: string, resolveReason: TerminalResolveReason }> }>;
 
@@ -249,13 +250,7 @@ export class TerminalToolService extends Disposable implements ITerminalToolServ
 			lines.unshift(line);
 		}
 
-		let result = removeAnsiEscapeCodes(lines.join('\n'));
-
-		if (result.length > MAX_TERMINAL_CHARS) {
-			const half = MAX_TERMINAL_CHARS / 2;
-			result = result.slice(0, half) + '\n...\n' + result.slice(result.length - half);
-		}
-
+		const result = truncateHeadTail(removeAnsiEscapeCodes(lines.join('\n')), MAX_TERMINAL_CHARS);
 		return result
 	};
 
@@ -349,17 +344,22 @@ export class TerminalToolService extends Disposable implements ITerminalToolServ
 			// send the command now that listeners are attached
 			await terminal.sendText(command, true)
 
+			// Caller-supplied timeout takes precedence over the hard-coded inactivity / bg limits.
+			// timeoutMs interpretation:
+			//   - persistent terminals: wall-clock cap before returning partial output (default = MAX_TERMINAL_BG_COMMAND_TIME * 1000)
+			//   - temporary terminals: inactivity cap (default = MAX_TERMINAL_INACTIVE_TIME * 1000)
+			const overrideTimeoutMs = params.timeoutMs && params.timeoutMs > 0 ? params.timeoutMs : null
 			const waitUntilInterrupt = isPersistent ?
-				// timeout after X seconds
 				new Promise<void>((res) => {
 					setTimeout(() => {
 						resolveReason = { type: 'timeout' };
 						res()
-					}, MAX_TERMINAL_BG_COMMAND_TIME * 1000)
+					}, overrideTimeoutMs ?? MAX_TERMINAL_BG_COMMAND_TIME * 1000)
 				})
 				// inactivity-based timeout
 				: new Promise<void>(res => {
 					let globalTimeoutId: ReturnType<typeof setTimeout>;
+					const inactivityMs = overrideTimeoutMs ?? MAX_TERMINAL_INACTIVE_TIME * 1000
 					const resetTimer = () => {
 						clearTimeout(globalTimeoutId);
 						globalTimeoutId = setTimeout(() => {
@@ -367,7 +367,7 @@ export class TerminalToolService extends Disposable implements ITerminalToolServ
 
 							resolveReason = { type: 'timeout' };
 							res();
-						}, MAX_TERMINAL_INACTIVE_TIME * 1000);
+						}, inactivityMs);
 					};
 
 					const dTimeout = terminal.onData(() => { resetTimer(); });
@@ -394,15 +394,7 @@ export class TerminalToolService extends Disposable implements ITerminalToolServ
 			if (!resolveReason) throw new Error('Unexpected internal error: Promise.any should have resolved with a reason.')
 
 			if (!isPersistent) result = `$ ${command}\n${result}`
-			result = removeAnsiEscapeCodes(result)
-			// trim
-			if (result.length > MAX_TERMINAL_CHARS) {
-				const half = MAX_TERMINAL_CHARS / 2
-				result = result.slice(0, half)
-					+ '\n...\n'
-					+ result.slice(result.length - half, Infinity)
-			}
-
+			result = truncateHeadTail(removeAnsiEscapeCodes(result), MAX_TERMINAL_CHARS)
 			return { result, resolveReason }
 
 		}

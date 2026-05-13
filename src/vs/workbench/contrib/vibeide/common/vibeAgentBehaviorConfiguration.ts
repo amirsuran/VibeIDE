@@ -46,5 +46,12 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 			default: 'npm test',
 			description: localize('vibeide.agent.runTestsAfterApply.command', 'Shell-команда для прогона тестов (используется только когда `runTestsAfterApply.enabled = true`). Должна быть быстрой (≤30s), иначе блокирует следующий agent step. Пример: `npm test -- --bail` для остановки на первой ошибке.'),
 		},
+		'vibeide.agent.maxLoopIterations': {
+			type: 'number',
+			default: 30,
+			minimum: 0,
+			maximum: 200,
+			description: localize('vibeide.agent.maxLoopIterations', 'Максимум итераций tool-use loop в одном агентском прогоне. При достижении — прогон останавливается, чтобы не зациклиться. `0` = без лимита (для уверенных в себе; есть риск зацикливания и расхода токенов). Дефолт 30, диапазон 0–200. Контрол продублирован в нижней панели чата рядом с тогглом «Автопилот».'),
+		},
 	},
 });
