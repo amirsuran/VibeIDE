@@ -4,6 +4,8 @@
  *--------------------------------------------------------------------------------------*/
 
 import { Disposable, IDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
+import { scheduleAtNextAnimationFrame } from '../../../../base/browser/dom.js';
+import { mainWindow } from '../../../../base/browser/window.js';
 import { removeAnsiEscapeCodes } from '../../../../base/common/strings.js';
 import { ITerminalCapabilityImplMap, TerminalCapability } from '../../../../platform/terminal/common/capabilities/capabilities.js';
 import { URI } from '../../../../base/common/uri.js';
@@ -299,11 +301,21 @@ export class TerminalToolService extends Disposable implements ITerminalToolServ
 		}
 
 		const interrupt = () => {
-			terminal.dispose()
+			// Drop from the map synchronously so callers see the terminal gone immediately,
+			// but defer the actual dispose by one animation frame: xterm may have in-flight
+			// rAFs from decorationAddon / resize that crash with "Cannot read properties of
+			// undefined (reading 'dimensions')" if the renderer is torn down before they fire.
 			if (!isPersistent)
 				delete this.temporaryTerminalInstanceOfId[params.terminalId]
 			else
 				delete this.persistentTerminalInstanceOfId[params.persistentTerminalId]
+			scheduleAtNextAnimationFrame(mainWindow, () => {
+				try {
+					terminal.dispose()
+				} catch {
+					// terminal may already be disposed externally — ignore
+				}
+			})
 		}
 
 		const waitForResult = async () => {

@@ -170,6 +170,7 @@ export class XtermTerminal extends Disposable implements IXtermTerminal, IDetach
 	readonly onDidChangeFocus = this._onDidChangeFocus.event;
 	private readonly _onDidDispose = this._register(new Emitter<void>());
 	readonly onDidDispose = this._onDidDispose.event;
+	private _isDisposing = false;
 	private readonly _onDidChangeProgress = this._register(new Emitter<IProgressState>());
 	readonly onDidChangeProgress = this._onDidChangeProgress.event;
 
@@ -970,8 +971,12 @@ export class XtermTerminal extends Disposable implements IXtermTerminal, IDetach
 		this._webglAddonCustomGlyphs = undefined;
 		this._refreshImageAddon();
 		// WebGL renderer cell dimensions differ from the DOM renderer, make sure the terminal
-		// gets resized after the webgl addon is disposed
-		this._onDidRequestRefreshDimensions.fire();
+		// gets resized after the webgl addon is disposed. Skip during final dispose: a resize
+		// would re-enter xterm and schedule a rAF that fires after the renderer is torn down,
+		// crashing with `Cannot read properties of undefined (reading 'dimensions')`.
+		if (!this._isDisposing) {
+			this._onDidRequestRefreshDimensions.fire();
+		}
 	}
 
 	async getRangeAsVT(startMarker?: IXtermMarker, endMarker?: IXtermMarker, skipLastLine?: boolean): Promise<string> {
@@ -1083,6 +1088,7 @@ export class XtermTerminal extends Disposable implements IXtermTerminal, IDetach
 	}
 
 	override dispose(): void {
+		this._isDisposing = true;
 		this._anyTerminalFocusContextKey.reset();
 		this._anyFocusedTerminalHasSelection.reset();
 		this._disposeOfWebglRenderer();

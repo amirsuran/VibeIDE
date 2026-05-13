@@ -82,6 +82,29 @@ const hashApiKey = (apiKey: string | undefined): string => {
 }
 
 /**
+ * Validate that a string is safe to be used as an HTTP header value (Latin-1, codepoints <= 0xFF).
+ * undici/fetch rejects bytes > 0xFF with a cryptic `Cannot convert argument to a ByteString` TypeError;
+ * this helper throws a human-readable Error pinpointing the offending character instead.
+ * Common cause: user copied the masked UI value (bullets) instead of the real API key.
+ */
+const assertHttpHeaderSafe = (fieldLabel: string, value: string | undefined | null): void => {
+	if (!value) return
+	for (let i = 0; i < value.length; i++) {
+		const code = value.charCodeAt(i)
+		if (code > 0xFF) {
+			const ch = value[i]
+			const hex = code.toString(16).toUpperCase().padStart(4, '0')
+			throw new Error(
+				`${fieldLabel} contains a non-Latin-1 character "${ch}" (U+${hex}) at position ${i}. ` +
+				`HTTP headers only accept byte values 0-255. ` +
+				`This usually means a masked UI value (e.g. "••••") was pasted instead of the real key. ` +
+				`Re-enter the value without the mask.`
+			)
+		}
+	}
+}
+
+/**
  * Build cache key for OpenAI-compatible client.
  * Format: `${providerName}:${endpoint}:${apiKeyHash}`
  */
@@ -196,6 +219,12 @@ const computeMaxTokensForLocalProvider = (isLocalProvider: boolean, featureName:
 }
 
 const newOpenAICompatibleSDK = async ({ settingsOfProvider, providerName, includeInPayload }: { settingsOfProvider: SettingsOfProvider, providerName: ProviderName, includeInPayload?: { [s: string]: any } }) => {
+	// Pre-flight: reject API keys with non-Latin-1 chars before they reach undici as a header.
+	const providerCfg = (settingsOfProvider as any)[providerName] ?? {}
+	if (typeof providerCfg.apiKey === 'string') {
+		assertHttpHeaderSafe(`${displayInfoOfProviderName(providerName).title} API key`, providerCfg.apiKey)
+	}
+
 	// Network optimizations: timeouts and connection reuse
 	// The OpenAI SDK handles HTTP keep-alive and connection pooling internally
 	// Use shorter timeout for local models (they're on localhost, should be fast)
@@ -280,6 +309,7 @@ const newOpenAICompatibleSDK = async ({ settingsOfProvider, providerName, includ
 		const thisConfig = settingsOfProvider[providerName]
 		const baseURL = `https://${thisConfig.region}-aiplatform.googleapis.com/v1/projects/${thisConfig.project}/locations/${thisConfig.region}/endpoints/${'openapi'}`
 		const apiKey = await getGoogleApiKey()
+		assertHttpHeaderSafe(`${displayInfoOfProviderName(providerName).title} access token`, apiKey)
 		return new OpenAI({ baseURL: baseURL, apiKey: apiKey, ...commonPayloadOpts })
 	}
 	else if (providerName === 'microsoftAzure') {
@@ -323,6 +353,14 @@ const newOpenAICompatibleSDK = async ({ settingsOfProvider, providerName, includ
 	else if (providerName === 'openAICompatible') {
 		const thisConfig = settingsOfProvider[providerName]
 		const headers = parseHeadersJSON(thisConfig.headersJSON)
+		if (headers) {
+			for (const [hName, hValue] of Object.entries(headers)) {
+				assertHttpHeaderSafe(`OpenAI-Compatible custom header name "${hName}"`, hName)
+				if (typeof hValue === 'string') {
+					assertHttpHeaderSafe(`OpenAI-Compatible custom header "${hName}" value`, hValue)
+				}
+			}
+		}
 		return new OpenAI({ baseURL: thisConfig.endpoint, apiKey: thisConfig.apiKey, defaultHeaders: headers, ...commonPayloadOpts })
 	}
 	else if (providerName === 'groq') {
@@ -1099,6 +1137,7 @@ const sendAnthropicChat = async ({ messages, providerName, onText, onFinalMessag
 
 
 	// instance
+	assertHttpHeaderSafe(`${displayInfoOfProviderName('anthropic').title} API key`, thisConfig.apiKey)
 	const anthropic = new Anthropic({
 		apiKey: thisConfig.apiKey,
 		dangerouslyAllowBrowser: true,
@@ -1215,6 +1254,7 @@ const sendMistralFIM = ({ messages, onFinalMessage, onError, settingsOfProvider,
 		return
 	}
 
+	assertHttpHeaderSafe(`${displayInfoOfProviderName('mistral').title} API key`, settingsOfProvider.mistral.apiKey)
 	const mistral = new MistralCore({ apiKey: settingsOfProvider.mistral.apiKey })
 	fimComplete(mistral,
 		{
@@ -1388,6 +1428,7 @@ const sendGeminiChat = async ({
 		: undefined
 
 	// instance
+	assertHttpHeaderSafe(`${displayInfoOfProviderName(providerName).title} API key`, thisConfig.apiKey)
 	const genAI = new GoogleGenAI({ apiKey: thisConfig.apiKey });
 
 
