@@ -87,11 +87,17 @@ export const sendLLMMessage = async ({
 			const technical = errorMessage.startsWith('APIConnectionError:')
 				? ` (${errorMessage.replace(/^APIConnectionError:\s*/, '').trim()})`
 				: ''
+			const isLocalProviderName = providerName === 'ollama' || providerName === 'vLLM' || providerName === 'lmStudio'
+			const causeHint = /SELF_SIGNED_CERT_IN_CHAIN|UNABLE_TO_VERIFY_LEAF_SIGNATURE|CERT_HAS_EXPIRED|UNABLE_TO_GET_ISSUER_CERT/i.test(technical)
+				? ' Looks like a TLS chain issue — likely a corporate proxy/AV doing TLS interception. Set NODE_EXTRA_CA_CERTS to your corporate root CA, or contact IT.'
+				: isLocalProviderName
+					? ' This likely means your local model provider like Ollama is powered off, or the endpoint in VibeIDE Settings is wrong.'
+					: ' This likely means the network is blocked, the endpoint in VibeIDE Settings is wrong, or the provider is down.'
 			// Skip "auto" - it's not a real provider
 			if (providerName !== 'auto') {
-				errorMessage = `Failed to connect to ${displayInfoOfProviderName(providerName).title}. This likely means you specified the wrong endpoint in VibeIDE Settings, or your local model provider like Ollama is powered off.${technical}`
+				errorMessage = `Failed to connect to ${displayInfoOfProviderName(providerName).title}.${causeHint}${technical}`
 			} else {
-				errorMessage = `Failed to connect. This likely means you specified the wrong endpoint in VibeIDE Settings, or your local model provider like Ollama is powered off.${technical}`
+				errorMessage = `Failed to connect.${causeHint}${technical}`
 			}
 		}
 

@@ -20,6 +20,7 @@ import { getSendableReasoningInfo, getModelCapabilities, getProviderCapabilities
 import { extractReasoningWrapper, extractXMLToolsWrapper } from './extractGrammar.js';
 import { availableTools, InternalToolInfo } from '../../common/prompt/prompts.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';
+import { ensureSystemCADispatcher } from './systemCAFetch.js';
 
 const getGoogleApiKey = async () => {
 	// module-level singleton
@@ -249,6 +250,12 @@ const newOpenAICompatibleSDK = async ({ settingsOfProvider, providerName, includ
 	const isLocalProvider = isExplicitLocalProvider || isLocalhostEndpoint
 
 	const timeoutMs = isLocalProvider ? 30_000 : 60_000 // 30s for local, 60s for remote
+	// Install a system-CA-aware undici dispatcher (idempotent). Required for
+	// corporate environments with TLS interception — Node's bundled Mozilla CA
+	// list does not include corporate root CAs, so handshake fails with
+	// SELF_SIGNED_CERT_IN_CHAIN against opencode.ai/openrouter/etc. Setting the
+	// global dispatcher fixes Google SDK too (it uses global fetch).
+	const sharedDispatcher = ensureSystemCADispatcher()
 	const commonPayloadOpts: ClientOptions = {
 		dangerouslyAllowBrowser: true,
 		timeout: timeoutMs,
@@ -256,6 +263,7 @@ const newOpenAICompatibleSDK = async ({ settingsOfProvider, providerName, includ
 		// Enable HTTP/2 and connection reuse for better performance
 		// For localhost, connection reuse is especially important to avoid TCP handshake overhead
 		// The OpenAI SDK uses keep-alive by default, which is optimal for localhost
+		fetchOptions: { dispatcher: sharedDispatcher } as any,
 		...includeInPayload,
 	}
 	if (providerName === 'openAI') {
@@ -1210,6 +1218,8 @@ const sendAnthropicChat = async ({ messages, providerName, onText, onFinalMessag
 		dangerouslyAllowBrowser: true,
 		timeout: 60_000, // 60s timeout
 		maxRetries: 2, // Fast retries for transient errors
+		// Trust corporate root CAs from OS store (TLS interception fix)
+		fetchOptions: { dispatcher: ensureSystemCADispatcher() } as any,
 		// Connection reuse is handled internally by the SDK
 	});
 
@@ -1322,6 +1332,8 @@ const sendMistralFIM = ({ messages, onFinalMessage, onError, settingsOfProvider,
 	}
 
 	assertHttpHeaderSafe(`${displayInfoOfProviderName('mistral').title} API key`, settingsOfProvider.mistral.apiKey)
+	// Install system-CA-aware global dispatcher (Mistral SDK uses Node global fetch)
+	ensureSystemCADispatcher()
 	const mistral = new MistralCore({ apiKey: settingsOfProvider.mistral.apiKey })
 	fimComplete(mistral,
 		{
@@ -1496,6 +1508,8 @@ const sendGeminiChat = async ({
 
 	// instance
 	assertHttpHeaderSafe(`${displayInfoOfProviderName(providerName).title} API key`, thisConfig.apiKey)
+	// Install system-CA-aware global dispatcher (Google SDK uses Node global fetch)
+	ensureSystemCADispatcher()
 	const genAI = new GoogleGenAI({ apiKey: thisConfig.apiKey });
 
 
