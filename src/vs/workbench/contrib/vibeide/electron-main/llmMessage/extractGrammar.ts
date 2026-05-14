@@ -234,19 +234,50 @@ const PARAM_ALIASES_BY_TOOL: { [canonicalToolName: string]: { [alias: string]: s
 }
 
 /**
- * Outer wrapper tags used by some models (Gemini's <tool_code>, Anthropic's
- * <function_calls>, generic <tool_use>) to frame a list of tool invocations.
+ * Outer wrapper tags used by some models to frame a list of tool invocations:
+ *   - Gemini: <tool_code>
+ *   - Anthropic: <function_calls>
+ *   - generic: <tool_use>, <tools>
+ *   - vendor-namespaced: <minimax:tool_call>, <claude:tool_call>,
+ *     <mistral:tool_use>, <openai:tool_call>, etc.
  * We strip them — the actual tool call lives inside as <invoke name=...>.
+ * The vendor:tool_call / vendor:tool_use forms are matched generically so
+ * any new namespace from a future model is picked up automatically.
  */
-const ALT_WRAPPER_TAGS = ['tool_code', 'function_calls', 'tool_use', 'tools']
-const STRIP_WRAPPERS_RE = new RegExp(`</?(?:${ALT_WRAPPER_TAGS.join('|')})>`, 'g')
+const STRIP_WRAPPERS_RE = /<\/?(?:tool_code|function_calls|tool_use|tools|[a-z][\w-]*:tool_call|[a-z][\w-]*:tool_use)>/gi
+
+/**
+ * Resolve a tool name as it appears inside <invoke name="X"> to a canonical
+ * VibeIDE tool. Case-insensitive (models occasionally capitalize: "Bash",
+ * "Read_File"); the alias map is keyed in lowercase.
+ */
+const resolveInvokeToolName = (rawName: string): string => {
+	const lower = rawName.toLowerCase()
+	if (TOOL_NAME_ALIASES[lower]) return TOOL_NAME_ALIASES[lower]
+	// Already-canonical name (case-insensitive). Return the lowercase form so
+	// downstream comparisons against the canonical-tag set succeed.
+	return lower
+}
+
+/**
+ * Same idea for param names inside <arg name="Y"> / <parameter name="Y">.
+ * The param alias map is keyed in lowercase per tool; canonical params are
+ * snake_case lowercase too, so lowercasing once is safe.
+ */
+const resolveInvokeParamName = (rawParamName: string, canonicalToolName: string): string => {
+	const lower = rawParamName.toLowerCase()
+	const paramAliasMap = PARAM_ALIASES_BY_TOOL[canonicalToolName] ?? {}
+	return paramAliasMap[lower] ?? lower
+}
 
 /**
  * Convert Anthropic-style <invoke name="X"><arg name="Y">V</arg></invoke>
  * (and <parameter name=...> variant) into our canonical <X><Y>V</Y></X>
- * format BEFORE the regular parser sees it. Tool name and param name go
- * through the same alias resolution as the canonical-tag path, so the model
- * can mix syntaxes freely (e.g. <invoke name="bash"> still maps to run_command).
+ * format BEFORE the regular parser sees it. Tool/param names go through the
+ * same alias resolution as the canonical-tag path (and case-insensitively),
+ * so the model can mix syntaxes freely:
+ *   <invoke name="Bash"> → <run_command>
+ *   <minimax:tool_call><invoke name="bash"> ... </invoke></minimax:tool_call> → <run_command>...
  *
  * Conversion only fires once the full invoke block (including </invoke>) is
  * present in the buffer. Until then the partial-tag detector holds the
@@ -254,19 +285,18 @@ const STRIP_WRAPPERS_RE = new RegExp(`</?(?:${ALT_WRAPPER_TAGS.join('|')})>`, 'g
  */
 const normalizeAlternativeToolSyntax = (text: string): string => {
 	// Fast path: no alternative-syntax markers present at all.
-	if (!text.includes('<invoke') && !text.includes('<tool_code') && !text.includes('<function_calls') && !text.includes('<tool_use')) {
+	if (!text.includes('<invoke') && !text.includes('<tool_code') && !text.includes('<function_calls') && !text.includes('<tool_use') && !text.includes(':tool_call') && !text.includes(':tool_use')) {
 		return text
 	}
 	let result = text.replace(STRIP_WRAPPERS_RE, '')
 	result = result.replace(
-		/<invoke\s+name=["']([^"']+)["']\s*>([\s\S]*?)<\/invoke>/g,
+		/<invoke\s+name=["']([^"']+)["']\s*>([\s\S]*?)<\/invoke>/gi,
 		(_match: string, rawToolName: string, body: string) => {
-			const canonical = TOOL_NAME_ALIASES[rawToolName] ?? rawToolName
-			const paramAliasMap = PARAM_ALIASES_BY_TOOL[canonical] ?? {}
+			const canonical = resolveInvokeToolName(rawToolName)
 			const transformedBody = body.replace(
-				/<(?:arg|parameter)\s+name=["']([^"']+)["']\s*>([\s\S]*?)<\/(?:arg|parameter)>/g,
+				/<(?:arg|parameter)\s+name=["']([^"']+)["']\s*>([\s\S]*?)<\/(?:arg|parameter)>/gi,
 				(_m: string, rawParamName: string, value: string) => {
-					const canonicalParam = paramAliasMap[rawParamName] ?? rawParamName
+					const canonicalParam = resolveInvokeParamName(rawParamName, canonical)
 					return `<${canonicalParam}>${value}</${canonicalParam}>`
 				}
 			)
@@ -461,7 +491,17 @@ export const extractXMLToolsWrapper = (
 	// Holding these in the openToolTagBuffer keeps the half-written XML out of
 	// the chat until normalizeAlternativeToolSyntax() can collapse the full block
 	// into our canonical <X>...</X> form.
-	const altSyntaxPartialHints = ['<invoke ', '<tool_code>', '<function_calls>', '<tool_use>']
+	const altSyntaxPartialHints = [
+		'<invoke ', '<tool_code>', '<function_calls>', '<tool_use>',
+		// Vendor-namespaced wrappers — `endsWithAnyPrefixOf` matches any leading
+		// substring, so the partial `<minimax:tool_ca` etc. is held in buffer.
+		'<minimax:tool_call>', '<minimax:tool_use>',
+		'<claude:tool_call>', '<claude:tool_use>',
+		'<mistral:tool_call>', '<mistral:tool_use>',
+		'<openai:tool_call>', '<openai:tool_use>',
+		'<gemini:tool_call>', '<gemini:tool_use>',
+		'<llama:tool_call>', '<qwen:tool_call>',
+	]
 	const partialDetectionTags = [...toolOpenTags, ...altSyntaxPartialHints]
 
 	const toolId = generateUuid()
