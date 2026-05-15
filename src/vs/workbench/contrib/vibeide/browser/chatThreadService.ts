@@ -3003,6 +3003,31 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 		opts: { preapproved: true, unvalidatedToolParams: RawToolParamsObj, validatedParams: ToolCallParams<ToolName> } | { preapproved: false, unvalidatedToolParams: RawToolParamsObj },
 	): Promise<{ awaitingUserApproval?: boolean, interrupted?: boolean }> => {
 
+		// Repair short-circuit: aiSdkAdapter's experimental_repairToolCall reroutes
+		// unknown tool names (numeric "2", invented identifiers) to the reserved
+		// `invalid` pseudo-tool with the original name+error in its params. Treat
+		// the call as a resolved tool_error so the model reads it and retries on
+		// the next turn — never reaches dispatch, never throws NoSuchToolError.
+		// Matches the Kilo Code pattern (packages/opencode/src/tool/invalid.ts).
+		if (toolName === 'invalid') {
+			const rawParams = opts.unvalidatedToolParams as { tool?: string; error?: string };
+			const attempted = rawParams?.tool || '(unknown)';
+			const reason = rawParams?.error || 'Unknown tool name';
+			const message = `The model attempted to call tool "${attempted}" but that is not a registered tool name. ${reason} Tool names are lowercase identifiers (e.g. read_file). Use one of: ${builtinToolNames.join(', ')}.`;
+			this._addMessageToThread(threadId, {
+				role: 'tool',
+				type: 'tool_error',
+				params: {} as ToolCallParams<ToolName>,
+				rawParams: opts.unvalidatedToolParams,
+				result: message,
+				name: toolName,
+				content: message,
+				id: toolId,
+				mcpServerName,
+			});
+			return {};
+		}
+
 		// compute these below
 		let toolParams: ToolCallParams<ToolName>
 		let toolResult: ToolResult<ToolName>

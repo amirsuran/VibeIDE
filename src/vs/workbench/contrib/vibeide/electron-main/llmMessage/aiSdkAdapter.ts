@@ -288,28 +288,54 @@ const convertMessagesToModelMessages = (messages: LLMChatMessage[]): ModelMessag
 	return out;
 };
 
+// Reserved tool name for routing repair-misses. Models occasionally emit
+// numeric or otherwise-invalid tool names (e.g. "2", "5", "20") that lookalike
+// an index into a numbered list rather than an identifier. By adding a real
+// `invalid` tool to the AI SDK ToolSet (but hiding it from `activeTools`) we
+// give the SDK a valid target the repair hook can rewrite to, instead of
+// throwing NoSuchToolError. The chatThreadService dispatcher recognises this
+// name and returns a structured "tool not found" message to the model.
+// Mirrors packages/opencode/src/tool/invalid.ts in Kilo Code.
+export const INVALID_TOOL_NAME = 'invalid' as const;
+
 // InternalToolInfo map -> AI SDK ToolSet. No `execute` is provided: we want the
 // model's tool_call surfaced via the stream, not auto-executed by the SDK.
-const convertToolsToAiSdkToolSet = (allowed: { [k: string]: InternalToolInfo } | null | undefined): ToolSet | undefined => {
-	if (!allowed) return undefined;
-	const keys = Object.keys(allowed);
-	if (keys.length === 0) return undefined;
+// When `includeInvalidTool` is true an `invalid` pseudo-tool is appended; it's
+// hidden from the model via `activeTools` filtering at the streamText call site.
+const convertToolsToAiSdkToolSet = (
+	allowed: { [k: string]: InternalToolInfo } | null | undefined,
+	includeInvalidTool: boolean
+): ToolSet | undefined => {
 	const out: ToolSet = {};
-	for (const name of keys) {
-		const t = allowed[name];
-		const properties: Record<string, { description: string; type: 'string' }> = {};
-		for (const k of Object.keys(t.params)) {
-			properties[k] = { description: t.params[k].description, type: 'string' };
+	if (allowed) {
+		for (const name of Object.keys(allowed)) {
+			const t = allowed[name];
+			const properties: Record<string, { description: string; type: 'string' }> = {};
+			for (const k of Object.keys(t.params)) {
+				properties[k] = { description: t.params[k].description, type: 'string' };
+			}
+			out[name] = tool({
+				description: t.description,
+				inputSchema: jsonSchema({
+					type: 'object',
+					properties,
+				} as JSONSchema7),
+			});
 		}
-		out[name] = tool({
-			description: t.description,
+	}
+	if (includeInvalidTool) {
+		out[INVALID_TOOL_NAME] = tool({
+			description: 'Do not use. Reserved for repair routing.',
 			inputSchema: jsonSchema({
 				type: 'object',
-				properties,
+				properties: {
+					tool: { type: 'string', description: 'Original tool name the model attempted.' },
+					error: { type: 'string', description: 'Why the call was considered invalid.' },
+				},
 			} as JSONSchema7),
 		});
 	}
-	return out;
+	return Object.keys(out).length === 0 ? undefined : out;
 };
 
 export const sendViaAISdk = async (params: SendChatParams_Internal): Promise<void> => {
@@ -385,7 +411,14 @@ export const sendViaAISdk = async (params: SendChatParams_Internal): Promise<voi
 	// extractXMLToolsWrapper above (active when !specialToolFormat) will pick
 	// up the XML fallback from text. Gating tools on specialToolFormat caused
 	// aggregator-routed models to never see the native channel at all.
-	const tools = convertToolsToAiSdkToolSet(availableTools(chatMode, mcpTools) as any);
+	//
+	// The `invalid` pseudo-tool is injected so experimental_repairToolCall has
+	// a valid target to re-route to when the model emits an unknown tool name
+	// (e.g. numeric "2", "5", "20"). It's hidden from the model via activeTools.
+	const tools = convertToolsToAiSdkToolSet(availableTools(chatMode, mcpTools) as any, true);
+	const activeTools = tools
+		? Object.keys(tools).filter(k => k !== INVALID_TOOL_NAME)
+		: undefined;
 
 	// Aggregators: extra hop adds latency. Default 180s.
 	const timeoutMs = runtimeOptions?.timeoutMs?.aggregator ?? 180_000;
@@ -464,20 +497,31 @@ export const sendViaAISdk = async (params: SendChatParams_Internal): Promise<voi
 			model: provider.chatModel(modelName),
 			messages: modelMessages,
 			tools,
+			activeTools,
 			toolChoice: tools ? 'auto' : undefined,
 			abortSignal: abortController.signal,
-			// Recover from case-mismatched tool names emitted by less-disciplined
-			// models (e.g. Read_File / READ_FILE instead of read_file). The SDK
-			// already throws NoSuchToolError when the canonical lookup fails;
-			// retry once against a lowercased name before bubbling up.
-			experimental_repairToolCall: async ({ toolCall, tools: registeredTools }) => {
+			// Two-stage repair for tool-call name mismatches:
+			//   1. lowercase normalisation (Read_File → read_file, BASH → bash).
+			//   2. anything still unmatched (numeric "2", invented names, etc.) is
+			//      routed to the `invalid` pseudo-tool — the SDK then dispatches
+			//      it normally and our chatThreadService converts it to a
+			//      tool_error message the model can read and retry from.
+			// Without stage 2 the SDK would throw NoSuchToolError, breaking the
+			// stream and surfacing a hard error in the chat. See packages/opencode/
+			// src/session/llm.ts in Kilo Code for the original pattern.
+			experimental_repairToolCall: async ({ toolCall, tools: registeredTools, error }) => {
 				if (!registeredTools) return null;
-				const raw = (toolCall as { toolName?: string }).toolName;
-				if (!raw) return null;
+				const raw = (toolCall as { toolName?: string }).toolName ?? '';
 				const lowered = raw.toLowerCase();
-				if (lowered === raw) return null;
-				if (!Object.prototype.hasOwnProperty.call(registeredTools, lowered)) return null;
-				return { ...toolCall, toolName: lowered } as typeof toolCall;
+				if (raw && lowered !== raw && Object.prototype.hasOwnProperty.call(registeredTools, lowered)) {
+					return { ...toolCall, toolName: lowered } as typeof toolCall;
+				}
+				const errMsg = (error as { message?: string } | undefined)?.message ?? 'Unknown tool name';
+				return {
+					...toolCall,
+					toolName: INVALID_TOOL_NAME,
+					input: JSON.stringify({ tool: raw, error: errMsg }),
+				} as typeof toolCall;
 			},
 		});
 
