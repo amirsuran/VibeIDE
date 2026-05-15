@@ -137,6 +137,18 @@ $archiveDir = "$Root\.build\win32-x64\archive"
 $zipName    = "VibeIDE-$newVibe-win32-x64.zip"
 $zipPath    = "$archiveDir\$zipName"
 New-Item -ItemType Directory -Force -Path $archiveDir | Out-Null
+
+# Pre-clean stale portable-archive zips from previous releases. The `Collect
+# artifacts` step below globs `VibeIDE-*-win32-x64.zip`, so a forgotten
+# v0.8.2 zip in the archive dir would be re-uploaded into a v0.9.0 release.
+$staleZips = Get-ChildItem "$archiveDir\VibeIDE-*-win32-x64.zip" -ErrorAction SilentlyContinue
+if ($staleZips) {
+    foreach ($z in $staleZips) {
+        Remove-Item $z.FullName -Force
+        Write-Host "  Cleaned stale archive: $($z.Name)" -ForegroundColor DarkGray
+    }
+}
+
 $appSourceDir = "$Root\..\VibeIDE-win32-x64"
 Compress-Archive -Path "$appSourceDir\*" -DestinationPath $zipPath -Force
 OK "Portable archive built: $zipName"
