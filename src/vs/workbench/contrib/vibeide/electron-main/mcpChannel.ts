@@ -13,7 +13,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
-import { MCPConfigFileJSON, MCPConfigFileEntryJSON, MCPServer, RawMCPToolCall, MCPToolErrorResponse, MCPServerEventResponse, MCPToolCallParams, removeMCPToolNamePrefix } from '../common/mcpServiceTypes.js';
+import { MCPConfigFileJSON, MCPConfigFileEntryJSON, MCPServer, RawMCPToolCall, MCPToolErrorResponse, MCPServerEventResponse, MCPToolCallParams } from '../common/mcpServiceTypes.js';
 import { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { MCPUserStateOfName } from '../common/vibeideSettingsTypes.js';
@@ -259,10 +259,9 @@ export class MCPChannel implements IServerChannel {
 					await client.connect(transport);
 					console.log(`Connected via SSE to ${serverName}`);
 					const { tools } = await client.listTools()
-					const toolsWithUniqueName = tools.map(({ name, ...rest }) => ({ name: this._addUniquePrefix(name), ...rest }))
 					info = {
 						status: isOn ? 'success' : 'offline',
-						tools: toolsWithUniqueName,
+						tools: tools,
 						command: urlString,
 					}
 				} catch (sseErr) {
@@ -276,10 +275,9 @@ export class MCPChannel implements IServerChannel {
 					await client.connect(transport);
 					console.log(`Connected via HTTP to ${serverName}`);
 					const { tools } = await client.listTools()
-					const toolsWithUniqueName = tools.map(({ name, ...rest }) => ({ name: this._addUniquePrefix(name), ...rest }))
 					info = {
 						status: isOn ? 'success' : 'offline',
-						tools: toolsWithUniqueName,
+						tools: tools,
 						command: urlString,
 					}
 				} catch (httpErr) {
@@ -293,10 +291,9 @@ export class MCPChannel implements IServerChannel {
 					await client.connect(transport);
 					console.log(`Connected via HTTP to ${serverName}`);
 					const { tools } = await client.listTools()
-					const toolsWithUniqueName = tools.map(({ name, ...rest }) => ({ name: this._addUniquePrefix(name), ...rest }))
 					info = {
 						status: isOn ? 'success' : 'offline',
-						tools: toolsWithUniqueName,
+						tools: tools,
 						command: urlString,
 					}
 				} catch (httpErr) {
@@ -304,11 +301,10 @@ export class MCPChannel implements IServerChannel {
 					transport = new SSEClientTransport(url);
 					await client.connect(transport);
 					const { tools } = await client.listTools()
-					const toolsWithUniqueName = tools.map(({ name, ...rest }) => ({ name: this._addUniquePrefix(name), ...rest }))
 					console.log(`Connected via SSE to ${serverName}`);
 					info = {
 						status: isOn ? 'success' : 'offline',
-						tools: toolsWithUniqueName,
+						tools: tools,
 						command: urlString,
 					}
 				}
@@ -328,7 +324,6 @@ export class MCPChannel implements IServerChannel {
 
 			// Get the tools from the server
 			const { tools } = await client.listTools()
-			const toolsWithUniqueName = tools.map(({ name, ...rest }) => ({ name: this._addUniquePrefix(name), ...rest }))
 
 			// Create a full command string for display
 			const fullCommand = `${server.command} ${server.args?.join(' ') || ''}`
@@ -336,7 +331,7 @@ export class MCPChannel implements IServerChannel {
 			// Format server object
 			info = {
 				status: isOn ? 'success' : 'offline',
-				tools: toolsWithUniqueName,
+				tools: tools,
 				command: fullCommand,
 			}
 
@@ -346,10 +341,6 @@ export class MCPChannel implements IServerChannel {
 
 
 		return { _client: client, mcpServerEntryJSON: server, mcpServer: info }
-	}
-
-	private _addUniquePrefix(base: string) {
-		return `${Math.random().toString(36).slice(2, 8)}_${base}`;
 	}
 
 	private async _createClient(serverConfig: MCPConfigFileEntryJSON, serverName: string, isOn = true): Promise<ClientInfo> {
@@ -437,9 +428,11 @@ export class MCPChannel implements IServerChannel {
 			throw new Error(`Client for server ${serverName} not found`);
 		}
 
-		// Call the tool with the provided parameters
+		// Call the tool with the provided parameters. `toolName` arrives here as the
+		// bare name (caller passes mcpTool.originalName via chatThreadService), so no
+		// stripping is needed — pass straight through to the MCP server.
 		const response = await client.callTool({
-			name: removeMCPToolNamePrefix(toolName),
+			name: toolName,
 			arguments: params
 		});
 		const { content } = response as CallToolResult;

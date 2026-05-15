@@ -5,7 +5,7 @@
 
 import { URI } from '../../../../base/common/uri.js'
 import { RawMCPToolCall } from './mcpServiceTypes.js';
-import { builtinTools } from './prompt/prompts.js';
+import { SnakeCaseKeys } from './prompt/snakeCase.js';
 import { RawToolParamsObj } from './sendLLMMessageTypes.js';
 
 
@@ -129,7 +129,11 @@ export type ToolResult<T extends BuiltinToolName | (string & {})> = T extends Bu
 
 export type BuiltinToolName = keyof BuiltinToolResultType
 
-type BuiltinToolParamNameOfTool<T extends BuiltinToolName> = keyof (typeof builtinTools)[T]['params']
+// Param-name set for a built-in tool — derived from the snake-cased call-params
+// shape rather than from `typeof builtinTools` to avoid importing the runtime
+// `builtinTools` value (which now lives behind a registry and would form a
+// cycle through prompt/tools/index.ts).
+type BuiltinToolParamNameOfTool<T extends BuiltinToolName> = keyof SnakeCaseKeys<BuiltinToolCallParams[T]>;
 export type BuiltinToolParamName = { [T in BuiltinToolName]: BuiltinToolParamNameOfTool<T> }[BuiltinToolName]
 
 

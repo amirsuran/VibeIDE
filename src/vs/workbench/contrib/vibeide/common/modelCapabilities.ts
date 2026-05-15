@@ -30,6 +30,9 @@ export const defaultProviderSettings = {
 	openCodeZen: {
 		apiKey: '',
 	},
+	openCode: {
+		apiKey: '',
+	},
 	openRouter: {
 		apiKey: '',
 		/** `'1'` = load model list from OpenRouter public API without an API key (inference still needs a key). */
@@ -41,9 +44,6 @@ export const defaultProviderSettings = {
 	},
 	liteLLM: { // https://docs.litellm.ai/docs/providers/openai_compatible
 		endpoint: '',
-		apiKey: '',
-	},
-	openCode: {
 		apiKey: '',
 	},
 	// Cloud providers

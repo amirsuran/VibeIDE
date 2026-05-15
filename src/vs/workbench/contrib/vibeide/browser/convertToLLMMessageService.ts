@@ -55,6 +55,7 @@ function uint8ArrayToBase64(data: Uint8Array): string {
 }
 import { getIsReasoningEnabledState, getReservedOutputTokenSpace, getModelCapabilities } from '../common/modelCapabilities.js';
 import { reParsedToolXMLString, chat_systemMessage, chat_systemMessage_local } from '../common/prompt/prompts.js';
+import { detectModelFamily } from '../common/prompt/modelFamily.js';
 import { AnthropicLLMChatMessage, AnthropicReasoning, GeminiLLMChatMessage, LLMChatMessage, LLMFIMMessage, OpenAILLMChatMessage, RawToolParamsObj } from '../common/sendLLMMessageTypes.js';
 import { IVibeideSettingsService } from '../common/vibeideSettingsService.js';
 import { ChatMode, FeatureName, ModelSelection, ProviderName } from '../common/vibeideSettingsTypes.js';
@@ -1279,7 +1280,7 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 
 
 	// system message with caching
-	private _generateChatMessagesSystemMessage = async (chatMode: ChatMode, specialToolFormat: 'openai-style' | 'anthropic-style' | 'gemini-style' | undefined) => {
+	private _generateChatMessagesSystemMessage = async (chatMode: ChatMode, specialToolFormat: 'openai-style' | 'anthropic-style' | 'gemini-style' | undefined, providerName?: string, modelName?: string) => {
 		const workspaceFolders = this.workspaceContextService.getWorkspace().folders.map(f => f.uri.fsPath)
 
 		const openedURIs = this.modelService.getModels().filter(m => m.isAttachedToEditor()).map(m => m.uri.fsPath) || [];
@@ -1287,8 +1288,9 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 
 		const preferJsonToolArguments = this.configurationService.getValue<boolean>('vibeide.agent.preferJsonToolArguments') ?? false;
 
-		// Create cache key from relevant factors
-		const cacheKey = `${chatMode}|${specialToolFormat}|${workspaceFolders.join(',')}|${openedURIs.join(',')}|${activeURI || ''}|pj:${preferJsonToolArguments}`;
+		// Create cache key from relevant factors. modelFamily is folded in so that
+		// future family-specific prompt branches don't bleed across providers.
+		const cacheKey = `${chatMode}|${specialToolFormat}|${providerName ?? ''}|${modelName ?? ''}|${workspaceFolders.join(',')}|${openedURIs.join(',')}|${activeURI || ''}|pj:${preferJsonToolArguments}`;
 
 		// Check cache
 		const cached = this._systemMessageCache.get(cacheKey);
@@ -1303,9 +1305,12 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 				: `...Directories string cut off, ask user for more if necessary...`
 		})
 
-		// Include XML tool definitions in Agent Mode and Plan Mode
-		// Plan mode needs read-only tool definitions so the LLM can explore the codebase
-		const includeXMLToolDefinitions = !specialToolFormat || chatMode === 'agent' || chatMode === 'plan'
+		// Native function-calling models (specialToolFormat set) receive tools via
+		// the SDK's `tools:` field — duplicating them in the system prompt as XML
+		// invites the model to hallucinate by-index references ("MCP tool 1"). Only
+		// emit XML definitions when no native channel is available.
+		const includeXMLToolDefinitions = !specialToolFormat
+		const modelFamily = detectModelFamily(providerName, modelName, specialToolFormat)
 
 		const mcpTools = this.mcpService.getMCPTools()
 
@@ -1343,7 +1348,7 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 			}
 		}
 
-		const systemMessage = chat_systemMessage({ workspaceFolders, openedURIs, directoryStr, activeURI, persistentTerminalIDs, chatMode, mcpTools, includeXMLToolDefinitions, relevantMemories, strictJsonToolArguments: preferJsonToolArguments })
+		const systemMessage = chat_systemMessage({ workspaceFolders, openedURIs, directoryStr, activeURI, persistentTerminalIDs, chatMode, mcpTools, includeXMLToolDefinitions, relevantMemories, strictJsonToolArguments: preferJsonToolArguments, modelFamily })
 
 		// Cache the result
 		this._systemMessageCache.set(cacheKey, { message: systemMessage, timestamp: now });
@@ -1512,7 +1517,11 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 					`...Directories string cut off, use tools to read more...`
 					: `...Directories string cut off, ask user for more if necessary...`
 			})
-			const includeXMLToolDefinitions = !specialToolFormat || chatMode === 'agent' || chatMode === 'plan'
+			// Same rationale as the cloud path: avoid dual-channel tool exposure
+			// when the model can call tools natively. Local models typically
+			// have specialToolFormat===undefined and keep the XML block.
+			const includeXMLToolDefinitions = !specialToolFormat
+			const modelFamily = detectModelFamily(validProviderName, modelName, specialToolFormat)
 			const mcpTools = this.mcpService.getMCPTools()
 			const persistentTerminalIDs = this.terminalToolService.listPersistentTerminalIds()
 
@@ -1545,10 +1554,10 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 				}
 			}
 
-			systemMessage = chat_systemMessage_local({ workspaceFolders, openedURIs, directoryStr, activeURI, persistentTerminalIDs, chatMode, mcpTools, includeXMLToolDefinitions, relevantMemories, strictJsonToolArguments: preferJsonToolArguments })
+			systemMessage = chat_systemMessage_local({ workspaceFolders, openedURIs, directoryStr, activeURI, persistentTerminalIDs, chatMode, mcpTools, includeXMLToolDefinitions, relevantMemories, strictJsonToolArguments: preferJsonToolArguments, modelFamily })
 		} else {
 			// Use full system message for cloud models
-			systemMessage = await this._generateChatMessagesSystemMessage(chatMode, specialToolFormat)
+			systemMessage = await this._generateChatMessagesSystemMessage(chatMode, specialToolFormat, validProviderName, modelName)
 		}
 
 		// Query repo indexer if enabled - get context from the LAST user message (most relevant)

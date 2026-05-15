@@ -275,6 +275,14 @@ export interface MCPToolCallParams {
 
 
 
+/**
+ * Strip the `<server>_` prefix from a model-facing MCP tool name to obtain a
+ * shorter label for UI display. The model-facing format is `<server>_<tool>`
+ * (mcpService.getMCPTools builds it via sanitize), so dropping the first
+ * `_`-separated segment yields the bare tool name. Returns the original name
+ * unchanged if it contains no underscore (i.e. nothing to strip).
+ */
 export const removeMCPToolNamePrefix = (name: string) => {
-	return name.split('_').slice(1).join('_')
+	const stripped = name.split('_').slice(1).join('_')
+	return stripped || name
 }

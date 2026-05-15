@@ -140,6 +140,7 @@
     "privacy:check:json": "node scripts/privacy-ci-check.mjs --json"
   },
   "dependencies": {
+    "@ai-sdk/openai-compatible": "^2.0.47",
     "@anthropic-ai/sandbox-runtime": "0.0.49",
     "@anthropic-ai/sdk": "^0.92.0",
     "@github/copilot-sdk": "^0.2.2",
@@ -180,6 +181,7 @@
     "@xterm/addon-webgl": "^0.20.0-beta.196",
     "@xterm/headless": "^6.1.0-beta.197",
     "@xterm/xterm": "^6.1.0-beta.197",
+    "ai": "^6.0.182",
     "es5-ext": "^0.10.64",
     "google-auth-library": "^10.6.2",
     "http-proxy-agent": "^7.0.0",

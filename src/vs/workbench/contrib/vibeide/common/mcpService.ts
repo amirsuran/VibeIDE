@@ -49,6 +49,14 @@ const MCP_CONFIG_FILE_NAME = 'mcp.json';
 const MCP_CONFIG_SAMPLE = { mcpServers: {} }
 const MCP_CONFIG_SAMPLE_STRING = JSON.stringify(MCP_CONFIG_SAMPLE, null, 2);
 
+/**
+ * Reduce an arbitrary string to the character set that downstream tool-calling
+ * adapters accept for tool names: `[a-zA-Z0-9_-]`. Spaces, slashes, dots and
+ * unicode are folded to underscores. Matches Kilo's `sanitize` in
+ * packages/opencode/src/mcp/index.ts.
+ */
+const sanitizeMcpIdentifier = (s: string): string => s.replace(/[^a-zA-Z0-9_-]/g, '_')
+
 
 // export interface MCPCallToolOfToolName {
 // 	[toolName: string]: (params: any) => Promise<{
@@ -195,11 +203,18 @@ class MCPService extends Disposable implements IMCPService {
 		const allTools: InternalToolInfo[] = []
 		for (const serverName in this.state.mcpServerOfName) {
 			const server = this.state.mcpServerOfName[serverName];
+			const sanitizedServer = sanitizeMcpIdentifier(serverName)
 			server.tools?.forEach(tool => {
+				const sanitizedTool = sanitizeMcpIdentifier(tool.name)
+				// Model-facing identifier with collision-safe `<server>_<tool>` prefix.
+				// Two MCP servers exposing same-named tools used to alias each other —
+				// only the first by iteration won. `originalName` keeps the raw name
+				// for the outbound MCP call.
 				allTools.push({
 					description: tool.description || '',
 					params: this._transformInputSchemaToParams(tool.inputSchema),
-					name: tool.name,
+					name: `${sanitizedServer}_${sanitizedTool}`,
+					originalName: tool.name,
 					mcpServerName: serverName,
 				})
 			})

@@ -9,11 +9,16 @@ import { IDirectoryStrService } from '../directoryStrService.js';
 import { StagingSelectionItem } from '../chatThreadServiceTypes.js';
 import { os } from '../helpers/systemInfo.js';
 import { RawToolParamsObj } from '../sendLLMMessageTypes.js';
-import { approvalTypeOfBuiltinToolName, BuiltinToolCallParams, BuiltinToolName, BuiltinToolResultType, ToolName } from '../toolsServiceTypes.js';
+import { approvalTypeOfBuiltinToolName, BuiltinToolName, ToolName } from '../toolsServiceTypes.js';
 import { ChatMode } from '../vibeideSettingsTypes.js';
+import type { ModelFamily } from './modelFamily.js';
+import { builtinToolDefs } from './tools/index.js';
+import { DIVIDER, FINAL, ORIGINAL, searchReplaceBlockTemplate, tripleTick } from './tools/_constants.js';
 
-// Triple backtick wrapper used throughout the prompts for code blocks
-export const tripleTick = ['```', '```']
+// Re-export shared leaf-constants for external callers that still import them
+// from `prompts.ts`. The canonical definitions live in `tools/_constants.ts`
+// so per-tool modules can pull them in without forming a cycle.
+export { DIVIDER, FINAL, MAX_TERMINAL_BG_COMMAND_TIME, MAX_TERMINAL_INACTIVE_TIME, ORIGINAL, tripleTick } from './tools/_constants.js';
 
 // Maximum limits for directory structure information
 export const MAX_DIRSTR_CHARS_TOTAL_BEGINNING = 20_000
@@ -31,34 +36,10 @@ export const READ_FILE_MAX_LINE_LIMIT = 10_000
 
 // terminal tool info
 export const MAX_TERMINAL_CHARS = 100_000
-export const MAX_TERMINAL_INACTIVE_TIME = 8 // seconds
-export const MAX_TERMINAL_BG_COMMAND_TIME = 5
 
 
 // Maximum character limits for prefix and suffix context
 export const MAX_PREFIX_SUFFIX_CHARS = 20_000
-
-
-export const ORIGINAL = `<<<<<<< ORIGINAL`
-export const DIVIDER = `=======`
-export const FINAL = `>>>>>>> UPDATED`
-
-
-
-const searchReplaceBlockTemplate = `\
-${ORIGINAL}
-// ... original code goes here
-${DIVIDER}
-// ... final code goes here
-${FINAL}
-
-${ORIGINAL}
-// ... original code goes here
-${DIVIDER}
-// ... final code goes here
-${FINAL}`
-
-
 
 
 const createSearchReplaceBlocks_systemMessage = `\
@@ -110,24 +91,6 @@ ${FINAL}
 ${tripleTick[1]}`
 
 
-const replaceTool_description = `\
-A string of SEARCH/REPLACE block(s) which will be applied to the given file.
-Your SEARCH/REPLACE blocks string must be formatted as follows:
-${searchReplaceBlockTemplate}
-
-## Guidelines:
-
-1. You may output multiple search replace blocks if needed.
-
-2. The ORIGINAL code in each SEARCH/REPLACE block must EXACTLY match lines in the original file. Do not add or remove any whitespace or comments from the original code.
-
-3. Each ORIGINAL text must be large enough to uniquely identify the change. However, bias towards writing as little as possible.
-
-4. Each ORIGINAL text must be DISJOINT from all other ORIGINAL text.
-
-5. This field is a STRING (not an array).`
-
-
 // ======================================================== tools ========================================================
 
 
@@ -139,359 +102,25 @@ export type InternalToolInfo = {
 	},
 	// Only if the tool is from an MCP server
 	mcpServerName?: string,
+	// MCP only: bare tool name as exposed by the MCP server (without the
+	// `<server>_` prefix we add for model-facing collision-safety).
+	// Used when forwarding the call back to the MCP protocol.
+	originalName?: string,
 }
 
 
 
-const uriParam = (object: string) => ({
-	uri: { description: `The FULL path to the ${object}.` }
-})
-
-const paginationParam = {
-	page_number: { description: 'Optional. The page number of the result. Default is 1.' }
-} as const
+// SnakeCase / SnakeCaseKeys / per-tool helpers / per-tool descriptions all live
+// inside `./tools/`. Re-exported for any external code that still imports the
+// types from prompts.ts.
+export type { SnakeCase, SnakeCaseKeys } from './snakeCase.js';
 
 
 
-const terminalDescHelper = `Use this for build/test/git/package-manager/dev-server commands.
-DO NOT use this to read files, list directories, search file names, or search content. Those duplicate dedicated tools, blow up stdout on large inputs, and can hang the chat.
-Instead of  →  use:
-- cat/Get-Content/type/head/tail  →  read_file (paginated, returns numbered lines)
-- ls -R / dir /s / tree            →  ls_dir / get_dir_tree (workspace-aware, paginated)
-- find -name / where               →  glob (pattern like **/*.ts)
-- grep/rg/findstr/Select-String    →  grep (ripgrep-backed; supports glob/type/output_mode)
-- sed -i / awk -i                  →  edit_file (SEARCH/REPLACE; integrates with diff view)
-The validator will reject these shell forms with a structured error and suggest the correct tool.
-When piping git or other paged commands, pipe through cat to avoid getting stuck in a pager.`
-
-const cwdHelper = 'Optional. The directory in which to run the command. Defaults to the first workspace folder.'
-
-export type SnakeCase<S extends string> =
-	// exact acronym URI
-	S extends 'URI' ? 'uri'
-	// suffix URI: e.g. 'rootURI' -> snakeCase('root') + '_uri'
-	: S extends `${infer Prefix}URI` ? `${SnakeCase<Prefix>}_uri`
-	// default: for each char, prefix '_' on uppercase letters
-	: S extends `${infer C}${infer Rest}`
-	? `${C extends Lowercase<C> ? C : `_${Lowercase<C>}`}${SnakeCase<Rest>}`
-	: S;
-
-export type SnakeCaseKeys<T extends Record<string, any>> = {
-	[K in keyof T as SnakeCase<Extract<K, string>>]: T[K]
-};
-
-
-
-export const builtinTools: {
-	[T in keyof BuiltinToolCallParams]: {
-		name: string;
-		description: string;
-		// more params can be generated than exist here, but these params must be a subset of them
-		params: Partial<{ [paramName in keyof SnakeCaseKeys<BuiltinToolCallParams[T]>]: { description: string } }>
-	}
-} = {
-	// --- context-gathering (read/search/list) ---
-
-	read_file: {
-		name: 'read_file',
-		description: `ALWAYS use this tool to read file contents. NEVER use run_command with cat/Get-Content/type/head/tail — those stream through stdout and can hang the IDE on large files. Returns the file contents with line numbers (1-based, prefix "<line>\\t<content>"), so the result is directly usable for subsequent edit_file calls. Defaults to the first 2000 lines; raise line_limit only when necessary. Paginated via page_number for very large files. PDF / Jupyter / image files are routed automatically.`,
-		params: {
-			...uriParam('file'),
-			start_line: { description: 'Optional. 1-based. Start reading from this line. Defaults to the beginning of the file.' },
-			end_line: { description: 'Optional. 1-based, inclusive. Stop reading at this line. Defaults to start_line + line_limit (or end of file).' },
-			line_limit: { description: `Optional. Maximum number of lines to return. Default ${2000}, max ${10_000}. Use a tighter value when scanning, a larger one when you need full context.` },
-			with_line_numbers: { description: 'Optional. Default true. When true, each returned line is prefixed with "<line_num>\\t". Set to false only when feeding into systems that do not expect numbers.' },
-			...paginationParam,
-		},
-	},
-
-	ls_dir: {
-		name: 'ls_dir',
-		description: `Lists files and folders in the given URI (one level deep, paginated). NEVER use run_command with ls/dir/Get-ChildItem — those duplicate this functionality and recursive forms blow up stdout. For recursive views use get_dir_tree; for pattern matching use glob.`,
-		params: {
-			uri: { description: `Optional. The FULL path to the ${'folder'}. Leave this as empty or "" to search all folders.` },
-			...paginationParam,
-		},
-	},
-
-	get_dir_tree: {
-		name: 'get_dir_tree',
-		description: `This is a very effective way to learn about the user's codebase. Returns a tree diagram of all the files and folders in the given folder. `,
-		params: {
-			...uriParam('folder')
-		}
-	},
-
-	// pathname_search: {
-	// 	name: 'pathname_search',
-	// 	description: `Returns all pathnames that match a given \`find\`-style query over the entire workspace. ONLY searches file names. ONLY searches the current workspace. You should use this when looking for a file with a specific name or path. ${paginationHelper.desc}`,
-
-	search_pathnames_only: {
-		name: 'search_pathnames_only',
-		description: `Fuzzy search over file PATHNAMES (not contents). Use this when you remember a partial name. For exact glob patterns (e.g. "**/*.ts"), use the glob tool instead. NEVER use run_command with find/where/dir /s — those duplicate this functionality.`,
-		params: {
-			query: { description: `Your query for the search.` },
-			include_pattern: { description: 'Optional. Only fill this in if you need to limit your search because there were too many results.' },
-			...paginationParam,
-		},
-	},
-
-
-
-	search_for_files: {
-		name: 'search_for_files',
-		description: `Returns file names whose content matches a query. For richer content search (with line numbers, glob/type filters, multiline, head_limit), prefer the grep tool. NEVER use run_command with grep/rg/findstr/Select-String — those duplicate this functionality.`,
-		params: {
-			query: { description: `Your query for the search.` },
-			search_in_folder: { description: 'Optional. Leave as blank by default. ONLY fill this in if your previous search with the same query was truncated. Searches descendants of this folder only.' },
-			is_regex: { description: 'Optional. Default is false. Whether the query is a regex.' },
-			...paginationParam,
-		},
-	},
-
-	glob: {
-		name: 'glob',
-		description: `Returns workspace files matching a glob pattern (e.g. "**/*.ts", "src/**/*test*", "packages/*/package.json"). ALWAYS use this for filename patterns. NEVER use run_command with find/where/dir /s — those duplicate this functionality and blow up stdout on large repos.`,
-		params: {
-			pattern: { description: 'Glob pattern. Examples: "**/*.ts", "src/**/components/*.tsx", "**/{Dockerfile,docker-compose.yml}".' },
-			search_in_folder: { description: 'Optional. Restrict the search to descendants of this folder.' },
-			...paginationParam,
-		},
-	},
-
-	grep: {
-		name: 'grep',
-		description: `Ripgrep-backed content search across the workspace. ALWAYS use this for content search. NEVER use run_command with grep/rg/findstr/Select-String — those duplicate this functionality. Outputs are paginated and capped via head_limit. Choose output_mode based on what you need: "content" for matches with surrounding lines, "files_with_matches" for just file paths, "count" for per-file match counts.`,
-		params: {
-			pattern: { description: 'Regex pattern (Rust regex syntax — same as ripgrep).' },
-			glob: { description: 'Optional. Filter files by glob (e.g. "**/*.ts", "src/**").' },
-			file_type: { description: 'Optional. ripgrep file-type filter ("js", "ts", "py", "rust", "go", "java", "md", …).' },
-			search_in_folder: { description: 'Optional. Restrict to a folder.' },
-			output_mode: { description: 'Optional. "content" (default), "files_with_matches", or "count".' },
-			context_before: { description: 'Optional. Lines of context before each match (output_mode=content only). Default 0.' },
-			context_after: { description: 'Optional. Lines of context after each match (output_mode=content only). Default 0.' },
-			case_insensitive: { description: 'Optional. Default false.' },
-			multiline: { description: 'Optional. Default false. When true, "." matches newlines and patterns may span lines.' },
-			head_limit: { description: 'Optional. Cap number of results returned. Default 250.' },
-			...paginationParam,
-		},
-	},
-
-	// add new search_in_file tool
-	search_in_file: {
-		name: 'search_in_file',
-		description: `Returns an array of all the start line numbers where the content appears in the file.`,
-		params: {
-			...uriParam('file'),
-			query: { description: 'The string or regex to search for in the file.' },
-			is_regex: { description: 'Optional. Default is false. Whether the query is a regex.' }
-		}
-	},
-
-	read_lint_errors: {
-		name: 'read_lint_errors',
-		description: `Use this tool to view all the lint errors on a file.`,
-		params: {
-			...uriParam('file'),
-		},
-	},
-
-	open_file: {
-		name: 'open_file',
-		description: `Opens a file in the editor. Use this when the user asks to "open" a file.`,
-		params: {
-			...uriParam('file'),
-		},
-	},
-
-	go_to_definition: {
-		name: 'go_to_definition',
-		description: `Finds the definition of a symbol at a specific position in a file. Returns the location(s) where the symbol is defined.`,
-		params: {
-			...uriParam('file'),
-			line: { description: 'The line number (1-based) where the symbol is located.' },
-			column: { description: 'The column number (1-based) where the symbol is located.' },
-		},
-	},
-
-	find_references: {
-		name: 'find_references',
-		description: `Finds all references to a symbol at a specific position in a file. Returns all locations where the symbol is used.`,
-		params: {
-			...uriParam('file'),
-			line: { description: 'The line number (1-based) where the symbol is located.' },
-			column: { description: 'The column number (1-based) where the symbol is located.' },
-		},
-	},
-
-	search_symbols: {
-		name: 'search_symbols',
-		description: `Searches for symbols (functions, classes, variables) by name. Can search in a specific file or across the workspace.`,
-		params: {
-			query: { description: 'The symbol name or pattern to search for.' },
-			uri: { description: 'Optional. The file URI to search in. If not provided, searches the entire workspace.' },
-		},
-	},
-
-	automated_code_review: {
-		name: 'automated_code_review',
-		description: `Analyzes code in a file for potential issues, bugs, code smells, and suggests improvements. Returns a list of issues with severity and suggestions.`,
-		params: {
-			...uriParam('file'),
-		},
-	},
-
-	generate_tests: {
-		name: 'generate_tests',
-		description: `Generates unit or integration tests for code in a file. Can generate tests for a specific function or the entire file.`,
-		params: {
-			...uriParam('file'),
-			function_name: { description: 'Optional. The name of the function to generate tests for. If not provided, generates tests for the entire file.' },
-			test_framework: { description: 'Optional. The test framework to use (e.g., "jest", "mocha", "pytest"). Defaults to the framework detected from the project.' },
-		},
-	},
-
-	rename_symbol: {
-		name: 'rename_symbol',
-		description: `Renames a symbol (function, class, variable) at a specific position and updates all references to it across the codebase.`,
-		params: {
-			...uriParam('file'),
-			line: { description: 'The line number (1-based) where the symbol is located.' },
-			column: { description: 'The column number (1-based) where the symbol is located.' },
-			new_name: { description: 'The new name for the symbol.' },
-		},
-	},
-
-	extract_function: {
-		name: 'extract_function',
-		description: `Extracts a block of code into a new function. Replaces the selected code with a function call.`,
-		params: {
-			...uriParam('file'),
-			start_line: { description: 'The starting line number (1-based) of the code block to extract.' },
-			end_line: { description: 'The ending line number (1-based) of the code block to extract.' },
-			function_name: { description: 'The name for the new function.' },
-		},
-	},
-
-	// --- editing (create/delete) ---
-
-	create_file_or_folder: {
-		name: 'create_file_or_folder',
-		description: `Create a file or folder at the given path. To create a folder, the path MUST end with a trailing slash.`,
-		params: {
-			...uriParam('file or folder'),
-		},
-	},
-
-	delete_file_or_folder: {
-		name: 'delete_file_or_folder',
-		description: `Delete a file or folder at the given path.`,
-		params: {
-			...uriParam('file or folder'),
-			is_recursive: { description: 'Optional. Return true to delete recursively.' }
-		},
-	},
-
-	edit_file: {
-		name: 'edit_file',
-		description: `Edit the contents of a file. You must provide the file's URI as well as a SINGLE string of SEARCH/REPLACE block(s) that will be used to apply the edit.`,
-		params: {
-			...uriParam('file'),
-			search_replace_blocks: { description: replaceTool_description }
-		},
-	},
-
-	rewrite_file: {
-		name: 'rewrite_file',
-		description: `Edits a file, deleting all the old contents and replacing them with your new contents. Use this tool if you want to edit a file you just created.`,
-		params: {
-			...uriParam('file'),
-			new_content: { description: `The new contents of the file. Must be a string.` }
-		},
-	},
-	run_command: {
-		name: 'run_command',
-		description: `Runs a terminal command and waits for the result. Default behavior: returns after ${MAX_TERMINAL_INACTIVE_TIME}s of inactivity. For long-running builds/tests/CI, pass timeout_ms (up to 600000 = 10 min). For dev servers / watch tasks / anything that never exits, pass run_in_background=true and use read_background_output / kill_background_command. ${terminalDescHelper}`,
-		params: {
-			command: { description: 'The terminal command to run.' },
-			cwd: { description: cwdHelper },
-			timeout_ms: { description: `Optional. Inactivity timeout in milliseconds. Default ${MAX_TERMINAL_INACTIVE_TIME * 1000}, min 1000, max 600000.` },
-			run_in_background: { description: 'Optional. Default false. When true, the command runs detached and returns a background_id immediately. Use this for dev servers, watchers, or anything that does not terminate. Poll output with read_background_output, stop with kill_background_command.' },
-		},
-	},
-	run_nl_command: {
-		name: 'run_nl_command',
-		description: `Converts a natural language request into a shell command, shows a preview, and executes it after confirmation. Use this when the user asks for terminal operations in plain English (e.g., "list branches", "run tests", "check git status"). The command will be parsed, previewed, and requires approval unless it's low-risk and YOLO mode is enabled. ${terminalDescHelper}`,
-		params: {
-			nl_input: { description: 'Natural language description of the command to run (e.g., "list git branches", "run npm tests", "check current directory").' },
-			cwd: { description: cwdHelper },
-		},
-	},
-
-	run_persistent_command: {
-		name: 'run_persistent_command',
-		description: `Runs a terminal command in the persistent terminal that you created with open_persistent_terminal (results after the wall-clock cap are returned and the command keeps running). Default cap ${MAX_TERMINAL_BG_COMMAND_TIME}s — override via timeout_ms (max 600000). ${terminalDescHelper}`,
-		params: {
-			command: { description: 'The terminal command to run.' },
-			persistent_terminal_id: { description: 'The ID of the terminal created using open_persistent_terminal.' },
-			timeout_ms: { description: `Optional. Wall-clock cap before returning partial output, in milliseconds. Default ${MAX_TERMINAL_BG_COMMAND_TIME * 1000}, min 1000, max 600000.` },
-		},
-	},
-
-
-
-	open_persistent_terminal: {
-		name: 'open_persistent_terminal',
-		description: `Use this tool when you want to run a terminal command indefinitely, like a dev server (eg \`npm run dev\`), a background listener, etc. Opens a new terminal in the user's environment which will not awaited for or killed.`,
-		params: {
-			cwd: { description: cwdHelper },
-		}
-	},
-
-
-	kill_persistent_terminal: {
-		name: 'kill_persistent_terminal',
-		description: `Interrupts and closes a persistent terminal that you opened with open_persistent_terminal.`,
-		params: { persistent_terminal_id: { description: `The ID of the persistent terminal.` } }
-	},
-
-	kill_background_command: {
-		name: 'kill_background_command',
-		description: `Stops a background command started via run_command with run_in_background=true. Idempotent — calling on an already-exited command returns killed=false but does not error.`,
-		params: { background_id: { description: 'The background_id returned by run_command when run_in_background=true.' } }
-	},
-
-	read_background_output: {
-		name: 'read_background_output',
-		description: `Returns the current stdout buffer of a background command started via run_command with run_in_background=true. Result is truncated head+tail if huge. Reports whether the command is still running.`,
-		params: { background_id: { description: 'The background_id returned by run_command when run_in_background=true.' } }
-	},
-
-	// --- web search & browsing ---
-
-	web_search: {
-		name: 'web_search',
-		description: `Searches the web for information. Returns top search results with titles, snippets, and URLs. Use this when the user asks you to search the web, look something up online, or when you need current information beyond your training data.`,
-		params: {
-			query: { description: 'The search query string.' },
-			k: { description: 'Optional. Number of results to return (default is 5). Maximum is 10.' },
-			refresh: { description: 'Optional. If true, bypasses cache and fetches fresh results. Default is false.' }
-		}
-	},
-
-	browse_url: {
-		name: 'browse_url',
-		description: `Fetches and extracts the main content from a web page. Returns readable text, title, and metadata. Use this after web_search to read the actual content of relevant pages.`,
-		params: {
-			url: { description: 'The full URL (including http:// or https://) to fetch and extract content from.' },
-			refresh: { description: 'Optional. If true, bypasses cache and fetches fresh content. Default is false.' }
-		}
-	},
-
-	// go_to_definition
-	// go_to_usages
-
-} satisfies { [T in keyof BuiltinToolResultType]: InternalToolInfo }
+// The built-in tool definitions live one-per-file under ./tools/ and are
+// aggregated by ./tools/index.ts. The local builtinTools symbol is just a
+// re-pointer so the rest of the codebase continues to import it from here.
+export const builtinTools = builtinToolDefs;
 
 
 
@@ -528,10 +157,10 @@ export const availableTools = (chatMode: ChatMode | null, mcpTools: InternalTool
 }
 
 const toolCallDefinitionsXMLString = (tools: InternalToolInfo[]) => {
-	return `${tools.map((t, i) => {
+	return `${tools.map((t) => {
 		const params = Object.keys(t.params).map(paramName => `<${paramName}>${t.params[paramName].description}</${paramName}>`).join('\n')
 		return `\
-    ${i + 1}. ${t.name}
+    ${t.name}
     Description: ${t.description}
     Format:
     <${t.name}>${!params ? '' : `\n${params}`}
@@ -561,13 +190,16 @@ const systemToolsXMLPrompt = (chatMode: ChatMode, mcpTools: InternalToolInfo[] |
 	const toolCallXMLGuidelines = (`\
     ⚠️⚠️⚠️ CRITICAL: When the user asks you to DO something (like "add an endpoint", "edit a file", "create a file"), you MUST call a tool. DO NOT just describe what to do.
 
+    TOOL NAMING:
+    Tool names are lowercase snake_case identifiers. Call a tool by writing its exact literal name as the XML open tag — for example <read_file> or <edit_file>. The names listed in the Available tools section above are the only valid identifiers.
+
     TOOL CALLING FORMAT (use this EXACT format):
 
-    1. When you need to take action, output ONLY a tool call in XML format
-    2. Format: <tool_name><param1>value1</param1><param2>value2</param2></tool_name>
-    3. NO explanatory text before the tool call - just output the XML directly
-    4. STOP immediately after the tool call - do not write anything after it
-    5. Wait for the tool result before continuing
+    - When you need to take action, output ONLY a tool call in XML format.
+    - Format: <tool_name><param1>value1</param1><param2>value2</param2></tool_name>
+    - NO explanatory text before the tool call — just output the XML directly.
+    - STOP immediately after the tool call — do not write anything after it.
+    - Wait for the tool result before continuing.
 
     CONCRETE EXAMPLES:
 
@@ -612,7 +244,7 @@ const systemToolsXMLPrompt = (chatMode: ChatMode, mcpTools: InternalToolInfo[] |
 // ======================================================== chat (normal, gather, agent) ========================================================
 
 
-export const chat_systemMessage = ({ workspaceFolders, openedURIs, activeURI, persistentTerminalIDs, directoryStr, chatMode: mode, mcpTools, includeXMLToolDefinitions, relevantMemories, strictJsonToolArguments }: { workspaceFolders: string[], directoryStr: string, openedURIs: string[], activeURI: string | undefined, persistentTerminalIDs: string[], chatMode: ChatMode, mcpTools: InternalToolInfo[] | undefined, includeXMLToolDefinitions: boolean, relevantMemories?: string, strictJsonToolArguments?: boolean }) => {
+export const chat_systemMessage = ({ workspaceFolders, openedURIs, activeURI, persistentTerminalIDs, directoryStr, chatMode: mode, mcpTools, includeXMLToolDefinitions, relevantMemories, strictJsonToolArguments, modelFamily: _modelFamily }: { workspaceFolders: string[], directoryStr: string, openedURIs: string[], activeURI: string | undefined, persistentTerminalIDs: string[], chatMode: ChatMode, mcpTools: InternalToolInfo[] | undefined, includeXMLToolDefinitions: boolean, relevantMemories?: string, strictJsonToolArguments?: boolean, modelFamily?: ModelFamily }) => {
 	const header = (`You are an expert coding ${mode === 'agent' ? 'agent' : 'assistant'} whose job is \
 ${mode === 'agent' ? `to help the user develop, run, and make changes to their codebase.`
 			: mode === 'gather' ? `to search, understand, and reference files in the user's codebase.`
@@ -726,7 +358,7 @@ ${toolDefinitions}
 
 // Minimal chat system message for local models (drastically reduced)
 // Used for local models to minimize token usage and latency
-export const chat_systemMessage_local = ({ workspaceFolders, openedURIs, activeURI, chatMode: mode, includeXMLToolDefinitions, relevantMemories, mcpTools, strictJsonToolArguments }: { workspaceFolders: string[], directoryStr: string, openedURIs: string[], activeURI: string | undefined, persistentTerminalIDs: string[], chatMode: ChatMode, mcpTools: InternalToolInfo[] | undefined, includeXMLToolDefinitions: boolean, relevantMemories?: string, strictJsonToolArguments?: boolean }) => {
+export const chat_systemMessage_local = ({ workspaceFolders, openedURIs, activeURI, chatMode: mode, includeXMLToolDefinitions, relevantMemories, mcpTools, strictJsonToolArguments, modelFamily: _modelFamily }: { workspaceFolders: string[], directoryStr: string, openedURIs: string[], activeURI: string | undefined, persistentTerminalIDs: string[], chatMode: ChatMode, mcpTools: InternalToolInfo[] | undefined, includeXMLToolDefinitions: boolean, relevantMemories?: string, strictJsonToolArguments?: boolean, modelFamily?: ModelFamily }) => {
 	const header = mode === 'agent'
 		? 'Coding agent. Use tools for actions.'
 		: mode === 'gather'

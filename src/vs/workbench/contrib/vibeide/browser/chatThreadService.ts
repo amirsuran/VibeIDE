@@ -11,7 +11,7 @@ import { IStorageService, StorageScope, StorageTarget } from '../../../../platfo
 import { URI } from '../../../../base/common/uri.js';
 import { Emitter, Event } from '../../../../base/common/event.js';
 import { ILLMMessageService } from '../common/sendLLMMessageService.js';
-import { chat_userMessageContent, isABuiltinToolName } from '../common/prompt/prompts.js';
+import { builtinToolNames, chat_userMessageContent, isABuiltinToolName } from '../common/prompt/prompts.js';
 import { AnthropicReasoning, getErrorMessage, RawToolCallObj, RawToolParamsObj } from '../common/sendLLMMessageTypes.js';
 import { generateUuid } from '../../../../base/common/uuid.js';
 import { ChatMode, FeatureName, ModelSelection, ModelSelectionOptions, ProviderName } from '../common/vibeideSettingsTypes.js';
@@ -2222,7 +2222,14 @@ class ChatThreadService extends Disposable implements IChatThreadService {
 		}
 		if (hasTool) {
 			const tn = String(toolName).toLowerCase();
-			const okTool = toolAllow!.some(t => tn === (t ?? '').toLowerCase().trim());
+			// MCP tool names are exposed to the model as `<server>_<tool>`, but
+			// pre-existing plan allowlists store the bare tool name. Accept either.
+			const originalName = this._mcpService.getMCPTools()?.find(t => t.name === toolName)?.originalName?.toLowerCase();
+			const okTool = toolAllow!.some(t => {
+				const candidate = (t ?? '').toLowerCase().trim();
+				if (!candidate) return false;
+				return candidate === tn || (originalName !== undefined && candidate === originalName);
+			});
 			if (!okTool) {
 				return false;
 			}
@@ -3227,13 +3234,24 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 			else {
 				const mcpTools = this._mcpService.getMCPTools()
 				const mcpTool = mcpTools?.find(t => t.name === toolName)
-				if (!mcpTool) { throw new Error(`MCP tool ${toolName} not found`) }
+				if (!mcpTool) {
+					// Give the model an actionable recovery path: enumerate what's
+					// actually available so it can re-issue with a real name. The
+					// phrasing intentionally avoids "MCP tool 0" because the model
+					// will echo that label back as if it were a real entity.
+					const builtinList = builtinToolNames.join(', ')
+					const mcpList = (mcpTools ?? []).map(t => t.name).join(', ') || '(none)'
+					throw new Error(`Tool "${toolName}" is not a known tool. Tool names are lowercase identifiers (e.g. read_file), never numbers or indices. Available built-in tools: ${builtinList}. Available MCP tools: ${mcpList}.`)
+				}
 
 				resolveInterruptor(() => { })
 
 				toolResult = (await this._mcpService.callMCPTool({
 					serverName: mcpTool.mcpServerName ?? 'unknown_mcp_server',
-					toolName: toolName,
+					// toolName here is the model-facing `<server>_<tool>` prefixed name;
+					// the MCP server expects its raw, unprefixed name. Prefer originalName,
+					// fall back to the prefixed form for legacy tools without it.
+					toolName: mcpTool.originalName ?? toolName,
 					params: toolParams
 				})).result
 			}

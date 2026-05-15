@@ -11,49 +11,21 @@ import OpenAI, { ClientOptions, AzureOpenAI } from 'openai';
 import { MistralCore } from '@mistralai/mistralai/core.js';
 import { fimComplete } from '@mistralai/mistralai/funcs/fimComplete.js';
 import { Tool as GeminiTool, FunctionDeclaration, GoogleGenAI, ThinkingConfig, Schema, Type } from '@google/genai';
-import { GoogleAuth } from 'google-auth-library'
 /* eslint-enable */
 
-import { GeminiLLMChatMessage, LLMChatMessage, LLMFIMMessage, LLMRuntimeOptions, ModelListParams, OllamaModelResponse, OnError, OnFinalMessage, OnText, RawToolCallObj, RawToolParamsObj } from '../../common/sendLLMMessageTypes.js';
-import { ChatMode, displayInfoOfProviderName, FeatureName, ModelSelectionOptions, OverridesOfModel, ProviderName, SettingsOfProvider } from '../../common/vibeideSettingsTypes.js';
+import { GeminiLLMChatMessage, LLMChatMessage, LLMRuntimeOptions, OllamaModelResponse, RawToolCallObj, RawToolParamsObj } from '../../common/sendLLMMessageTypes.js';
+import { ChatMode, displayInfoOfProviderName, FeatureName, ProviderName, SettingsOfProvider } from '../../common/vibeideSettingsTypes.js';
 import { getSendableReasoningInfo, getModelCapabilities, getProviderCapabilities, defaultProviderSettings, getReservedOutputTokenSpace } from '../../common/modelCapabilities.js';
 import { extractReasoningWrapper, extractXMLToolsWrapper } from './extractGrammar.js';
 import { availableTools, InternalToolInfo } from '../../common/prompt/prompts.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';
 import { ensureSystemCADispatcher } from './systemCAFetch.js';
-
-const getGoogleApiKey = async () => {
-	// module-level singleton
-	const auth = new GoogleAuth({ scopes: `https://www.googleapis.com/auth/cloud-platform` });
-	const key = await auth.getAccessToken()
-	if (!key) throw new Error(`Google API failed to generate a key.`)
-	return key
-}
+import { sendViaAISdk } from './aiSdkAdapter.js';
+import { getGoogleApiKey, assertHttpHeaderSafe } from './llmHelpers.js';
+import type { SendChatParams_Internal, SendFIMParams_Internal, ListParams_Internal } from './sendLLMMessage.internalTypes.js';
 
 
 
-
-type InternalCommonMessageParams = {
-	onText: OnText;
-	onFinalMessage: OnFinalMessage;
-	onError: OnError;
-	providerName: ProviderName;
-	settingsOfProvider: SettingsOfProvider;
-	modelSelectionOptions: ModelSelectionOptions | undefined;
-	overridesOfModel: OverridesOfModel | undefined;
-	modelName: string;
-	_setAborter: (aborter: () => void) => void;
-	runtimeOptions?: LLMRuntimeOptions;
-}
-
-type SendChatParams_Internal = InternalCommonMessageParams & {
-	messages: LLMChatMessage[];
-	separateSystemMessage: string | undefined;
-	chatMode: ChatMode | null;
-	mcpTools: InternalToolInfo[] | undefined;
-}
-type SendFIMParams_Internal = InternalCommonMessageParams & { messages: LLMFIMMessage; separateSystemMessage: string | undefined; featureName?: FeatureName; }
-export type ListParams_Internal<ModelResponse> = ModelListParams<ModelResponse>
 
 
 const invalidApiKeyMessage = (providerName: ProviderName) => `Invalid ${displayInfoOfProviderName(providerName).title} API key.`
@@ -83,28 +55,6 @@ const hashApiKey = (apiKey: string | undefined): string => {
 	return apiKey.substring(0, 8)
 }
 
-/**
- * Validate that a string is safe to be used as an HTTP header value (Latin-1, codepoints <= 0xFF).
- * undici/fetch rejects bytes > 0xFF with a cryptic `Cannot convert argument to a ByteString` TypeError;
- * this helper throws a human-readable Error pinpointing the offending character instead.
- * Common cause: user copied the masked UI value (bullets) instead of the real API key.
- */
-const assertHttpHeaderSafe = (fieldLabel: string, value: string | undefined | null): void => {
-	if (!value) return
-	for (let i = 0; i < value.length; i++) {
-		const code = value.charCodeAt(i)
-		if (code > 0xFF) {
-			const ch = value[i]
-			const hex = code.toString(16).toUpperCase().padStart(4, '0')
-			throw new Error(
-				`${fieldLabel} contains a non-Latin-1 character "${ch}" (U+${hex}) at position ${i}. ` +
-				`HTTP headers only accept byte values 0-255. ` +
-				`This usually means a masked UI value (e.g. "••••") was pasted instead of the real key. ` +
-				`Re-enter the value without the mask.`
-			)
-		}
-	}
-}
 
 /**
  * Build cache key for OpenAI-compatible client.
@@ -884,8 +834,13 @@ const _sendOpenAICompatibleChat = async ({ messages, onText, onFinalMessage, onE
 				}
 
 				// tool call
+				// Some aggregator upstreams (openCode/zen/go with minimax-m2.7, certain
+				// openAICompatible backends) omit `index` when streaming a single tool_call
+				// in one chunk. OpenAI spec requires it; we tolerate its absence by
+				// defaulting to slot 0. Tools with index > 0 are intentionally dropped —
+				// the accumulator is single-slot and multi-tool support is a separate change.
 				for (const tool of chunk.choices[0]?.delta?.tool_calls ?? []) {
-					const index = tool.index
+					const index = tool.index ?? 0
 					if (index !== 0) continue
 
 					toolName += tool.function?.name ?? ''
@@ -1715,7 +1670,7 @@ export const sendLLMMessageToProviderImplementation = {
 		list: null,
 	},
 	xAI: {
-		sendChat: (params) => _sendOpenAICompatibleChat(params),
+		sendChat: (params) => sendViaAISdk(params),
 		sendFIM: null, // xAI uses OpenAI-compatible API which doesn't support suffix parameter
 		list: null,
 	},
@@ -1725,7 +1680,7 @@ export const sendLLMMessageToProviderImplementation = {
 		list: null,
 	},
 	mistral: {
-		sendChat: (params) => _sendOpenAICompatibleChat(params),
+		sendChat: (params) => sendViaAISdk(params),
 		sendFIM: (params) => sendMistralFIM(params),
 		list: null,
 	},
@@ -1735,12 +1690,16 @@ export const sendLLMMessageToProviderImplementation = {
 		list: ollamaList,
 	},
 	openAICompatible: {
-		sendChat: (params) => _sendOpenAICompatibleChat(params), // using openai's SDK is not ideal (your implementation might not do tools, reasoning, FIM etc correctly), talk to us for a custom integration
+		// Stage 1 migration: aggregator providers go through Vercel AI SDK's
+		// @ai-sdk/openai-compatible adapter (normalizes provider-specific quirks
+		// in tool_call/reasoning streaming that our manual parser missed). FIM
+		// path is untouched.
+		sendChat: (params) => sendViaAISdk(params),
 		sendFIM: (params) => _sendOpenAICompatibleFIM(params),
 		list: null,
 	},
 	openRouter: {
-		sendChat: (params) => _sendOpenAICompatibleChat(params),
+		sendChat: (params) => sendViaAISdk(params),
 		sendFIM: (params) => _sendOpenAICompatibleFIM(params),
 		list: null,
 	},
@@ -1750,12 +1709,12 @@ export const sendLLMMessageToProviderImplementation = {
 		list: (params) => _openaiCompatibleList(params),
 	},
 	deepseek: {
-		sendChat: (params) => _sendOpenAICompatibleChat(params),
+		sendChat: (params) => sendViaAISdk(params),
 		sendFIM: null, // DeepSeek uses OpenAI-compatible API which doesn't support suffix parameter
 		list: null,
 	},
 	groq: {
-		sendChat: (params) => _sendOpenAICompatibleChat(params),
+		sendChat: (params) => sendViaAISdk(params),
 		sendFIM: null,
 		list: null,
 	},
@@ -1766,42 +1725,42 @@ export const sendLLMMessageToProviderImplementation = {
 		list: (params) => _openaiCompatibleList(params),
 	},
 	liteLLM: {
-		sendChat: (params) => _sendOpenAICompatibleChat(params),
+		sendChat: (params) => sendViaAISdk(params),
 		sendFIM: (params) => _sendOpenAICompatibleFIM(params),
 		list: null,
 	},
 	lmRoute: {
-		sendChat: (params) => _sendOpenAICompatibleChat(params),
+		sendChat: (params) => sendViaAISdk(params),
 		sendFIM: (params) => _sendOpenAICompatibleFIM(params),
 		list: null,
 	},
 	googleVertex: {
-		sendChat: (params) => _sendOpenAICompatibleChat(params),
+		sendChat: (params) => sendViaAISdk(params),
 		sendFIM: null,
 		list: null,
 	},
 	microsoftAzure: {
-		sendChat: (params) => _sendOpenAICompatibleChat(params),
+		sendChat: (params) => sendViaAISdk(params),
 		sendFIM: null,
 		list: null,
 	},
 	awsBedrock: {
-		sendChat: (params) => _sendOpenAICompatibleChat(params),
+		sendChat: (params) => sendViaAISdk(params),
 		sendFIM: null,
 		list: null,
 	},
 	pollinations: {
-		sendChat: (params) => _sendOpenAICompatibleChat(params),
+		sendChat: (params) => sendViaAISdk(params),
 		sendFIM: null,
 		list: null,
 	},
 	openCodeZen: {
-		sendChat: (params) => _sendOpenAICompatibleChat(params),
+		sendChat: (params) => sendViaAISdk(params),
 		sendFIM: null,
 		list: null,
 	},
 	openCode: {
-		sendChat: (params) => _sendOpenAICompatibleChat(params),
+		sendChat: (params) => sendViaAISdk(params),
 		sendFIM: null,
 		list: null,
 	},

@@ -350,6 +350,17 @@ const findIndexOfAny = (fullText: string, matches: string[]) => {
 			return [idx, str] as const
 		}
 	}
+	// Case-insensitive fallback. Models occasionally capitalize a tag
+	// (<Read_File>, <BASH>); accept those too and report the literal substring
+	// that was matched so downstream slicing remains correct.
+	const lowerText = fullText.toLowerCase()
+	for (const str of matches) {
+		const idx = lowerText.indexOf(str.toLowerCase())
+		if (idx !== -1) {
+			const literalSlice = fullText.substring(idx, idx + str.length)
+			return [idx, literalSlice] as const
+		}
+	}
 	return null
 }
 
@@ -365,6 +376,15 @@ const resolveCanonicalToolName = (rawName: string, toolOfToolName: ToolOfToolNam
 	if (toolOfToolName[rawName]) return rawName
 	const aliasTarget = TOOL_NAME_ALIASES[rawName]
 	if (aliasTarget && toolOfToolName[aliasTarget]) return aliasTarget
+	// Case-insensitive fallback. Canonical names are lowercase snake_case, but
+	// models sometimes emit <Read_File> or <BASH>. Compare against a lowered
+	// version of the registered names.
+	const lowered = rawName.toLowerCase()
+	if (lowered !== rawName) {
+		if (toolOfToolName[lowered]) return lowered
+		const loweredAliasTarget = TOOL_NAME_ALIASES[lowered]
+		if (loweredAliasTarget && toolOfToolName[loweredAliasTarget]) return loweredAliasTarget
+	}
 	return null
 }
 
