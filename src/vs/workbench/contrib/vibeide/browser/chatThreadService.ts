@@ -11,7 +11,7 @@ import { IStorageService, StorageScope, StorageTarget } from '../../../../platfo
 import { URI } from '../../../../base/common/uri.js';
 import { Emitter, Event } from '../../../../base/common/event.js';
 import { ILLMMessageService } from '../common/sendLLMMessageService.js';
-import { builtinToolNames, chat_userMessageContent, isABuiltinToolName } from '../common/prompt/prompts.js';
+import { chat_userMessageContent, isABuiltinToolName } from '../common/prompt/prompts.js';
 import { AnthropicReasoning, getErrorMessage, RawToolCallObj, RawToolParamsObj } from '../common/sendLLMMessageTypes.js';
 import { generateUuid } from '../../../../base/common/uuid.js';
 import { ChatMode, FeatureName, ModelSelection, ModelSelectionOptions, ProviderName } from '../common/vibeideSettingsTypes.js';
@@ -2997,36 +2997,50 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 
 	private _runToolCall = async (
 		threadId: string,
-		toolName: ToolName,
+		requestedToolName: ToolName,
 		toolId: string,
 		mcpServerName: string | undefined,
 		opts: { preapproved: true, unvalidatedToolParams: RawToolParamsObj, validatedParams: ToolCallParams<ToolName> } | { preapproved: false, unvalidatedToolParams: RawToolParamsObj },
 	): Promise<{ awaitingUserApproval?: boolean, interrupted?: boolean }> => {
 
-		// Repair short-circuit: aiSdkAdapter's experimental_repairToolCall reroutes
-		// unknown tool names (numeric "2", invented identifiers) to the reserved
-		// `invalid` pseudo-tool with the original name+error in its params. Treat
-		// the call as a resolved tool_error so the model reads it and retries on
-		// the next turn — never reaches dispatch, never throws NoSuchToolError.
-		// Matches the Kilo Code pattern (packages/opencode/src/tool/invalid.ts).
-		if (toolName === 'invalid') {
+		// Repair short-circuits applied before main dispatch:
+		//
+		// 1. `invalid` pseudo-tool — aiSdkAdapter's experimental_repairToolCall
+		//    reroutes unknown tool names (numeric "2", invented identifiers) to
+		//    this reserved name with the original tool + error packed in input.
+		//    Emit a brief tool_error matching Kilo Code's invalid tool output
+		//    (packages/opencode/src/tool/invalid.ts). No tool-name list: the
+		//    model already has its inventory from the system prompt; re-listing
+		//    it re-triggers the same index-vs-name quirk.
+		//
+		// 2. Case-mismatch fallback — legacy LLM channels (Anthropic native,
+		//    Gemini native, XML fallback) don't run through the AI SDK repair
+		//    hook. Apply the same lowercase normalisation here so Read_File /
+		//    BASH / READ resolve to read_file / bash / read instead of falling
+		//    through to "unknown tool". Bound to a fresh `const` so downstream
+		//    narrowing via `isABuiltinToolName(toolName)` is preserved
+		//    (TypeScript drops type-guard narrowing when the storage is `let`).
+		if (requestedToolName === 'invalid') {
 			const rawParams = opts.unvalidatedToolParams as { tool?: string; error?: string };
-			const attempted = rawParams?.tool || '(unknown)';
 			const reason = rawParams?.error || 'Unknown tool name';
-			const message = `The model attempted to call tool "${attempted}" but that is not a registered tool name. ${reason} Tool names are lowercase identifiers (e.g. read_file). Use one of: ${builtinToolNames.join(', ')}.`;
+			const message = `The arguments provided to the tool are invalid: ${reason}`;
 			this._addMessageToThread(threadId, {
 				role: 'tool',
 				type: 'tool_error',
 				params: {} as ToolCallParams<ToolName>,
 				rawParams: opts.unvalidatedToolParams,
 				result: message,
-				name: toolName,
+				name: requestedToolName,
 				content: message,
 				id: toolId,
 				mcpServerName,
 			});
 			return {};
 		}
+		const loweredRequested = (requestedToolName as string).toLowerCase();
+		const toolName: ToolName = (loweredRequested !== requestedToolName && isABuiltinToolName(loweredRequested))
+			? loweredRequested as ToolName
+			: requestedToolName;
 
 		// compute these below
 		let toolParams: ToolCallParams<ToolName>
@@ -3260,13 +3274,26 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 				const mcpTools = this._mcpService.getMCPTools()
 				const mcpTool = mcpTools?.find(t => t.name === toolName)
 				if (!mcpTool) {
-					// Give the model an actionable recovery path: enumerate what's
-					// actually available so it can re-issue with a real name. The
-					// phrasing intentionally avoids "MCP tool 0" because the model
-					// will echo that label back as if it were a real entity.
-					const builtinList = builtinToolNames.join(', ')
-					const mcpList = (mcpTools ?? []).map(t => t.name).join(', ') || '(none)'
-					throw new Error(`Tool "${toolName}" is not a known tool. Tool names are lowercase identifiers (e.g. read_file), never numbers or indices. Available built-in tools: ${builtinList}. Available MCP tools: ${mcpList}.`)
+					// Unknown tool name on legacy channels — emit a soft tool_error
+					// matching the AI SDK `invalid` short-circuit format, no throw.
+					// Listing every tool name back to the model re-triggered the
+					// same name-vs-index quirk and was removed. Mirrors Kilo Code's
+					// invalid tool output for consistency across LLM channels.
+					resolveInterruptor(() => { });
+					const message = `The arguments provided to the tool are invalid: Unknown tool name "${toolName}".`;
+					this._agentActivityLog.logError(`${toolActivityLabel}: ${message}`);
+					this._updateLatestTool(threadId, {
+						role: 'tool',
+						type: 'tool_error',
+						params: toolParams,
+						result: message,
+						name: toolName,
+						content: message,
+						id: toolId,
+						rawParams: opts.unvalidatedToolParams,
+						mcpServerName,
+					});
+					return {};
 				}
 
 				resolveInterruptor(() => { })

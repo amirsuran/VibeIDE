@@ -291,17 +291,19 @@ const convertMessagesToModelMessages = (messages: LLMChatMessage[]): ModelMessag
 // Reserved tool name for routing repair-misses. Models occasionally emit
 // numeric or otherwise-invalid tool names (e.g. "2", "5", "20") that lookalike
 // an index into a numbered list rather than an identifier. By adding a real
-// `invalid` tool to the AI SDK ToolSet (but hiding it from `activeTools`) we
-// give the SDK a valid target the repair hook can rewrite to, instead of
-// throwing NoSuchToolError. The chatThreadService dispatcher recognises this
-// name and returns a structured "tool not found" message to the model.
-// Mirrors packages/opencode/src/tool/invalid.ts in Kilo Code.
+// `invalid` tool to the AI SDK ToolSet (hidden from the model via `activeTools`)
+// we give the SDK a valid target the repair hook can rewrite to, instead of
+// throwing NoSuchToolError. The tool's `execute` returns a short error string,
+// matching Kilo Code's pattern (packages/opencode/src/tool/invalid.ts), so the
+// model reads a normal tool_result on the next turn and re-issues correctly.
+// chatThreadService keeps a parallel short-circuit for non-AI-SDK channels.
 export const INVALID_TOOL_NAME = 'invalid' as const;
 
-// InternalToolInfo map -> AI SDK ToolSet. No `execute` is provided: we want the
-// model's tool_call surfaced via the stream, not auto-executed by the SDK.
-// When `includeInvalidTool` is true an `invalid` pseudo-tool is appended; it's
-// hidden from the model via `activeTools` filtering at the streamText call site.
+// InternalToolInfo map -> AI SDK ToolSet. Real tools have no `execute`: the
+// model's tool_call is surfaced via the stream and dispatched manually by
+// chatThreadService. The `invalid` pseudo-tool is the one exception — it
+// carries an `execute` so the SDK can finalise the turn cleanly when the
+// repair hook reroutes to it.
 const convertToolsToAiSdkToolSet = (
 	allowed: { [k: string]: InternalToolInfo } | null | undefined,
 	includeInvalidTool: boolean
@@ -333,6 +335,11 @@ const convertToolsToAiSdkToolSet = (
 					error: { type: 'string', description: 'Why the call was considered invalid.' },
 				},
 			} as JSONSchema7),
+			execute: async (args: unknown) => {
+				const a = (args ?? {}) as { tool?: string; error?: string };
+				const reason = (typeof a.error === 'string' && a.error) ? a.error : 'Unknown tool call';
+				return `The arguments provided to the tool are invalid: ${reason}`;
+			},
 		});
 	}
 	return Object.keys(out).length === 0 ? undefined : out;
