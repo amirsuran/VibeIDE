@@ -11,7 +11,7 @@ import { IStorageService, StorageScope, StorageTarget } from '../../../../platfo
 import { URI } from '../../../../base/common/uri.js';
 import { Emitter, Event } from '../../../../base/common/event.js';
 import { ILLMMessageService } from '../common/sendLLMMessageService.js';
-import { chat_userMessageContent, isABuiltinToolName } from '../common/prompt/prompts.js';
+import { builtinToolNames, chat_userMessageContent, isABuiltinToolName } from '../common/prompt/prompts.js';
 import { AnthropicReasoning, getErrorMessage, RawToolCallObj, RawToolParamsObj } from '../common/sendLLMMessageTypes.js';
 import { generateUuid } from '../../../../base/common/uuid.js';
 import { ChatMode, FeatureName, ModelSelection, ModelSelectionOptions, ProviderName } from '../common/vibeideSettingsTypes.js';
@@ -90,6 +90,7 @@ const INITIAL_RETRY_DELAY = 1000 // Start with 1s for faster recovery
 const MAX_RETRY_DELAY = 5000 // Cap at 5s
 const DEFAULT_MAX_AGENT_LOOP_ITERATIONS = 30 // Default cap; overridable via `vibeide.agent.maxLoopIterations`. 0 in the setting disables the cap.
 const MAX_AGENT_LOOP_ITERATIONS_UPPER_BOUND = 200 // Hard ceiling for user-supplied values to avoid runaway loops via accidental large input.
+const MAX_CONSECUTIVE_TOOL_ERRORS = 5 // Abort agent loop after this many back-to-back tool_error / invalid_params results. Models with baked-in numeric-tool-name quirks (minimax/qwen) otherwise burn tokens on infinite retries.
 const MAX_FILES_READ_PER_QUERY = 10 // Maximum files to read in a single query to prevent excessive reads
 
 // Stall detection: notify user if LLM stops producing tokens unexpectedly.
@@ -3023,7 +3024,18 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 		if (requestedToolName === 'invalid') {
 			const rawParams = opts.unvalidatedToolParams as { tool?: string; error?: string };
 			const reason = rawParams?.error || 'Unknown tool name';
-			const message = `The arguments provided to the tool are invalid: ${reason}`;
+			// AI SDK's NoSuchToolError sometimes includes the available-tools
+			// inventory in `error.message`, sometimes not (varies by version
+			// and upstream). Append our own inventory only when the SDK didn't
+			// already mention "available" — gives minimax/qwen models the real
+			// tool names to recover from their numeric-naming training quirk.
+			const reasonLower = reason.toLowerCase();
+			const sdkAlreadyListsTools = reasonLower.includes('available tool');
+			const mcpTools = this._mcpService.getMCPTools() ?? [];
+			const inventoryNote = sdkAlreadyListsTools
+				? ''
+				: ` Available built-in tools: ${builtinToolNames.join(', ')}. Available MCP tools: ${mcpTools.map(t => t.name).join(', ') || '(none)'}.`;
+			const message = `The arguments provided to the tool are invalid: ${reason}${inventoryNote}`;
 			this._addMessageToThread(threadId, {
 				role: 'tool',
 				type: 'tool_error',
@@ -3063,7 +3075,13 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 			}
 			catch (error) {
 				const errorMessage = getErrorMessage(error)
-				this._addMessageToThread(threadId, { role: 'tool', type: 'invalid_params', rawParams: opts.unvalidatedToolParams, result: null, name: toolName, content: errorMessage, id: toolId, mcpServerName })
+				// Wrap raw validator output with an explicit retry hint. Otherwise
+				// the model sees a bare line like "Provided uri must be a string,
+				// but it's a(n) undefined" and doesn't realize it should re-issue
+				// the call with corrected types — it just emits another invalid
+				// variant, sometimes with a different (also bad) tool name.
+				const content = `The tool "${toolName}" was called with invalid arguments: ${errorMessage} Re-issue the call with correct parameter types — every field should match the type described in the tool's schema in the system prompt.`
+				this._addMessageToThread(threadId, { role: 'tool', type: 'invalid_params', rawParams: opts.unvalidatedToolParams, result: null, name: toolName, content, id: toolId, mcpServerName })
 				return {}
 			}
 			// once validated, add checkpoint for edit
@@ -3274,13 +3292,18 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 				const mcpTools = this._mcpService.getMCPTools()
 				const mcpTool = mcpTools?.find(t => t.name === toolName)
 				if (!mcpTool) {
-					// Unknown tool name on legacy channels — emit a soft tool_error
-					// matching the AI SDK `invalid` short-circuit format, no throw.
-					// Listing every tool name back to the model re-triggered the
-					// same name-vs-index quirk and was removed. Mirrors Kilo Code's
-					// invalid tool output for consistency across LLM channels.
+					// Unknown tool name on legacy channels (XML fallback, Anthropic
+					// native, Gemini native, OpenAI native) — emit a soft tool_error,
+					// no throw. Include the available-tools inventory: empirically
+					// (0.9.0) models that recovered did so after reading this list;
+					// minimax/qwen variants need real names to escape their numeric-
+					// naming training quirk. The earlier (0.9.2) attempt to drop
+					// the list per a name-vs-index hypothesis was wrong — the quirk
+					// is baked in, the list helps recovery rather than causing it.
 					resolveInterruptor(() => { });
-					const message = `The arguments provided to the tool are invalid: Unknown tool name "${toolName}".`;
+					const builtinList = builtinToolNames.join(', ');
+					const mcpList = (mcpTools ?? []).map(t => t.name).join(', ') || '(none)';
+					const message = `The arguments provided to the tool are invalid: Unknown tool name "${toolName}". Available built-in tools: ${builtinList}. Available MCP tools: ${mcpList}.`;
 					this._agentActivityLog.logError(`${toolActivityLabel}: ${message}`);
 					this._updateLatestTool(threadId, {
 						role: 'tool',
@@ -3800,6 +3823,10 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 		let fileReadLimitExceeded = false
 		// Track tools executed in this request to detect incomplete workflows
 		let toolsExecutedInRequest: string[] = []
+		// Circuit-breaker: count back-to-back tool failures (tool_error / invalid_params).
+		// Reset on `success`. Aborts the loop at MAX_CONSECUTIVE_TOOL_ERRORS to escape
+		// minimax/qwen models stuck in baked-in numeric-name quirk loops.
+		let consecutiveToolErrors = 0
 
 		// Resolve max iterations once per run. Reading on every iteration would let a mid-run
 		// settings tweak chop off an in-flight loop unexpectedly.
@@ -5140,6 +5167,39 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 					}
 
 					const { awaitingUserApproval, interrupted } = await this._runToolCall(threadId, toolCall.name, toolCall.id, mcpTool?.mcpServerName, { preapproved: false, unvalidatedToolParams: toolCall.rawParams })
+
+					// Circuit-breaker: inspect the message _runToolCall just added.
+					// tool_error / invalid_params → increment; success → reset.
+					// tool_request (awaiting approval) and other types — leave alone.
+					{
+						const thread = this.state.allThreads[threadId]
+						const lastMsg = thread?.messages[thread.messages.length - 1]
+						if (lastMsg?.role === 'tool') {
+							if (lastMsg.type === 'tool_error' || lastMsg.type === 'invalid_params') {
+								consecutiveToolErrors += 1
+							} else if (lastMsg.type === 'success') {
+								consecutiveToolErrors = 0
+							}
+						}
+						if (consecutiveToolErrors >= MAX_CONSECUTIVE_TOOL_ERRORS) {
+							const abortMsg = `Agent loop aborted: ${MAX_CONSECUTIVE_TOOL_ERRORS} consecutive tool failures. Common causes: the model emits numeric tool names like "0", "1", "5" (minimax/qwen training quirk) or repeatedly passes wrong argument types. Switch to a different model (Claude, GPT, Gemini, DeepSeek) or simplify the request.`
+							this._notificationService.warn(abortMsg)
+							this._addMessageToThread(threadId, {
+								role: 'tool',
+								type: 'tool_error',
+								params: {} as ToolCallParams<ToolName>,
+								rawParams: {} as RawToolParamsObj,
+								result: abortMsg,
+								name: 'invalid' as ToolName,
+								content: abortMsg,
+								id: generateUuid(),
+								mcpServerName: undefined,
+							})
+							this._setStreamState(threadId, { isRunning: undefined })
+							return
+						}
+					}
+
 					if (interrupted) {
 						this._setStreamState(threadId, undefined)
 						if (activePlanTracking?.currentStep) {
