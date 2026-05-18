@@ -10,9 +10,29 @@ import { SelectBox } from '../../../../../../../base/browser/ui/selectBox/select
 import { IDisposable } from '../../../../../../../base/common/lifecycle.js';
 import { Checkbox } from '../../../../../../../base/browser/ui/toggle/toggle.js';
 
-import { CodeEditorWidget } from '../../../../../../../editor/browser/widget/codeEditor/codeEditorWidget.js'
 import { useAccessor } from './services.js';
-import { ITextModel } from '../../../../../../../editor/common/model.js';
+import { tokenizeToString } from '../../../../../../../editor/common/languages/textToHtmlTokenizer.js';
+import { createTrustedTypesPolicy } from '../../../../../../../base/browser/trustedTypes.js';
+
+// Workbench enables a Trusted Types CSP, so raw `element.innerHTML = string` is blocked.
+// Same pattern as `EditorMarkdownCodeBlockRenderer` (VS Code core): wrap the tokenized
+// HTML through a named TT policy so the assignment is allowed.
+//
+// tsup builds several React bundles (vibe-settings-tsx, vibe-onboarding, sidebar, ...),
+// and inlines this module into every bundle that imports anything from it. That means
+// `createPolicy` would fire once per bundle on the same page — the second call throws
+// "Policy ... already exists" under the workbench CSP. Cache the result on globalThis
+// so sibling bundles see the existing policy instead of re-creating it.
+type _BlockCodeTTP = Pick<TrustedTypePolicy, 'name' | 'createHTML'> | undefined;
+const _vibeideBlockCodeTTP: _BlockCodeTTP = (() => {
+	const g = globalThis as unknown as { __vibeideBlockCodeTTP?: _BlockCodeTTP };
+	if ('__vibeideBlockCodeTTP' in g) return g.__vibeideBlockCodeTTP;
+	const policy = createTrustedTypesPolicy('vibeideBlockCodeTokenizer', {
+		createHTML(html: string) { return html; }
+	});
+	g.__vibeideBlockCodeTTP = policy;
+	return policy;
+})();
 import { asCssVariable } from '../../../../../../../platform/theme/common/colorUtils.js';
 import { inputBackground, inputForeground } from '../../../../../../../platform/theme/common/colorRegistry.js';
 import { useFloating, autoUpdate, offset, flip, shift, size, autoPlacement } from '@floating-ui/react';
@@ -27,36 +47,6 @@ import { IEditorProgressService } from '../../../../../../../platform/progress/c
 import { detectLanguage } from '../../../../common/helpers/languageHelpers.js';
 import { inputsS } from '../vibe-settings-tsx/vibeSettingsRu.js';
 
-
-// type guard
-const isConstructor = (f: any)
-	: f is { new(...params: any[]): any } => {
-	return !!f.prototype && f.prototype.constructor === f;
-}
-
-export const WidgetComponent = <CtorParams extends any[], Instance>({ ctor, propsFn, dispose, onCreateInstance, children, className }
-	: {
-		ctor: { new(...params: CtorParams): Instance } | ((container: HTMLDivElement) => Instance),
-		propsFn: (container: HTMLDivElement) => CtorParams, // unused if fn
-		onCreateInstance: (instance: Instance) => IDisposable[],
-		dispose: (instance: Instance) => void,
-		children?: React.ReactNode,
-		className?: string
-	}
-) => {
-	const containerRef = useRef<HTMLDivElement | null>(null);
-
-	useEffect(() => {
-		const instance = isConstructor(ctor) ? new ctor(...propsFn(containerRef.current!)) : ctor(containerRef.current!)
-		const disposables = onCreateInstance(instance);
-		return () => {
-			disposables.forEach(d => d.dispose());
-			dispose(instance)
-		}
-	}, [ctor, propsFn, dispose, onCreateInstance, containerRef])
-
-	return <div ref={containerRef} className={className === undefined ? `w-full` : className}>{children}</div>
-}
 
 type GenerateNextOptions = (optionText: string) => Promise<Option[]>
 
@@ -1789,137 +1779,53 @@ export const BlockCode = ({ initValue, language, maxHeight, showScrollbars }: Bl
 
 	initValue = normalizeIndentation(initValue)
 
-	// default settings
 	const MAX_HEIGHT = maxHeight ?? Infinity;
 	const SHOW_SCROLLBARS = showScrollbars ?? false;
-
-	const divRef = useRef<HTMLDivElement | null>(null)
+	const languageId = language || 'plaintext';
 
 	const accessor = useAccessor()
-	const instantiationService = accessor.get('IInstantiationService')
-	// const languageDetectionService = accessor.get('ILanguageDetectionService')
-	const modelService = accessor.get('IModelService')
+	const languageService = accessor.get('ILanguageService')
 
-	// these are used to pass to the model creation of modelRef
-	const initValueRef = useRef(initValue)
-	const languageRef = useRef(language)
+	// Read-only chat code previews used to mount a full Monaco `CodeEditorWidget` per
+	// block. With long chat histories that meant hundreds of editors live at once,
+	// each registering listeners on workbench services and holding TextModel /
+	// ViewModel / View trees in memory. For a non-editable preview we only need
+	// syntax-highlighted HTML, which `tokenizeToString` produces in O(text) and at
+	// a fraction of the memory cost. Same approach VS Code uses for hover/markdown
+	// code blocks (see editorMarkdownCodeBlockRenderer + markdownDocumentRenderer).
+	const innerRef = useRef<HTMLDivElement | null>(null)
 
-	const modelRef = useRef<ITextModel | null>(null)
-
-	// if we change the initial value, don't re-render the whole thing, just set it here. same for language
 	useEffect(() => {
-		initValueRef.current = initValue
-		modelRef.current?.setValue(initValue)
-	}, [initValue])
-	useEffect(() => {
-		languageRef.current = language
-		if (language) modelRef.current?.setLanguage(language)
-	}, [language])
+		let cancelled = false
+		// Debounce 50ms so streaming chunks don't trigger a re-tokenize on every keystroke
+		// of content arriving from the LLM. The last value wins; intermediates are dropped.
+		const t = setTimeout(() => {
+			tokenizeToString(languageService, initValue, languageId).then(html => {
+				if (cancelled || !innerRef.current) return
+				// Workbench enforces Trusted Types — assigning a raw string to innerHTML
+				// throws. Route through the TT policy created at module load (or fall back
+				// to the raw string for browsers without TT).
+				const trusted = _vibeideBlockCodeTTP ? _vibeideBlockCodeTTP.createHTML(html) ?? html : html
+				innerRef.current.innerHTML = trusted as string
+			})
+		}, 50)
+		return () => { cancelled = true; clearTimeout(t) }
+	}, [initValue, languageId, languageService])
 
-	return <div ref={divRef} className='relative z-0 px-2 py-1 bg-vibe-bg-3'>
-		<WidgetComponent
-			className='@@bg-editor-style-override' // text-sm
-			ctor={useCallback((container) => {
-				return instantiationService.createInstance(
-					CodeEditorWidget,
-					container,
-					{
-						automaticLayout: true,
-						wordWrap: 'off',
+	const outerStyle: React.CSSProperties = {
+		maxHeight: MAX_HEIGHT === Infinity ? undefined : MAX_HEIGHT,
+		overflowY: SHOW_SCROLLBARS ? 'auto' : 'hidden',
+		overflowX: 'auto',
+	}
 
-						scrollbar: {
-							alwaysConsumeMouseWheel: false,
-							...SHOW_SCROLLBARS ? {
-								vertical: 'auto',
-								verticalScrollbarSize: 8,
-								horizontal: 'auto',
-								horizontalScrollbarSize: 8,
-							} : {
-								vertical: 'hidden',
-								verticalScrollbarSize: 0,
-								horizontal: 'auto',
-								horizontalScrollbarSize: 8,
-								ignoreHorizontalScrollbarInContentHeight: true,
-
-							},
-						},
-						scrollBeyondLastLine: false,
-
-						lineNumbers: 'off',
-
-						readOnly: true,
-						domReadOnly: true,
-						readOnlyMessage: { value: '' },
-
-						minimap: {
-							enabled: false,
-							// maxColumn: 0,
-						},
-
-						hover: { enabled: false },
-
-						selectionHighlight: false, // highlights whole words
-						renderLineHighlight: 'none',
-
-						folding: false,
-						lineDecorationsWidth: 0,
-						overviewRulerLanes: 0,
-						hideCursorInOverviewRuler: true,
-						overviewRulerBorder: false,
-						glyphMargin: false,
-
-						stickyScroll: {
-							enabled: false,
-						},
-					},
-					{
-						isSimpleWidget: true,
-					})
-			}, [instantiationService])}
-
-			onCreateInstance={useCallback((editor: CodeEditorWidget) => {
-				const languageId = languageRef.current ? languageRef.current : 'plaintext'
-
-				const model = modelService.createModel(
-					initValueRef.current, {
-					languageId: languageId,
-					onDidChange: (e) => { return { dispose: () => { } } } // no idea why they'd require this
-				})
-				modelRef.current = model
-				editor.setModel(model);
-
-				const container = editor.getDomNode()
-				const parentNode = container?.parentElement
-				const resize = () => {
-					const height = editor.getScrollHeight() + 1
-					if (parentNode) {
-						// const height = Math.min(, MAX_HEIGHT);
-						parentNode.style.height = `${height}px`;
-						parentNode.style.maxHeight = `${MAX_HEIGHT}px`;
-						editor.layout();
-					}
-				}
-
-				resize()
-				const resizeDisposable = editor.onDidContentSizeChange(() => { resize() });
-
-				// Read-only preview: refuse focus. Clicking the body otherwise puts Monaco
-				// into .focused state, where view-lines re-render against a different
-				// foreground stack and end up invisible (DOM still has the text — Copy
-				// works — but nothing is painted).
-				const focusDisposable = editor.onDidFocusEditorText(() => {
-					const active = document.activeElement
-					if (active instanceof HTMLElement) active.blur()
-				})
-
-				return [resizeDisposable, focusDisposable, model]
-			}, [modelService])}
-
-			dispose={useCallback((editor: CodeEditorWidget) => {
-				editor.dispose();
-			}, [modelService])}
-
-			propsFn={useCallback(() => { return [] }, [])}
+	// `.monaco-tokenized-source` is the same class VS Code uses for tokenized HTML
+	// (themed via the workbench color theme, so colors stay consistent with the editor).
+	// `whiteSpace: pre` preserves indentation without an explicit <pre> wrapper.
+	return <div className='relative z-0 px-2 py-1 bg-vibe-bg-3' style={outerStyle}>
+		<div
+			ref={innerRef}
+			className='monaco-tokenized-source @@bg-editor-style-override'
+			style={{ whiteSpace: 'pre', fontFamily: 'var(--monaco-monospace-font)' }}
 		/>
 	</div>
 

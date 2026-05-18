@@ -11,6 +11,7 @@ import { IWorkspaceContextService } from '../../../../platform/workspace/common/
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { IProductService } from '../../../../platform/product/common/productService.js';
+import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
 import { joinPath, relativePath } from '../../../../base/common/resources.js';
 import { URI } from '../../../../base/common/uri.js';
 import { ChatMode } from './vibeideSettingsTypes.js';
@@ -107,6 +108,12 @@ export interface IVibeSkillsLibraryService {
 	resolveDependencies(skillId: string): Promise<string[]>;
 	/** Drops in-memory skill list so the next scan reads disk (file events usually invalidate already). */
 	invalidateCache(): void;
+	/** Record that a skill was just invoked. Persists an MRU list across sessions so
+	 * autocomplete can surface frequently-used skills first. Safe to call on every `/skill:` expand. */
+	trackSkillUse(skillId: string): void;
+	/** Most-recently-used skill ids, newest first. Capped at 20 entries.
+	 * Returns just IDs (autocomplete UI cross-references with the full skills list). */
+	getRecentSkills(): string[];
 }
 
 /** YAML `depends:` as inline `[a,b]` or indented `- id` list (skill ids only). */
@@ -318,6 +325,12 @@ export function serializeSkillMarkdown(fields: { name: string; description: stri
 	return `${lines.join('\n')}\n${body}${body ? '\n' : ''}`;
 }
 
+// MRU storage for /skill: autocomplete. Profile scope so the list follows the user
+// across workspaces. Capped at 20 to keep the dropdown ordering useful (older entries
+// rarely get re-invoked anyway).
+const MRU_STORAGE_KEY = 'vibeide.skills.recentIds.v1';
+const MRU_CAP = 20;
+
 class VibeSkillsLibraryService extends Disposable implements IVibeSkillsLibraryService {
 	declare readonly _serviceBrand: undefined;
 
@@ -329,6 +342,7 @@ class VibeSkillsLibraryService extends Disposable implements IVibeSkillsLibraryS
 		@ILogService private readonly _logService: ILogService,
 		@IConfigurationService private readonly _configurationService: IConfigurationService,
 		@IProductService private readonly _productService: IProductService,
+		@IStorageService private readonly _storageService: IStorageService,
 	) {
 		super();
 
@@ -356,6 +370,29 @@ class VibeSkillsLibraryService extends Disposable implements IVibeSkillsLibraryS
 
 	invalidateCache(): void {
 		this.invalidateSkillsCache();
+	}
+
+	trackSkillUse(skillId: string): void {
+		if (!skillId) return;
+		const current = this.getRecentSkills();
+		// Move-to-front: drop any previous occurrence, prepend, cap at MRU_CAP.
+		const updated = [skillId, ...current.filter(id => id !== skillId)].slice(0, MRU_CAP);
+		try {
+			this._storageService.store(MRU_STORAGE_KEY, JSON.stringify(updated), StorageScope.PROFILE, StorageTarget.USER);
+		} catch (err) {
+			this._logService.warn(`[VibeIDE Skills] Failed to persist MRU list: ${err}`);
+		}
+	}
+
+	getRecentSkills(): string[] {
+		const raw = this._storageService.get(MRU_STORAGE_KEY, StorageScope.PROFILE, '[]');
+		try {
+			const parsed = JSON.parse(raw);
+			if (Array.isArray(parsed)) {
+				return parsed.filter((x): x is string => typeof x === 'string').slice(0, MRU_CAP);
+			}
+		} catch { /* corrupted JSON — fall through to empty */ }
+		return [];
 	}
 
 	private _truncateSkillText(text: string, maxChars: number): string {

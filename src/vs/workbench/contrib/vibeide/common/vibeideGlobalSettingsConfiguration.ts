@@ -214,6 +214,34 @@ export class VibeideGlobalSettingsConfigurationContribution extends Disposable i
 				},
 			},
 		});
+
+		// `vibeide.chat.*` — chat-stream behavior. The hard-stall watchdog auto-aborts a
+		// stuck stream so `isRunning` doesn't latch forever and block subsequent sends.
+		// Lighter signals (inline banner at 15s, toasts at 30s/45s) already exist for
+		// transient slow responses; this is the final fallback when a provider truly
+		// hangs (e.g. aggregator drops the upstream connection silently, or rejects
+		// a large payload without returning an error).
+		registry.registerConfiguration({
+			id: 'vibeide.chat',
+			title: localize('vibeide.chat.title', 'VibeIDE — Чат'),
+			type: 'object',
+			properties: {
+				'vibeide.chat.streamHardStallEnabled': {
+					type: 'boolean',
+					default: true,
+					description: localize('vibeide.chat.streamHardStallEnabled', 'Автоматически прерывать LLM-стрим, если провайдер не присылает ни одного нового токена дольше `vibeide.chat.streamHardStallSeconds` секунд. Сбрасывает `isRunning`, показывает ошибку, разблокирует кнопку отправки. Off — ждать бесконечно (старое поведение).'),
+					scope: ConfigurationScope.APPLICATION,
+				},
+				'vibeide.chat.streamHardStallSeconds': {
+					type: 'number',
+					default: 120,
+					minimum: 30,
+					maximum: 1800,
+					description: localize('vibeide.chat.streamHardStallSeconds', 'Порог hard-stall авто-abort в секундах. Reset на каждый новый токен. По умолчанию 120 (2 минуты) — достаточно для reasoning-моделей (o1/Claude reasoning могут думать до 60s перед первым токеном) + запас на нестабильные провайдеры. Минимум 30 (≥ FIRST_TOKEN_STALL_MS=30s), максимум 1800 (30 минут — sanity cap).'),
+					scope: ConfigurationScope.APPLICATION,
+				},
+			},
+		});
 	}
 }
 

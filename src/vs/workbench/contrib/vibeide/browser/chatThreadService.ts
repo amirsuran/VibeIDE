@@ -158,9 +158,12 @@ const buildToolSchemaHint = (canonicalToolName: string): string => {
 
 // Stall detection: notify user if LLM stops producing tokens unexpectedly.
 // EARLY surfaces an inline banner only (no toast); FULL thresholds also raise a toast.
-const EARLY_STALL_MS       = 15_000 // 15s — soft signal: show inline "stalled" banner in chat
-const FIRST_TOKEN_STALL_MS = 30_000 // 30s — no first token received after sending request
-const MID_STREAM_STALL_MS  = 45_000 // 45s — no new token received during active streaming
+// HARD goes further: auto-abort the stream so `isRunning` doesn't latch forever and
+// block subsequent submits. Read from `vibeide.chat.streamHardStallSeconds` at runtime.
+const EARLY_STALL_MS                = 15_000 // 15s — soft signal: show inline "stalled" banner in chat
+const FIRST_TOKEN_STALL_MS          = 30_000 // 30s — no first token received after sending request
+const MID_STREAM_STALL_MS           = 45_000 // 45s — no new token received during active streaming
+const DEFAULT_HARD_STALL_SECONDS    = 120     // 120s — default auto-abort threshold (overridable via config)
 
 
 const findStagingSelectionIndex = (currentSelections: StagingSelectionItem[] | undefined, newSelection: StagingSelectionItem): number | null => {
@@ -281,7 +284,7 @@ export type IsRunningType =
 export type ThreadStreamState = {
 	[threadId: string]: undefined | {
 		isRunning: undefined;
-		error?: { message: string, fullError: Error | null, };
+		error?: { message: string, fullError: Error | null, recoverable?: 'dismissPlan' };
 		llmInfo?: undefined;
 		toolInfo?: undefined;
 		interrupt?: undefined;
@@ -445,6 +448,7 @@ export interface IChatThreadService {
 	editPlan(opts: { threadId: string, messageIdx: number, updatedPlan: PlanMessage }): void;
 	toggleStepDisabled(opts: { threadId: string, messageIdx: number, stepNumber: number }): void;
 	reorderPlanSteps(opts: { threadId: string, messageIdx: number, newStepOrder: number[] }): void;
+	dismissAllPendingPlans(threadId: string): number;
 
 	// Step execution control
 	pauseAgentExecution(opts: { threadId: string }): Promise<void>;
@@ -526,6 +530,15 @@ class ChatThreadService extends Disposable implements IChatThreadService {
 	// Use requestAnimationFrame to batch updates for better performance
 	private readonly _pendingStreamStateUpdates = new Map<string, ThreadStreamState[string]>()
 	private _streamStateRafId: number | undefined
+
+	// Submit-level watchdog: started in _addUserMessageAndStreamResponse, cleared in
+	// _setStreamState when the stream actually transitions to an active state
+	// ('preparing'/'LLM'/'tool'/'idle'/'awaiting_user'). Covers hangs in the prep pipeline
+	// (file reads, prompt building, router selection, etc.) — i.e. the period BEFORE the
+	// stream-level hardStallTimer in _runChatAgent gets created. Without this, a hang
+	// before preparing-state is reached would leave the user staring at nothing forever
+	// with no spinner and no error.
+	private readonly _submitWatchdogByThread = new Map<string, ReturnType<typeof setTimeout>>()
 
 	// PERFORMANCE: Cache prepared LLM messages to avoid expensive re-preparation when messages haven't changed
 	// Key: hash of (chatMessages content + modelSelection + chatMode + repoIndexer results)
@@ -768,6 +781,21 @@ class ChatThreadService extends Disposable implements IChatThreadService {
 
 	private _setStreamState(threadId: string, state: ThreadStreamState[string]) {
 		this.streamState[threadId] = state
+
+		// Clear the submit-level watchdog only when the stream has truly reached the
+		// network call — i.e. transitioned past 'preparing' to LLM/tool/awaiting_user/idle.
+		// We do NOT clear on 'preparing' itself: preparation can still hang for a long
+		// time AFTER preparing-state is set (router selection, prompt prep, token counting,
+		// sendLLMMessage setup). Those hangs were not previously covered by any watchdog.
+		// Once we hit LLM, the stream-level hardStallTimer (in _runChatAgent) takes over.
+		const isPostPreparation = state?.isRunning === 'LLM' || state?.isRunning === 'tool' || state?.isRunning === 'awaiting_user' || state?.isRunning === 'idle'
+		if (isPostPreparation) {
+			const submitTimer = this._submitWatchdogByThread.get(threadId)
+			if (submitTimer !== undefined) {
+				clearTimeout(submitTimer)
+				this._submitWatchdogByThread.delete(threadId)
+			}
+		}
 
 		// Throttle updates during streaming to reduce React re-render frequency
 		// Batch updates using requestAnimationFrame for smoother performance
@@ -1687,6 +1715,79 @@ class ChatThreadService extends Disposable implements IChatThreadService {
 			steps: reorderedSteps
 		}
 		this._editMessageInThread(opts.threadId, opts.messageIdx, updatedPlan)
+	}
+
+	/**
+	 * Called from `_runChatAgent` when `checkPlanGenerated()` blocks execution. Replaces
+	 * the previous silent `isRunning: 'idle'` exit with a visible recovery flow:
+	 *   - inline error in chat (red ErrorDisplay with `recoverable: 'dismissPlan'` marker
+	 *     so the chat UI renders a permanent "Сбросить план и продолжить" button)
+	 *   - toast notification with the same action (auto-discoverable, but the button in
+	 *     chat remains even after the user closes the toast)
+	 */
+	private _surfacePendingPlanGate(threadId: string): void {
+		this._setStreamState(threadId, {
+			isRunning: undefined,
+			error: {
+				message: localize('vibeide.chatThread.pendingPlanGate', 'Незавершённый план блокирует отправку сообщений в этом чате. Сбросьте его, чтобы продолжить.'),
+				fullError: null,
+				recoverable: 'dismissPlan',
+			},
+		})
+		try {
+			this._notificationService.notify({
+				severity: Severity.Info,
+				message: localize('vibeide.chatThread.pendingPlanGate.toast', 'Незавершённый план блокирует отправку сообщений в этом чате.'),
+				actions: {
+					primary: [{
+						id: 'vibeide.chat.dismissPendingPlan.fromToast',
+						label: localize('vibeide.chatThread.pendingPlanGate.action', 'Сбросить план и продолжить'),
+						class: undefined,
+						enabled: true,
+						tooltip: '',
+						checked: undefined,
+						run: () => {
+							const n = this.dismissAllPendingPlans(threadId)
+							if (n > 0) {
+								this._setStreamState(threadId, undefined)
+							}
+						},
+					}],
+				},
+			})
+		} catch { /* notify is best-effort; the inline error in chat is the durable signal */ }
+	}
+
+	/**
+	 * Dismisses every plan-message in a thread that's still gating execution:
+	 *   - sets `approvalState` to 'aborted' (covers cached-pending checks)
+	 *   - disables every step (covers the `steps.some(!disabled && status==='paused')` gate
+	 *     in `_runChatAgent.checkPlanGenerated()`)
+	 *
+	 * Returns the number of plans touched. Used by both the
+	 * `vibeide.chat.dismissPendingPlan` command and the inline error UX in chat that
+	 * appears when `_runChatAgent` early-exits due to a pending plan.
+	 */
+	dismissAllPendingPlans(threadId: string): number {
+		const thread = this.state.allThreads[threadId]
+		if (!thread) return 0
+		let touched = 0
+		for (let i = 0; i < thread.messages.length; i++) {
+			const msg = thread.messages[i]
+			if (msg.role !== 'plan') continue
+			const plan = msg as PlanMessage
+			const needsAbort = plan.approvalState !== 'aborted'
+			const hasActiveStep = plan.steps.some(s => !s.disabled)
+			if (!needsAbort && !hasActiveStep) continue
+			const updatedPlan: PlanMessage = {
+				...plan,
+				approvalState: 'aborted',
+				steps: plan.steps.map(s => ({ ...s, disabled: true })),
+			}
+			this.editPlan({ threadId, messageIdx: i, updatedPlan })
+			touched++
+		}
+		return touched
 	}
 
 	async pauseAgentExecution(opts: { threadId: string }): Promise<void> {
@@ -3838,8 +3939,9 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 		// CRITICAL: Check for pending plan before executing any tools
 		// Use fast check (relies on flag and cached plan check)
 		if (checkPlanGenerated()) {
-			// Plan is pending approval - stop execution
-			this._setStreamState(threadId, { isRunning: 'idle', interrupt: 'not_needed' })
+			// Plan is pending approval — surface a recoverable error so the user can
+			// dismiss-and-continue with one click (toast button + inline chat button).
+			this._surfacePendingPlanGate(threadId)
 			return
 		}
 
@@ -3847,7 +3949,7 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 		if (callThisToolFirst) {
 			// Double-check plan status before executing (fast check)
 			if (checkPlanGenerated()) {
-				this._setStreamState(threadId, { isRunning: 'idle', interrupt: 'not_needed' })
+				this._surfacePendingPlanGate(threadId)
 				return
 			}
 
@@ -4411,6 +4513,35 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 				let firstTokenStallTimer: ReturnType<typeof setTimeout> | undefined = setTimeout(() => { notifyStall('noFirstToken') }, FIRST_TOKEN_STALL_MS)
 				let midStreamStallTimer: ReturnType<typeof setTimeout> | undefined
 
+				// Hard-stall watchdog: auto-abort the stream if no new tokens arrive within the
+				// user-configurable timeout. Reset on every onText chunk; cleared on complete/abort/error.
+				// Without this, a provider hang (silent upstream drop, payload too large, etc.) leaves
+				// `isRunning='LLM'` latched forever and blocks every subsequent submit in the app.
+				// `llmCancelToken` is assigned right below (just before sendLLMMessage); the timer
+				// fires seconds later, so the captured ref is always populated by then.
+				const hardStallEnabled = this._configurationService.getValue<boolean>('vibeide.chat.streamHardStallEnabled') ?? true
+				const hardStallSeconds = Math.max(30, Math.min(1800, this._configurationService.getValue<number>('vibeide.chat.streamHardStallSeconds') ?? DEFAULT_HARD_STALL_SECONDS))
+				let hardStallTimer: ReturnType<typeof setTimeout> | undefined
+				const onHardStall = () => {
+					// No partial content commit: hardStall resets on every token, so reaching it
+					// means nothing arrived. Abort the LLM call, drop the stream state, surface
+					// an error so the user can retry or switch models.
+					try { if (llmCancelToken) this._llmMessageService.abort(llmCancelToken) } catch { /* already aborted */ }
+					clearTimeout(earlyStallTimer); earlyStallTimer = undefined
+					clearTimeout(firstTokenStallTimer); firstTokenStallTimer = undefined
+					clearTimeout(midStreamStallTimer); midStreamStallTimer = undefined
+					clearTimeout(hardStallTimer); hardStallTimer = undefined
+					clearStallNotification()
+					this._setStreamState(threadId, {
+						isRunning: undefined,
+						error: {
+							message: localize('vibeide.chatThread.streamHardStall', 'Stream stalled — no tokens received for {0}s. The provider may be unreachable, overloaded, or rejected the request size. Try retrying, switching the model, or shortening the conversation.', String(hardStallSeconds)),
+							fullError: null,
+						},
+					})
+				}
+				if (hardStallEnabled) hardStallTimer = setTimeout(onHardStall, hardStallSeconds * 1000)
+
 				// Streaming-gap watchdog FSM (common/streamingGapWatchdog.ts).
 				let watchdogState: WatchdogState = { kind: 'idle' }
 				let watchdogAbortFn: (() => void) | undefined  // set after sendLLMMessage returns
@@ -4494,11 +4625,12 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 						_retryLastTextLen = fullText.length
 					}
 
-					// Stall watchdog: cancel first-token stall timer, reset early + mid-stream stall timers, drop inline banner.
+					// Stall watchdog: cancel first-token stall timer, reset early + mid-stream + hard-stall timers, drop inline banner.
 					if (firstTokenStallTimer !== undefined) { clearTimeout(firstTokenStallTimer); firstTokenStallTimer = undefined; clearStallNotification() }
 					clearTimeout(earlyStallTimer); earlyStallTimer = setTimeout(setInlineStall, EARLY_STALL_MS)
 					clearTimeout(midStreamStallTimer)
 					midStreamStallTimer = setTimeout(() => { notifyStall('midStream') }, MID_STREAM_STALL_MS)
+					if (hardStallTimer !== undefined) { clearTimeout(hardStallTimer); hardStallTimer = setTimeout(onHardStall, hardStallSeconds * 1000) }
 					clearInlineStall()
 
 						// Streaming gap watchdog: record incoming chunk.
@@ -4550,6 +4682,7 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 					clearTimeout(earlyStallTimer); earlyStallTimer = undefined
 					clearTimeout(firstTokenStallTimer); firstTokenStallTimer = undefined
 					clearTimeout(midStreamStallTimer); midStreamStallTimer = undefined
+					clearTimeout(hardStallTimer); hardStallTimer = undefined
 					clearStallNotification()
 					clearWatchdogTimer()
 					{
@@ -4615,6 +4748,7 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 					clearTimeout(earlyStallTimer); earlyStallTimer = undefined
 					clearTimeout(firstTokenStallTimer); firstTokenStallTimer = undefined
 					clearTimeout(midStreamStallTimer); midStreamStallTimer = undefined
+					clearTimeout(hardStallTimer); hardStallTimer = undefined
 					clearStallNotification()
 					clearWatchdogTimer()
 					{
@@ -6132,6 +6266,32 @@ We only need to do it for files that were edited since `from`, ie files between 
 	private async _addUserMessageAndStreamResponse({ userMessage, _chatSelections, threadId, images, pdfs, noPlan, displayContent }: { userMessage: string, _chatSelections?: StagingSelectionItem[], threadId: string, images?: ChatImageAttachment[], pdfs?: ChatPDFAttachment[], noPlan?: boolean, displayContent?: string }) {
 		const thread = this.state.allThreads[threadId]
 		if (!thread) return // should never happen
+
+		// Submit-level watchdog: start a safety timer covering the whole prep pipeline
+		// (file reads in chat_userMessageContent, search-mention resolution, PDF processing,
+		// router selection, prompt building) up to the moment the stream transitions to
+		// an active state. _setStreamState clears this timer once isRunning becomes
+		// 'LLM'/'tool'/'awaiting_user'/'idle' — NOT on 'preparing', because preparation
+		// can still hang for a long time after preparing-state is set (router LLM call,
+		// vision-capability dynamic import, _runChatAgent's checkPlanGenerated() gate, etc.).
+		const submitWatchdogEnabled = this._configurationService.getValue<boolean>('vibeide.chat.streamHardStallEnabled') ?? true
+		const submitWatchdogSeconds = Math.max(30, Math.min(1800, this._configurationService.getValue<number>('vibeide.chat.streamHardStallSeconds') ?? DEFAULT_HARD_STALL_SECONDS))
+		if (submitWatchdogEnabled) {
+			const prev = this._submitWatchdogByThread.get(threadId)
+			if (prev !== undefined) clearTimeout(prev)
+			const timer = setTimeout(() => {
+				this._submitWatchdogByThread.delete(threadId)
+				if (this.streamState[threadId]?.isRunning !== undefined) return
+				this._setStreamState(threadId, {
+					isRunning: undefined,
+					error: {
+						message: localize('vibeide.chatThread.submitHardStall', 'Submit timed out — preparation stage did not finish within {0}s (no progress to "Preparing request..."). Likely a hung file read, model router, or prompt-prep step. Try retrying, switching the model, or removing attached files / context.', String(submitWatchdogSeconds)),
+						fullError: null,
+					},
+				})
+			}, submitWatchdogSeconds * 1000)
+			this._submitWatchdogByThread.set(threadId, timer)
+		}
 
 		// interrupt existing stream
 		if (this.streamState[threadId]?.isRunning) {

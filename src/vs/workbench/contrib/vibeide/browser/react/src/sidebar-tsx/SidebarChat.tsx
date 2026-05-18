@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------*/
 
 import React, { ButtonHTMLAttributes, FormEvent, FormHTMLAttributes, Fragment, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Virtuoso, VirtuosoHandle } from 'react-virtuoso';
 
 
 import { useAccessor, useChatThreadsState, useChatThreadsStreamState, useSettingsState, useActiveURI, useCommandBarState, useFullChatThreadsStreamState } from '../util/services.js';
@@ -948,53 +949,35 @@ export const ButtonStop = ({ className, ...props }: ButtonHTMLAttributes<HTMLBut
 
 
 
-const scrollToBottom = (divRef: { current: HTMLElement | null }) => {
-	if (divRef.current) {
-		divRef.current.scrollTop = divRef.current.scrollHeight;
+// Chat list virtualization is delegated to react-virtuoso (see `messagesHTML` in
+// SidebarChat). Streaming bubble, stall banner, generating-tool preview, loading
+// indicator and error block are appended to the Virtuoso `data` array as kind-tagged
+// items rather than rendered in a Footer — that way Virtuoso's followOutput pins
+// the viewport to the latest content automatically.
+//
+// The old `ScrollToBottomContainer` (manual onScroll + scrollTop=scrollHeight) was
+// removed because it kept every ChatBubble mounted at once, blowing through the
+// listener-leak threshold on long histories.
+
+// Custom Virtuoso Scroller: applies the chat container's overflow + flex CSS
+// directly to the scroll element so horizontal overflow can't leak out.
+// Horizontal padding (px-3) is NOT applied here — Virtuoso lays virtualized
+// items out with absolute positioning, which ignores the scroller's padding.
+// Per-item padding lives on the item wrapper in `itemContent` instead.
+const ChatScroller = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
+	function ChatScroller({ children, style, ...rest }, ref) {
+		return (
+			<div
+				ref={ref}
+				{...rest}
+				className='flex flex-col py-3 w-full h-full overflow-x-hidden overflow-y-auto'
+				style={style}
+			>
+				{children}
+			</div>
+		);
 	}
-};
-
-
-
-const ScrollToBottomContainer = ({ children, className, style, scrollContainerRef }: { children: React.ReactNode, className?: string, style?: React.CSSProperties, scrollContainerRef: React.MutableRefObject<HTMLDivElement | null> }) => {
-	const [isAtBottom, setIsAtBottom] = useState(true); // Start at bottom
-
-	const divRef = scrollContainerRef
-
-	const onScroll = () => {
-		const div = divRef.current;
-		if (!div) return;
-
-		const isBottom = Math.abs(
-			div.scrollHeight - div.clientHeight - div.scrollTop
-		) < 4;
-
-		setIsAtBottom(isBottom);
-	};
-
-	// When children change (new messages added)
-	useEffect(() => {
-		if (isAtBottom) {
-			scrollToBottom(divRef);
-		}
-	}, [children, isAtBottom]); // Dependency on children to detect new messages
-
-	// Initial scroll to bottom
-	useEffect(() => {
-		scrollToBottom(divRef);
-	}, []);
-
-	return (
-		<div
-			ref={divRef}
-			onScroll={onScroll}
-			className={className}
-			style={style}
-		>
-			{children}
-		</div>
-	);
-};
+);
 
 export const getRelative = (uri: URI, accessor: ReturnType<typeof useAccessor>) => {
 	const workspaceContextService = accessor.get('IWorkspaceContextService')
@@ -4396,12 +4379,23 @@ export const SidebarChat = () => {
 	}, [instructionsAreEmpty, imageAttachments.length, pdfAttachments.length, settingsState])
 
 	const sidebarRef = useRef<HTMLDivElement>(null)
-	const scrollContainerRef = useRef<HTMLDivElement | null>(null)
+	const virtuosoRef = useRef<VirtuosoHandle | null>(null)
 
-	// Memoize scrollToBottom callback to prevent unnecessary re-renders
+	// Tracks whether the user is scrolled to (or near) the bottom. Used by
+	// `followOutput` so streaming chunks only auto-scroll when the user hasn't
+	// scrolled up to read earlier history. Virtuoso fires this via `atBottomStateChange`.
+	const isAtBottomRef = useRef(true)
+	const handleAtBottomStateChange = useCallback((atBottom: boolean) => {
+		isAtBottomRef.current = atBottom
+	}, [])
+
+	// Same callback signature as before (called by `chatThreadService.whenMounted.then(m => m.scrollToBottom())`
+	// after a user message is sent, and by `UserMessageComponent` inside requestAnimationFrame).
+	// Internally now scrolls Virtuoso to the last item; this is async (one frame later)
+	// but the callers are fire-and-forget, so the contract is preserved.
 	const scrollToBottomCallback = useCallback(() => {
-		scrollToBottom(scrollContainerRef)
-	}, [scrollContainerRef])
+		virtuosoRef.current?.scrollToIndex({ index: 'LAST', behavior: 'auto', align: 'end' })
+	}, [])
 
 	const onSubmit = useCallback(async (_forceSubmit?: string) => {
 
@@ -4739,40 +4733,12 @@ export const SidebarChat = () => {
 			scrollToBottom: scrollToBottomCallback,
 		})
 
-	}, [threadId, textAreaRef, scrollContainerRef, isResolved, mountedInfo, scrollToBottomCallback])
+	}, [threadId, textAreaRef, isResolved, mountedInfo, scrollToBottomCallback])
 
 
 
 
-	const previousMessagesHTML = useMemo(() => {
-		// const lastMessageIdx = previousMessages.findLastIndex(v => v.role !== 'checkpoint')
-		// tool request shows up as Editing... if in progress
-		// Use stable keys based on message ID or index for better React reconciliation.
-		// Defensive: thread state can occasionally produce two messages with the
-		// same id (e.g. a tool message duplicated by a retry/resume path). React
-		// requires globally unique keys per list, so we suffix repeats with #N.
-		// The first occurrence keeps the bare id, preserving stable reconciliation
-		// for the common (unique) case.
-		const seen = new Map<string, number>()
-		return previousMessages.map((message, i) => {
-			const baseKey = (message as any).id || `msg-${i}`
-			const count = seen.get(baseKey) ?? 0
-			seen.set(baseKey, count + 1)
-			const messageKey = count === 0 ? baseKey : `${baseKey}#${count}`
-			return <ChatBubble
-				key={messageKey}
-				currCheckpointIdx={currCheckpointIdx}
-				chatMessage={message}
-				messageIdx={i}
-				isCommitted={true}
-				chatIsRunning={isRunning}
-				threadId={threadId}
-				_scrollToBottom={scrollToBottomCallback}
-			/>
-		})
-	}, [previousMessages, threadId, currCheckpointIdx, isRunning, scrollToBottomCallback])
-
-	const streamingChatIdx = previousMessagesHTML.length
+	const streamingChatIdx = previousMessages.length
 	// Memoize chatMessage object to avoid recreating on every render
 	const streamingChatMessage = useMemo(() => ({
 		role: 'assistant' as const,
@@ -4822,88 +4788,279 @@ export const SidebarChat = () => {
 			: null
 		: null
 
-	const messagesHTML = <ScrollToBottomContainer
-		key={'messages' + chatThreadsState.currentThreadId} // force rerender on all children if id changes
-		scrollContainerRef={scrollContainerRef}
-		className={`
-			flex flex-col
-			px-3 py-3 space-y-3
-			w-full h-full
-			overflow-x-hidden
-			overflow-y-auto
-			${previousMessagesHTML.length === 0 && !displayContentSoFar ? 'hidden' : ''}
-		`}
-	>
-		{/* previous messages */}
-		{previousMessagesHTML}
-		{currStreamingMessageHTML}
+	// Build a single virtualized data array: real messages + transient extras
+	// (streaming bubble, stall banner, generating tool, loading indicator, escape
+	// hint, error block). Keeping everything in `data` lets Virtuoso's followOutput
+	// auto-pin the viewport to the bottom whenever the last item grows during
+	// streaming — no Footer measurement workarounds needed.
+	const chatItems = useMemo(() => {
+		const items: Array<{ key: string; render: () => React.ReactNode }> = []
 
-		{/* Stall recovery banner — shown when the LLM watchdog detects no new tokens within EARLY_STALL_MS */}
-		{currThreadStreamState?.isRunning === 'LLM' && currThreadStreamState.stallInfo ? (
-			<StallBanner
-				stalledAt={currThreadStreamState.stallInfo.stalledAt}
-				onAbort={() => { chatThreadsService.abortRunning(threadId) }}
-				onRetry={() => { chatThreadsService.retryStalledStream(threadId) }}
-			/>
-		) : null}
-
-		{/* Generating tool */}
-		{generatingTool}
-
-		{/* loading indicator with status message - only show when no content is streaming yet */}
-		{(isRunning === 'LLM' || isRunning === 'preparing') && !displayContentSoFar && !reasoningSoFar ? (
-			<ProseWrapper>
-				<div
-					className="flex items-center gap-3 loading-state-transition"
-					role="status"
-					aria-live="polite"
-					aria-atomic="true"
-				>
-					<span className="text-vibe-fg-2 opacity-70 flex-shrink-0 text-base leading-none">
-						<IconLoading state={isRunning === 'preparing' ? 'thinking' : 'processing'} />
-					</span>
-					<div className="flex flex-col gap-0.5">
-						<span className="text-sm text-vibe-fg-2 opacity-80">
-							{isRunning === 'preparing' && currThreadStreamState?.llmInfo?.displayContentSoFar
-								? currThreadStreamState.llmInfo.displayContentSoFar
-								: isRunning === 'preparing'
-									? 'Preparing request…'
-									: 'Generating response…'}
-						</span>
-						<span className="text-[11px] text-vibe-fg-3 opacity-50">Press Escape to cancel</span>
-					</div>
-				</div>
-			</ProseWrapper>
-		) : null}
-
-		{/* Escape hint when streaming (e.g. "Waiting for model response...") */}
-		{(isRunning === 'LLM' || isRunning === 'preparing') && (displayContentSoFar || reasoningSoFar) ? (
-			<p className="text-xs text-vibe-fg-3 opacity-60 mt-1" role="status">Press Escape to cancel</p>
-		) : null}
-
-
-		{/* error message */}
-		{latestError === undefined ? null :
-			<div className='px-2 my-1 message-enter space-y-2'>
-				<ErrorDisplay
-					message={latestError.message}
-					fullError={latestError.fullError}
-					onDismiss={() => { chatThreadsService.dismissStreamError(currentThread.id) }}
-					showDismiss={true}
+		// Real history. Defensive: thread state can occasionally produce two messages
+		// with the same id (e.g. a tool message duplicated by a retry/resume path).
+		// React requires globally unique keys, so we suffix repeats with #N — the
+		// first occurrence keeps the bare id for stable reconciliation.
+		const seen = new Map<string, number>()
+		previousMessages.forEach((message, i) => {
+			const baseKey = (message as any).id || `msg-${i}`
+			const count = seen.get(baseKey) ?? 0
+			seen.set(baseKey, count + 1)
+			const key = count === 0 ? baseKey : `${baseKey}#${count}`
+			items.push({
+				key,
+				render: () => <ChatBubble
+					currCheckpointIdx={currCheckpointIdx}
+					chatMessage={message}
+					messageIdx={i}
+					isCommitted={true}
+					chatIsRunning={isRunning}
+					threadId={threadId}
+					_scrollToBottom={scrollToBottomCallback}
 				/>
-				<p className="text-sm text-vibe-fg-3 px-1">
-					You can try again or open settings to change the model.
-				</p>
-				<WarningBox className='text-sm my-1 mx-3' onClick={() => { commandService.executeCommand(VIBEIDE_OPEN_SETTINGS_ACTION_ID) }} text='Open settings' />
-			</div>
-		}
-	</ScrollToBottomContainer>
+			})
+		})
 
+		// Streaming bubble (assistant response in progress) or "waiting for model" sentinel.
+		if (currStreamingMessageHTML) {
+			items.push({ key: 'curr-streaming-msg', render: () => currStreamingMessageHTML })
+		}
+
+		// Stall recovery banner — when LLM watchdog detects no new tokens within EARLY_STALL_MS.
+		if (currThreadStreamState?.isRunning === 'LLM' && currThreadStreamState.stallInfo) {
+			const stalledAt = currThreadStreamState.stallInfo.stalledAt
+			items.push({
+				key: 'stall-banner',
+				render: () => <StallBanner
+					stalledAt={stalledAt}
+					onAbort={() => { chatThreadsService.abortRunning(threadId) }}
+					onRetry={() => { chatThreadsService.retryStalledStream(threadId) }}
+				/>
+			})
+		}
+
+		// Generating-tool preview (edit_file / rewrite_file in progress).
+		if (generatingTool) {
+			items.push({ key: 'generating-tool', render: () => generatingTool })
+		}
+
+		// Loading indicator — only when no content is streaming yet.
+		if ((isRunning === 'LLM' || isRunning === 'preparing') && !displayContentSoFar && !reasoningSoFar) {
+			items.push({
+				key: 'loading-indicator',
+				render: () => <ProseWrapper>
+					<div className="flex items-center gap-3 loading-state-transition" role="status" aria-live="polite" aria-atomic="true">
+						<span className="text-vibe-fg-2 opacity-70 flex-shrink-0 text-base leading-none">
+							<IconLoading state={isRunning === 'preparing' ? 'thinking' : 'processing'} />
+						</span>
+						<div className="flex flex-col gap-0.5">
+							<span className="text-sm text-vibe-fg-2 opacity-80">
+								{isRunning === 'preparing' && currThreadStreamState?.llmInfo?.displayContentSoFar
+									? currThreadStreamState.llmInfo.displayContentSoFar
+									: isRunning === 'preparing'
+										? 'Preparing request…'
+										: 'Generating response…'}
+							</span>
+							<span className="text-[11px] text-vibe-fg-3 opacity-50">Press Escape to cancel</span>
+						</div>
+					</div>
+				</ProseWrapper>
+			})
+		}
+
+		// Escape hint when streaming.
+		if ((isRunning === 'LLM' || isRunning === 'preparing') && (displayContentSoFar || reasoningSoFar)) {
+			items.push({
+				key: 'escape-hint',
+				render: () => <p className="text-xs text-vibe-fg-3 opacity-60 mt-1" role="status">Press Escape to cancel</p>
+			})
+		}
+
+		// Error block.
+		if (latestError !== undefined) {
+			const _err = latestError as { message: string; fullError: Error | null; recoverable?: 'dismissPlan' }
+			const isPendingPlanGate = _err.recoverable === 'dismissPlan'
+			items.push({
+				key: 'error-block',
+				render: () => <div className='px-2 my-1 message-enter space-y-2'>
+					<ErrorDisplay
+						message={_err.message}
+						fullError={_err.fullError}
+						onDismiss={() => { chatThreadsService.dismissStreamError(currentThread.id) }}
+						showDismiss={true}
+					/>
+					{isPendingPlanGate ? (
+						// Permanent action button — visible even after the user closes the toast.
+						// One click dismisses every pending plan in this thread; the chat error
+						// clears on its own as soon as `dismissAllPendingPlans` returns >0 and
+						// the command resets streamState.
+						<WarningBox
+							className='text-sm my-1 mx-3'
+							onClick={() => { commandService.executeCommand('vibeide.chat.dismissPendingPlan') }}
+							text='Сбросить план и продолжить'
+						/>
+					) : (
+						<>
+							<p className="text-sm text-vibe-fg-3 px-1">You can try again or open settings to change the model.</p>
+							<WarningBox className='text-sm my-1 mx-3' onClick={() => { commandService.executeCommand(VIBEIDE_OPEN_SETTINGS_ACTION_ID) }} text='Open settings' />
+						</>
+					)}
+				</div>
+			})
+		}
+
+		return items
+	}, [
+		previousMessages,
+		currCheckpointIdx,
+		isRunning,
+		threadId,
+		scrollToBottomCallback,
+		currStreamingMessageHTML,
+		currThreadStreamState,
+		generatingTool,
+		displayContentSoFar,
+		reasoningSoFar,
+		latestError,
+		chatThreadsService,
+		commandService,
+		currentThread.id,
+	])
+
+	const messagesHTML = (
+		<Virtuoso
+			ref={virtuosoRef}
+			// Force a full remount (and a fresh scroll position) when switching threads.
+			key={'messages-' + chatThreadsState.currentThreadId}
+			style={{ width: '100%', height: '100%' }}
+			className={chatItems.length === 0 ? 'hidden' : ''}
+			data={chatItems}
+			computeItemKey={(_idx, item) => item.key}
+			itemContent={(_idx, item) => (
+				<div className='px-3 py-1.5'>
+					{item.render()}
+				</div>
+			)}
+			// Follow new content only when the user is already at the bottom. If they
+			// scrolled up to read history, we won't yank them back to the bottom mid-read.
+			followOutput={() => isAtBottomRef.current ? 'auto' : false}
+			atBottomStateChange={handleAtBottomStateChange}
+			// On initial mount, open at the latest item so histories behave like a
+			// normal chat (newest visible first).
+			initialTopMostItemIndex={Math.max(0, chatItems.length - 1)}
+			components={{ Scroller: ChatScroller }}
+			// A small bottom buffer keeps the streaming bubble from popping in/out of
+			// measurement while it grows.
+			increaseViewportBy={{ top: 0, bottom: 400 }}
+		/>
+	)
+
+
+	// ----- /skill: autocomplete ---------------------------------------------------
+	// Drop-down that opens whenever the user types `/skill:` in the textarea. Lists
+	// available skills sorted MRU-first (via vibeSkillsLibraryService.getRecentSkills),
+	// filter-as-you-type, arrow/Tab/Enter to insert, Escape to dismiss. The trigger is
+	// detected from text-before-cursor on every onChangeText; we re-derive open state
+	// rather than tracking it imperatively so it always reflects current cursor context.
+	type SkillCmd = { name: string; description: string; category: 'skill' }
+	const [skillCmds, setSkillCmds] = useState<SkillCmd[]>([])
+	const [skillMenuOpen, setSkillMenuOpen] = useState(false)
+	const [skillFilter, setSkillFilter] = useState('')
+	const [skillIdx, setSkillIdx] = useState(0)
+	const [skillAnchorRect, setSkillAnchorRect] = useState<{ left: number; bottom: number; width: number } | null>(null)
+
+	// Load skills list once on mount; refresh if it goes stale (TODO: subscribe to file events).
+	useEffect(() => {
+		const slashSvc = accessor.get('IVibeSlashCommandService')
+		const skillsSvc = accessor.get('IVibeSkillsLibraryService')
+		let cancelled = false
+		slashSvc.getCommands().then(cmds => {
+			if (cancelled) return
+			const skills = cmds.filter((c): c is SkillCmd => c.category === 'skill')
+			const recent = skillsSvc.getRecentSkills()
+			const recentKeys = new Set(recent.map(id => `skill:${id}`))
+			const recentList = recent
+				.map(id => skills.find(s => s.name === `skill:${id}`))
+				.filter((s): s is SkillCmd => !!s)
+			const rest = skills
+				.filter(s => !recentKeys.has(s.name))
+				.sort((a, b) => a.name.localeCompare(b.name))
+			setSkillCmds([...recentList, ...rest])
+		}).catch(() => { /* skills service not ready or no skills — leave list empty */ })
+		return () => { cancelled = true }
+	}, [accessor])
+
+	// Filtered list shown in dropdown.
+	const filteredSkillCmds = useMemo(() => {
+		if (!skillFilter) return skillCmds
+		const q = skillFilter.toLowerCase()
+		return skillCmds.filter(c => c.name.toLowerCase().includes(q) || (c.description ?? '').toLowerCase().includes(q))
+	}, [skillCmds, skillFilter])
+
+	// Insert the selected skill at the `/skill:` trigger position.
+	const insertSelectedSkill = useCallback((cmd: SkillCmd) => {
+		const ta = textAreaRef.current
+		if (!ta) return
+		const text = ta.value
+		const cursorPos = ta.selectionStart
+		const before = text.slice(0, cursorPos)
+		const after = text.slice(cursorPos)
+		const m = /\/skill:([\w.-]*)$/.exec(before)
+		if (!m) return
+		const insertion = '/' + cmd.name + ' '
+		const newText = before.slice(0, m.index) + insertion + after
+		const newCursor = m.index + insertion.length
+		// Synthetic native setter so React picks up the change and onChange fires.
+		const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set
+		setter?.call(ta, newText)
+		ta.dispatchEvent(new Event('input', { bubbles: true }))
+		ta.setSelectionRange(newCursor, newCursor)
+		ta.focus()
+		setSkillMenuOpen(false)
+	}, [])
 
 	const onChangeText = useCallback((newStr: string) => {
 		setInstructionsAreEmpty(!newStr)
+		// Detect `/skill:` trigger near cursor and open/close menu accordingly.
+		const ta = textAreaRef.current
+		if (!ta) { setSkillMenuOpen(false); return }
+		const cursorPos = ta.selectionStart
+		const before = newStr.slice(0, cursorPos)
+		const m = /\/skill:([\w.-]*)$/.exec(before)
+		if (m) {
+			setSkillFilter(m[1])
+			setSkillIdx(0)
+			setSkillMenuOpen(true)
+			const rect = ta.getBoundingClientRect()
+			setSkillAnchorRect({ left: rect.left, bottom: rect.top, width: rect.width })
+		} else {
+			setSkillMenuOpen(false)
+		}
 	}, [setInstructionsAreEmpty])
+
 	const onKeyDown = useCallback((e: KeyboardEvent<HTMLTextAreaElement>) => {
+		// Skill menu takes precedence over Enter/Escape submit/abort when it's open.
+		if (skillMenuOpen && filteredSkillCmds.length > 0) {
+			if (e.key === 'ArrowDown') {
+				e.preventDefault()
+				setSkillIdx(i => Math.min(filteredSkillCmds.length - 1, i + 1))
+				return
+			}
+			if (e.key === 'ArrowUp') {
+				e.preventDefault()
+				setSkillIdx(i => Math.max(0, i - 1))
+				return
+			}
+			if (e.key === 'Enter' || e.key === 'Tab') {
+				e.preventDefault()
+				insertSelectedSkill(filteredSkillCmds[skillIdx])
+				return
+			}
+			if (e.key === 'Escape') {
+				e.preventDefault()
+				setSkillMenuOpen(false)
+				return
+			}
+		}
 		if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
 			// Check isDisabled again at the time of key press (not closure value)
 			if (!isDisabled && !isRunning) {
@@ -4912,7 +5069,7 @@ export const SidebarChat = () => {
 		} else if (e.key === 'Escape' && isRunning) {
 			onAbort()
 		}
-	}, [onSubmit, onAbort, isRunning, isDisabled])
+	}, [onSubmit, onAbort, isRunning, isDisabled, skillMenuOpen, filteredSkillCmds, skillIdx, insertSelectedSkill])
 
 	// Context usage calculation + warning (partially memoized - draft tokens calculated on each render)
 	const [ctxWarned, setCtxWarned] = useState(false)
@@ -5080,6 +5237,38 @@ export const SidebarChat = () => {
 				if (pdfs.length > 0) addPDFs(pdfs)
 			}}
 		/>
+
+		{/* /skill: autocomplete overlay — fixed-positioned above the textarea, max 8 visible
+		    rows with internal scroll, recent skills first. Click-outside / Escape / blur close it. */}
+		{skillMenuOpen && filteredSkillCmds.length > 0 && skillAnchorRect && (
+			<div
+				className='fixed z-50 bg-vibe-bg-1 border border-vibe-border-3 rounded-lg shadow-xl overflow-hidden'
+				style={{
+					left: skillAnchorRect.left,
+					width: Math.min(420, skillAnchorRect.width),
+					bottom: window.innerHeight - skillAnchorRect.bottom + 4,
+					maxHeight: 280,
+				}}
+				onMouseDown={(e) => { e.preventDefault() /* keep textarea focus */ }}
+			>
+				<div className='px-3 py-1.5 text-[11px] text-vibe-fg-3 border-b border-vibe-border-3 bg-vibe-bg-2'>
+					Доступные скиллы — ↑↓ выбор, Enter/Tab вставить, Esc закрыть
+				</div>
+				<div className='overflow-y-auto' style={{ maxHeight: 240 }}>
+					{filteredSkillCmds.map((cmd, i) => (
+						<div
+							key={cmd.name}
+							className={`px-3 py-2 cursor-pointer ${i === skillIdx ? 'bg-vibe-bg-3' : 'hover:bg-vibe-bg-2'}`}
+							onMouseEnter={() => setSkillIdx(i)}
+							onClick={() => insertSelectedSkill(cmd)}
+						>
+							<div className='text-vibe-fg-1 text-sm font-mono'>/{cmd.name}</div>
+							{cmd.description && <div className='text-vibe-fg-3 text-xs truncate mt-0.5'>{cmd.description}</div>}
+						</div>
+					))}
+				</div>
+			</div>
+		)}
 
 		{/* Context chips for current selections */}
 		{selections.length > 0 && (

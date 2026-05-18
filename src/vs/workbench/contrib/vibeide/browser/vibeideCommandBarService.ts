@@ -132,6 +132,15 @@ export class VibeideCommandBarService extends Disposable implements IVibeideComm
 		// for every new editor, add the floating widget and update active URI
 		const disposablesOfEditorId: { [editorId: string]: IDisposable[] } = {};
 		const onCodeEditorAdd = (editor: ICodeEditor) => {
+			// Skip read-only chat previews (BlockCode in the chat sidebar): they don't host
+			// diff zones, never need accept/reject UI, and otherwise leak a fan-out of
+			// listeners on workbench services per mounted block in long chat histories.
+			// Tagged via `data-vibe-chat-readonly-preview` in inputs.tsx → BlockCode.
+			const containerNode = editor.getContainerDomNode();
+			if (containerNode.closest('[data-vibe-chat-readonly-preview]')) {
+				return;
+			}
+
 			const id = editor.getId();
 			disposablesOfEditorId[id] = [];
 

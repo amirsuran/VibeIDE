@@ -69,6 +69,7 @@ import { IMCPService } from '../common/mcpService.js';
 import { IRepoIndexerService } from './repoIndexerService.js';
 import { IMemoriesService } from '../common/memoriesService.js';
 import { IVibeSkillsLibraryService } from '../common/vibeSkillsLibraryService.js';
+import { IVibeSlashCommandService } from '../common/vibeSlashCommandService.js';
 import { IAuditLogService } from '../common/auditLogService.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { VIBE_DOTVIBE_AGENT_PLAYBOOK } from '../common/vibeDotVibeAgentPlaybook.js';
@@ -1255,6 +1256,7 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 		@IRepoIndexerService private readonly repoIndexerService: IRepoIndexerService,
 		@IMemoriesService private readonly memoriesService: IMemoriesService,
 		@IVibeSkillsLibraryService private readonly skillsLibraryService: IVibeSkillsLibraryService,
+		@IVibeSlashCommandService private readonly slashCommandService: IVibeSlashCommandService,
 		@IAuditLogService private readonly auditLogService: IAuditLogService,
 		@IConfigurationService private readonly configurationService: IConfigurationService,
 		@IVibeContextGuardService private readonly contextGuardService: IVibeContextGuardService,
@@ -1661,6 +1663,34 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 		const lastUserTextForSkills = typeof lastUserForSkills?.content === 'string' ? lastUserForSkills.content : '';
 		const skillsDiscovery = await this.skillsLibraryService.getDiscoveryText(chatMode);
 		const implicitSkills = await this.skillsLibraryService.getImplicitSkillRetrievalHints(lastUserTextForSkills, chatMode);
+
+		// Explicit `/skill:NAME` invocations — expand the full SKILL.md body via
+		// IVibeSlashCommandService and inject it as an extra context block. Without this,
+		// the model only sees the GUIDELINES list of names+descriptions but never the
+		// actual skill body, so it can't follow the skill's instructions (and previously
+		// tried to fetch the file with `ls_dir`, hitting workspace guardrails).
+		// Done up to 3 unique skills per message to keep tokens bounded.
+		let explicitSkillsContext = '';
+		const explicitSkillIdsForExpand = Array.from(new Set(
+			[...lastUserTextForSkills.matchAll(/\/skill:\s*([\w.-]+)/gi)].map(m => m[1])
+		)).slice(0, 3);
+		if (explicitSkillIdsForExpand.length > 0) {
+			const expansions: string[] = [];
+			for (const skillId of explicitSkillIdsForExpand) {
+				try {
+					const expanded = await this.slashCommandService.expand(`/skill:${skillId}`);
+					if (expanded) {
+						expansions.push(expanded);
+						// Bump MRU so this skill ranks higher in autocomplete next time.
+						this.skillsLibraryService.trackSkillUse?.(skillId);
+					}
+				} catch { /* best-effort: skip on failure, model still sees the literal /skill:NAME */ }
+			}
+			if (expansions.length > 0) {
+				explicitSkillsContext = '## Explicitly invoked Agent Skills (full SKILL.md content)\n\nThe user invoked these skills with `/skill:NAME`. Their full content is provided below — follow these instructions as authoritative procedural guidance for this turn.\n\n' + expansions.join('\n\n---\n\n');
+			}
+		}
+
 		const auditSkills = this.configurationService.getValue<boolean>('vibeide.skills.auditSkillSuggestions') ?? false;
 		if (auditSkills && this.auditLogService.isEnabled()) {
 			const explicitSkillIds = [...lastUserTextForSkills.matchAll(/\/skill:\s*([\w.-]+)/gi)].map(m => m[1]);
@@ -1687,7 +1717,7 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 		const lastUserForLang = [...chatMessages].reverse().find(m => m.role === 'user');
 		const lastUserTextForLang = typeof lastUserForLang?.content === 'string' ? lastUserForLang.content : '';
 		const langDirective = buildResponseLanguageDirective(responseLangSetting, lastUserTextForLang);
-		const aiInstructions = [this._getCombinedAIInstructions(), skillsDiscovery, implicitSkills, langDirective].filter(s => s.trim().length > 0).join('\n\n');
+		const aiInstructions = [this._getCombinedAIInstructions(), skillsDiscovery, implicitSkills, explicitSkillsContext, langDirective].filter(s => s.trim().length > 0).join('\n\n');
 		const isReasoningEnabled = getIsReasoningEnabledState('Chat', validProviderName, modelName, modelSelectionOptions, overridesOfModel)
 		const reservedOutputTokenSpace = getReservedOutputTokenSpace(validProviderName, modelName, { isReasoningEnabled, overridesOfModel })
 		let llmMessages = this._chatMessagesToSimpleMessages(chatMessages)
