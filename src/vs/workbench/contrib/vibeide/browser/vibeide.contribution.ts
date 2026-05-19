@@ -103,6 +103,10 @@ import '../common/secretDetectionService.js'
 import '../common/memoriesService.js'
 import './memoriesTrackingContribution.js'
 
+// models.dev catalog status (toast on startup if catalog couldn't load from network)
+import '../common/modelsDevCatalogStatusService.js'
+import './modelsDevCatalogStatusContribution.js'
+
 // edit risk scoring
 import '../common/editRiskScoringService.js'
 

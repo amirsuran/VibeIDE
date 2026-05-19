@@ -1497,6 +1497,39 @@ const SimplifiedToolHeader = ({
 };
 
 
+// Highlights slash-commands like `/skill-name` or `/skill:name` inline. Matches only
+// when the slash starts the message or follows whitespace — avoids false positives on
+// regex hits inside paths (`/usr/bin`), URLs, or code fragments. Returns alternating
+// plain-string and pill spans; rendered text is identical to input verbatim.
+const SLASH_COMMAND_RE = /(^|\s)(\/(?:skill:)?[\w.-]+)/g;
+// Inline fallback for builds where vibeide.css hasn't been re-bundled. Inline wins
+// specificity and matches what util/inputs.tsx ships for the input overlay.
+// Geometry-neutral outline: same shape as the overlay version, no border/padding so
+// inline char-advance stays identical to the textarea (caret alignment depends on it).
+const SKILL_PILL_INLINE_STYLE: React.CSSProperties = {
+	background: 'var(--vibe-skill-pill-bg, rgba(3, 237, 249, 0.16))',
+	color: 'var(--vibe-skill-pill-fg, #03edf9)',
+	borderRadius: 3,
+	boxShadow: 'inset 0 0 0 1px var(--vibe-skill-pill-border, rgba(3, 237, 249, 0.40))',
+	textShadow: 'var(--vibe-skill-pill-glow, none)',
+};
+const renderWithSkillHighlights = (text: string): React.ReactNode => {
+	if (!text || !text.includes('/')) return text;
+	const out: React.ReactNode[] = [];
+	let lastIdx = 0;
+	let m: RegExpExecArray | null;
+	SLASH_COMMAND_RE.lastIndex = 0;
+	while ((m = SLASH_COMMAND_RE.exec(text)) !== null) {
+		const [, leading, cmd] = m;
+		const cmdStart = m.index + leading.length;
+		if (cmdStart > lastIdx) out.push(text.slice(lastIdx, cmdStart));
+		out.push(<span key={cmdStart} className="vibe-skill-pill" style={SKILL_PILL_INLINE_STYLE}>{cmd}</span>);
+		lastIdx = cmdStart + cmd.length;
+	}
+	if (lastIdx === 0) return text;
+	if (lastIdx < text.length) out.push(text.slice(lastIdx));
+	return <>{out}</>;
+};
 
 
 const UserMessageComponent = ({ chatMessage, messageIdx, isCheckpointGhost, currCheckpointIdx, _scrollToBottom }: { chatMessage: ChatMessage & { role: 'user' }, messageIdx: number, currCheckpointIdx: number | undefined, isCheckpointGhost: boolean, _scrollToBottom: (() => void) | null }) => {
@@ -1594,7 +1627,7 @@ const UserMessageComponent = ({ chatMessage, messageIdx, isCheckpointGhost, curr
 				</div>
 			)}
 			{chatMessage.displayContent && (
-				<span className='px-0.5'>{chatMessage.displayContent}</span>
+				<span className='px-0.5'>{renderWithSkillHighlights(chatMessage.displayContent)}</span>
 			)}
 		</>
 	}
@@ -5285,6 +5318,7 @@ export const SidebarChat = () => {
 			ref={textAreaRef}
 			fnsRef={textAreaFnsRef}
 			multiline={true}
+			highlightSlashCommands={true}
 			onPasteFiles={(files) => {
 				const images = files.filter(f => f.type.startsWith('image/'))
 				const pdfs = files.filter(f => f.type === 'application/pdf')

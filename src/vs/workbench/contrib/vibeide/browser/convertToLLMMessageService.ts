@@ -1732,14 +1732,14 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 			[...lastUserTextForSkills.matchAll(/\/skill:\s*([\w.-]+)/gi)].map(m => m[1])
 		)).slice(0, 3);
 		// eslint-disable-next-line no-console
-		console.warn('[VibeIDE/Skill] expand intercept', { lastUserSnippet: lastUserTextForSkills.slice(0, 100), foundIds: explicitSkillIdsForExpand });
+		console.debug('[VibeIDE/Skill] expand intercept', { lastUserSnippet: lastUserTextForSkills.slice(0, 100), foundIds: explicitSkillIdsForExpand });
 		const explicitSkillBodies: Array<{ id: string; body: string }> = [];
 		if (explicitSkillIdsForExpand.length > 0) {
 			for (const skillId of explicitSkillIdsForExpand) {
 				try {
 					const expanded = await this.slashCommandService.expand(`/skill:${skillId}`);
 					// eslint-disable-next-line no-console
-					console.warn('[VibeIDE/Skill] expand result', { skillId, isNull: expanded === null, isEmpty: expanded === '', bodyLen: expanded?.length ?? 0, headSnippet: expanded?.slice(0, 120) ?? null });
+					console.debug('[VibeIDE/Skill] expand result', { skillId, isNull: expanded === null, isEmpty: expanded === '', bodyLen: expanded?.length ?? 0, headSnippet: expanded?.slice(0, 120) ?? null });
 					if (expanded) {
 						explicitSkillBodies.push({ id: skillId, body: expanded });
 						// Bump MRU so this skill ranks higher in autocomplete next time.
@@ -1751,7 +1751,7 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 				}
 			}
 			// eslint-disable-next-line no-console
-			console.warn('[VibeIDE/Skill] final context built', { expansionsCount: explicitSkillBodies.length, totalBodyChars: explicitSkillBodies.reduce((a, b) => a + b.body.length, 0) });
+			console.debug('[VibeIDE/Skill] final context built', { expansionsCount: explicitSkillBodies.length, totalBodyChars: explicitSkillBodies.reduce((a, b) => a + b.body.length, 0) });
 		}
 		// Build the user-message prefix once; we prepend it after `_chatMessagesToSimpleMessages`
 		// converts to the canonical wire format.
@@ -2098,7 +2098,7 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 			const lastUserHasSkillInvocation = lastUserContent.includes(skillInvocationTag);
 			const skillBodyHeadIdx = lastUserContent.indexOf(skillInvocationTag);
 			// eslint-disable-next-line no-console
-			console.warn('[VibeIDE/promptDump] final prompt summary', {
+			console.debug('[VibeIDE/promptDump] final prompt summary', {
 				provider: validProviderName,
 				model: modelName,
 				supportsSystemMessage,

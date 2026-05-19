@@ -21,6 +21,7 @@ import { MCPChannel } from './mcpChannel.js';
 import { MetricsMainService } from './metricsMainService.js';
 import { OllamaInstallerChannel } from './ollamaInstallerChannel.js';
 import { RemoteCatalogFetchChannel } from './remoteCatalogFetchChannel.js';
+import { ModelsDevCatalogStatusMainService } from './modelsDevCatalogStatusMainService.js';
 
 /**
  * Registers IPC channels expected by workbench contrib/vibeide (renderer).
@@ -67,4 +68,10 @@ export function registerVibeideMainProcessChannels(
 
 	const ollamaInstallerChannel = new OllamaInstallerChannel();
 	mainProcessElectronServer.registerChannel('vibe-channel-ollamaInstaller', ollamaInstallerChannel);
+
+	const modelsDevCatalogStatusService = new ModelsDevCatalogStatusMainService();
+	mainProcessElectronServer.registerChannel(
+		'vibeide-channel-modelsDevCatalogStatus',
+		ProxyChannel.fromService(modelsDevCatalogStatusService, disposables),
+	);
 }

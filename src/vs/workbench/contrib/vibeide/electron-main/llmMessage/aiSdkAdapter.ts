@@ -335,6 +335,96 @@ const convertMessagesToModelMessages = (messages: LLMChatMessage[]): ModelMessag
 			const callId: string = msg.tool_call_id ?? '';
 			const toolName: string = toolNameLookup.get(callId) ?? 'unknown_tool';
 			const text = typeof msg.content === 'string' ? msg.content : flattenTextContent(msg.content);
+
+			// Two-stage orphan-tool guard.
+			//
+			// (1) Source-level orphan: if NO assistant message in the original `messages`
+			//     array contains a tool_call with this callId, the tool message is a true
+			//     orphan — auto-summary dropped its parent assistant turn entirely. We
+			//     can't synthesize a faithful replacement: strict providers (DeepSeek
+			//     thinking via openCode) require `reasoning_content` on the assistant
+			//     turn, and we have no reasoning to attach. A bare tool-call stub passes
+			//     the "tool must follow tool_calls" check but fails the
+			//     "reasoning_content must be passed back" check. Dropping the orphan tool
+			//     is the only safe option — the model will re-call if it needs the result.
+			//
+			// (2) Out-level orphan: source has the tool_call, but the assistant carrying
+			//     it hasn't been pushed to `out` yet (some upstream filter or ordering
+			//     quirk). Rare, but still recoverable with a stub because in this branch
+			//     we know a corresponding assistant existed — no DeepSeek reasoning
+			//     requirement applies because original source-level structure is intact.
+			let hasMatchingInSource = false;
+			for (const m of messages as any[]) {
+				if (m?.role === 'assistant' && Array.isArray(m.tool_calls)) {
+					if (m.tool_calls.some((tc: any) => tc?.id === callId)) {
+						hasMatchingInSource = true;
+						break;
+					}
+				}
+			}
+
+			let hasMatchingInOut = false;
+			for (let j = out.length - 1; j >= 0; j--) {
+				const m: any = out[j];
+				if (m.role === 'assistant' && Array.isArray(m.content)) {
+					if (m.content.some((p: any) => p?.type === 'tool-call' && p?.toolCallId === callId)) {
+						hasMatchingInOut = true;
+					}
+					break;
+				}
+				if (m.role === 'user') break;
+			}
+
+			// True orphan from auto-summary: no matching assistant.tool_call exists in
+			// source. Two failure modes to avoid:
+			//   - Push tool-result alone → DeepSeek 400 "tool must follow tool_calls".
+			//   - Drop the tool message entirely → model loses memory of its own prior
+			//     call, decides "tool not executed", re-invokes the same tool → infinite
+			//     agent loop (the orphan reappears on every iteration after summary).
+			// Fix: synthesize the missing assistant with a reasoning placeholder (DeepSeek
+			// thinking accepts any non-empty `reasoning` here — it only rejects when the
+			// field is absent entirely), then replace the tool's content with an explicit
+			// "result was discarded by summary" message so the model knows not to retry.
+			if (!hasMatchingInSource) {
+				out.push({
+					role: 'assistant',
+					content: [
+						// Non-empty placeholder satisfies DeepSeek's "reasoning_content must
+						// be passed back" check. Content is intentionally short and explicit.
+						{ type: 'reasoning', text: '(reasoning omitted during conversation summarization)' },
+						{ type: 'tool-call', toolCallId: callId, toolName, input: {} },
+					],
+				});
+				out.push({
+					role: 'tool',
+					content: [{
+						type: 'tool-result',
+						toolCallId: callId,
+						toolName,
+						output: {
+							type: 'text',
+							value:
+								`(Original tool result was discarded by conversation summarization. ` +
+								`Do NOT re-invoke this tool with the same arguments — assume the work was done ` +
+								`and continue from here. If you genuinely need this data again, call with different args.)`,
+						},
+					}],
+				});
+				continue;
+			}
+
+			if (!hasMatchingInOut) {
+				out.push({
+					role: 'assistant',
+					content: [{
+						type: 'tool-call',
+						toolCallId: callId,
+						toolName,
+						input: {},
+					}],
+				});
+			}
+
 			out.push({
 				role: 'tool',
 				content: [{

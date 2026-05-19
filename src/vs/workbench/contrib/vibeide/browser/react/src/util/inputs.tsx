@@ -417,8 +417,12 @@ type InputBox2Props = {
 	onBlur?: (e: React.FocusEvent<HTMLTextAreaElement>) => void;
 	onChangeHeight?: (newHeight: number) => void;
 	onPasteFiles?: (files: File[]) => void;
+	/** Render an overlay layer behind the textarea that pills slash-commands like
+	 *  `/skill:name` / `/skill-name`. Caret + selection stay on the (transparent-text)
+	 *  textarea; pills are painted by the overlay div in sync with text + scroll. */
+	highlightSlashCommands?: boolean;
 }
-export const VibeInputBox2 = forwardRef<HTMLTextAreaElement, InputBox2Props>(function X({ initValue, placeholder, multiline, enableAtToMention, fnsRef, className = '', appearance = 'default', style, onKeyDown, onFocus, onBlur, onChangeText, onPasteFiles }, ref) {
+export const VibeInputBox2 = forwardRef<HTMLTextAreaElement, InputBox2Props>(function X({ initValue, placeholder, multiline, enableAtToMention, fnsRef, className = '', appearance = 'default', style, onKeyDown, onFocus, onBlur, onChangeText, onPasteFiles, highlightSlashCommands }, ref) {
 
 
 	// mirrors whatever is in ref
@@ -428,6 +432,17 @@ export const VibeInputBox2 = forwardRef<HTMLTextAreaElement, InputBox2Props>(fun
 	const languageService = accessor.get('ILanguageService')
 
 	const textAreaRef = useRef<HTMLTextAreaElement | null>(null)
+	const overlayRef = useRef<HTMLDivElement | null>(null);
+	// Live mirror of textarea.value for the overlay. Kept as state (not derived from
+	// the textarea each render) so highlightSlashCommands re-renders the pills as the
+	// user types — textarea.value alone wouldn't trigger React reconciliation.
+	const [overlayText, setOverlayText] = useState('');
+	const syncOverlayScroll = useCallback(() => {
+		const ta = textAreaRef.current; const ov = overlayRef.current;
+		if (!ta || !ov) return;
+		ov.scrollTop = ta.scrollTop;
+		ov.scrollLeft = ta.scrollLeft;
+	}, []);
 	const selectedOptionRef = useRef<HTMLDivElement>(null);
 	const [isMenuOpen, _setIsMenuOpen] = useState(false); // the @ to mention menu
 	const setIsMenuOpen: typeof _setIsMenuOpen = (value) => {
@@ -780,6 +795,7 @@ export const VibeInputBox2 = forwardRef<HTMLTextAreaElement, InputBox2Props>(fun
 			const r = textAreaRef.current
 			if (!r) return
 			r.value = val
+			setOverlayText(val)
 			onChangeText?.(r.value)
 			adjustHeight()
 		},
@@ -814,8 +830,19 @@ export const VibeInputBox2 = forwardRef<HTMLTextAreaElement, InputBox2Props>(fun
 			color: asCssVariable(inputForeground),
 		}
 
-	return <>
-		<textarea
+	// Caret-color must stay visible even when we make textarea text transparent for the
+	// overlay-trick. Mirrors the textarea's normal foreground per appearance variant.
+	const overlayCaretColor = isChatDark ? '#fff' : asCssVariable(inputForeground);
+	// Why textShadow: 'none' — the neon theme applies `text-shadow: var(--vibe-neon-text-glow)`
+	// to .vibe-chat-neon-scope textarea (vibeide.css). With `color: transparent` the glyph
+	// disappears but text-shadow keeps rendering at the glyph positions — visible as a
+	// ghosted blur of the input text. Killing the shadow on the textarea hides it; the
+	// overlay (which paints the visible text) keeps its own shadow via .vibe-skill-pill.
+	const textareaOverlayStyle: React.CSSProperties = highlightSlashCommands
+		? { color: 'transparent', caretColor: overlayCaretColor, textShadow: 'none' }
+		: {};
+
+	const textareaEl = <textarea
 			autoFocus={false}
 			ref={useCallback((r: HTMLTextAreaElement | null) => {
 				if (fnsRef)
@@ -831,6 +858,7 @@ export const VibeInputBox2 = forwardRef<HTMLTextAreaElement, InputBox2Props>(fun
 
 			onFocus={onFocus}
 			onBlur={onBlur}
+			onScroll={highlightSlashCommands ? syncOverlayScroll : undefined}
 
 			onPaste={useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
 				if (!onPasteFiles) return
@@ -850,8 +878,8 @@ export const VibeInputBox2 = forwardRef<HTMLTextAreaElement, InputBox2Props>(fun
 
 			disabled={!isEnabled}
 
-			className={`w-full resize-none max-h-[500px] overflow-y-auto ${appearanceClasses} ${className}`}
-			style={{ ...baseStyle, ...style }}
+			className={`w-full resize-none max-h-[500px] overflow-y-auto ${appearanceClasses} ${className} ${highlightSlashCommands ? 'vibe-textarea-with-overlay' : ''}`}
+			style={{ ...baseStyle, ...style, ...textareaOverlayStyle }}
 
 			onInput={useCallback((event: React.FormEvent<HTMLTextAreaElement>) => {
 				const latestChange = (event.nativeEvent as InputEvent).data;
@@ -865,6 +893,7 @@ export const VibeInputBox2 = forwardRef<HTMLTextAreaElement, InputBox2Props>(fun
 			onChange={useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
 				const r = textAreaRef.current
 				if (!r) return
+				setOverlayText(r.value)
 				onChangeText?.(r.value)
 				adjustHeight()
 			}, [onChangeText, adjustHeight])}
@@ -896,7 +925,91 @@ export const VibeInputBox2 = forwardRef<HTMLTextAreaElement, InputBox2Props>(fun
 
 			rows={1}
 			placeholder={placeholder}
-		/>
+		/>;
+
+	// Overlay layer rendering. Inherits font + padding + line-height by being placed
+	// inside the same wrapper that the textarea sits in and stretching to `inset: 0`.
+	// `pointer-events: none` so clicks pass straight to the textarea. The pill spans
+	// use `display: inline` (not inline-block) — inline-block would shift line wrapping
+	// vs. the underlying textarea where each char takes its raw advance width.
+	// Inline pill style (mirrors `.vibe-skill-pill` in vibeide.css). Inline kept so
+	// the highlight survives builds where the CSS bundle hasn't been re-compiled yet.
+	// IMPORTANT: nothing here can change inline char-advance widths, otherwise the
+	// overlay drifts vs. the textarea and the caret mis-aligns by ~one char per pill.
+	// That rules out: padding, border, letter-spacing, font-size, font-variant-ligatures.
+	// Use `box-shadow: inset` for the outline (zero geometry impact) and skip border.
+	const skillPillInlineStyle: React.CSSProperties = {
+		background: 'var(--vibe-skill-pill-bg, rgba(3, 237, 249, 0.16))',
+		color: 'var(--vibe-skill-pill-fg, #03edf9)',
+		borderRadius: 3,
+		boxShadow: 'inset 0 0 0 1px var(--vibe-skill-pill-border, rgba(3, 237, 249, 0.40))',
+		textShadow: 'var(--vibe-skill-pill-glow, none)',
+	};
+	const renderOverlayChildren = (text: string): React.ReactNode => {
+		if (!text) return null;
+		const re = /(^|\s)(\/(?:skill:)?[\w.-]+)/g;
+		const out: React.ReactNode[] = [];
+		let lastIdx = 0;
+		let m: RegExpExecArray | null;
+		while ((m = re.exec(text)) !== null) {
+			const cmdStart = m.index + m[1].length;
+			if (cmdStart > lastIdx) out.push(text.slice(lastIdx, cmdStart));
+			out.push(<span key={cmdStart} className="vibe-skill-pill" style={skillPillInlineStyle}>{m[2]}</span>);
+			lastIdx = cmdStart + m[2].length;
+		}
+		if (lastIdx === 0) return text;
+		if (lastIdx < text.length) out.push(text.slice(lastIdx));
+		// Trailing newline guard: a final `\n` in textarea creates an extra blank line
+		// that the overlay <div> doesn't reserve (textareas implicitly add it). Append
+		// a zero-width char so the overlay's last line matches the textarea's height.
+		if (text.endsWith('\n')) out.push('​');
+		return <>{out}</>;
+	};
+
+	// Inline overlay styles are duplicated here (also live in vibeide.css as
+	// `.vibe-textarea-overlay`) so that the trick works even if the CSS hasn't
+	// been re-bundled yet. Inline wins specificity and survives missing stylesheets.
+	// Overlay carries the VISIBLE text (textarea text is transparent — it only owns
+	// the caret + selection). Color matches what the textarea would have rendered so
+	// the user sees the same characters in the same color, just routed through a div
+	// that can also paint pill spans. Inheritable text-shadow (neon glow) is left
+	// alone — overlay text legitimately wants it, same as the textarea did before.
+	const overlayInlineStyle: React.CSSProperties = {
+		position: 'absolute',
+		inset: 0,
+		pointerEvents: 'none',
+		userSelect: 'none',
+		overflow: 'hidden',
+		whiteSpace: 'pre-wrap',
+		wordWrap: 'break-word',
+		overflowWrap: 'break-word',
+		color: overlayCaretColor,
+		font: 'inherit',
+		lineHeight: 'inherit',
+		letterSpacing: 'inherit',
+		textAlign: 'inherit' as React.CSSProperties['textAlign'],
+		border: '1px solid transparent',
+		boxSizing: 'border-box',
+		margin: 0,
+	};
+
+	return <>
+		{highlightSlashCommands ? (
+			<div
+				className="vibe-textarea-overlay-wrap"
+				style={{ position: 'relative', width: '100%', display: 'block' }}
+			>
+				<div
+					ref={overlayRef}
+					className={`vibe-textarea-overlay ${className}`}
+					aria-hidden="true"
+					style={overlayInlineStyle}
+				>
+					{renderOverlayChildren(overlayText)}
+				</div>
+				{textareaEl}
+			</div>
+		) : textareaEl}
 		{/* <div>{`idx ${optionIdx}`}</div> */}
 		{isMenuOpen && (
 			<div

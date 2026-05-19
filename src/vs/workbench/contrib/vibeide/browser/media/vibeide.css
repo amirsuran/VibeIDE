@@ -112,6 +112,59 @@
 	--vibe-neon-text-glow: none;
 	--vibe-neon-timestamp-fg: var(--vibe-fg-3);
 	--vibe-neon-timestamp-glow: none;
+
+	/* Skill-pill (slash-command highlight in chat input + history). Defaults look like
+	 * normal inline code via VS Code's textPreformat tokens — picks up whatever color
+	 * the active theme uses for `` `code` ``. Neon themes override below to cyan. */
+	--vibe-skill-pill-bg: var(--vscode-textPreformat-background, color-mix(in srgb, var(--vibe-fg-1) 12%, transparent));
+	--vibe-skill-pill-fg: var(--vscode-textPreformat-foreground, var(--vibe-fg-1));
+	--vibe-skill-pill-border: transparent;
+	--vibe-skill-pill-glow: none;
+}
+
+/* Pill rendered inline inside chat user messages and (when overlay is wired) the input.
+ * Uses `display: inline` (NOT inline-block) so each char's advance width matches the
+ * underlying textarea byte-for-byte. inline-block would change line-wrap geometry vs.
+ * the textarea, causing overlay drift on long messages. `white-space: nowrap` keeps
+ * `/skill:name` together. Padding stays at 0 px horizontal to preserve char widths;
+ * the visual "pill" effect comes from background + border, not padding-based
+ * separation. */
+.vibe-skill-pill {
+	display: inline;
+	border-radius: 3px;
+	background: var(--vibe-skill-pill-bg);
+	color: var(--vibe-skill-pill-fg);
+	/* Geometry-neutral outline. `border` would add 2px to inline width per pill and
+	 * drift the textarea's caret position vs. the overlay; `box-shadow: inset` paints
+	 * the outline without changing layout. Same reason no padding / no letter-spacing
+	 * tweaks here. */
+	box-shadow: inset 0 0 0 1px var(--vibe-skill-pill-border);
+	text-shadow: var(--vibe-skill-pill-glow);
+}
+
+/* Overlay layer used by VibeInputBox2.highlightSlashCommands to paint pills behind a
+ * transparent-text textarea. `inset: 0` + the same className as the textarea keeps
+ * padding / font / border-radius identical; `font: inherit` (NOT a hardcoded family)
+ * ensures whatever the parent set propagates to the overlay just as it does to the
+ * textarea. */
+.vibe-textarea-overlay {
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+	user-select: none;
+	overflow: hidden;
+	white-space: pre-wrap;
+	word-wrap: break-word;
+	overflow-wrap: break-word;
+	color: transparent;
+	font: inherit;
+	line-height: inherit;
+	letter-spacing: inherit;
+	text-align: inherit;
+	tab-size: inherit;
+	/* Match textarea border so overlay's text-box aligns 1px-for-1px under content. */
+	border: 1px solid transparent;
+	box-sizing: border-box;
 }
 
 /* Apply the inheritable text-shadow once at the chat/history scope; descendants inherit it.

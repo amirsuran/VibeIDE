@@ -1408,7 +1408,12 @@ configurationRegistry.registerConfiguration({
 		},
 		[treeIndentKey]: {
 			type: 'number',
-			default: 8,
+			// VibeIDE: bumped default from upstream 8 → 16. Keep this delta on upstream
+			// merges. Reason: VibeIDE's chat sidebar & Explorer show nested skills/.vibe/
+			// trees where 8 px is too tight to scan visually. 16 px lines up with the
+			// thumb-rule used by Cursor / JetBrains file trees. If upstream changes the
+			// default, prefer keeping ours.
+			default: 16,
 			minimum: 4,
 			maximum: 40,
 			description: localize('tree indent setting', "Controls tree indentation in pixels.")

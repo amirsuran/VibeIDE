@@ -94,7 +94,6 @@ const DEFAULT_MAX_AGENT_LOOP_ITERATIONS = 30 // Default cap; overridable via `vi
 const MAX_AGENT_LOOP_ITERATIONS_UPPER_BOUND = 200 // Hard ceiling for user-supplied values to avoid runaway loops via accidental large input.
 const MAX_CONSECUTIVE_TOOL_ERRORS = 15 // Circuit-breaker: abort agent loop after this many back-to-back tool failures. opencode CLI has no breaker — model just keeps iterating until it succeeds. 15 gives breathing room (some models recover after 5-10 attempts before finding the right tool format) while still preventing infinite loops on truly broken combos.
 const AUTO_DOWNGRADE_THRESHOLD = 3 // After this many consecutive tool failures per-(provider×model), automatically write an `_autoDetected` override switching the model to XML-fallback mode. Counter resets on `success` or after AUTO_DOWNGRADE_TRIGGER fires (giving the XML path a fresh slate). See roadmap O.2.
-const MAX_FILES_READ_PER_QUERY = 10 // Maximum files to read in a single query to prevent excessive reads
 
 // Classify the last tool failure into a coarse reason code stored as
 // `_reason` on auto-detected overrides (roadmap O.7). Drives toast wording and
@@ -3831,7 +3830,6 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 		let nMessagesSent = 0
 		let shouldSendAnotherMessage = true
 		let isRunningWhenEnd: IsRunningType = undefined
-		let filesReadInQuery = 0 // Track number of files read to prevent excessive reads
 
 		// PERFORMANCE: Check for plan ONCE at start, not on every tool call
 		// Only do plan tracking if an active plan exists
@@ -4056,8 +4054,6 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 		// This is more reliable than checking message patterns
 		let hasSynthesizedToolsInThisRequest = false
 
-		// Flag to prevent further tool calls after file read limit is exceeded
-		let fileReadLimitExceeded = false
 		// Track tools executed in this request to detect incomplete workflows
 		let toolsExecutedInRequest: string[] = []
 		// Per-(provider×model) consecutive tool failure counter (tool_error / invalid_params).
@@ -4065,7 +4061,7 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 		//   - AUTO_DOWNGRADE_THRESHOLD (3) → write `specialToolFormat: undefined` override
 		//     for that model and continue loop with XML-fallback path. Only fires once per
 		//     model per session (downgradedModelsThisSession). See roadmap O.1/O.2.
-		//   - MAX_CONSECUTIVE_TOOL_ERRORS (5) → abort agent loop with hard message. Last
+		//   - MAX_CONSECUTIVE_TOOL_ERRORS (15) → abort agent loop with hard message. Last
 		//     resort safety net even after downgrade. See roadmap O.3 (circuit-breaker).
 		const consecutiveToolErrorsByModel = new Map<string, number>()
 		const downgradedModelsThisSession = new Set<string>()
@@ -5181,10 +5177,8 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 
 				// Detect if Agent Mode should have used tools but didn't
 				// Only synthesize ONCE per original request to prevent infinite loops
-				// Also check if we've already read too many files (prevent infinite read loops)
 				// CRITICAL: Only synthesize tools if the model actually supports them
-				// Don't synthesize tools if file read limit was exceeded
-				if (chatMode === 'agent' && !toolCall && info.fullText.trim() && !hasSynthesizedForRequest && filesReadInQuery < MAX_FILES_READ_PER_QUERY && !fileReadLimitExceeded && modelSupportsTools) {
+				if (chatMode === 'agent' && !toolCall && info.fullText.trim() && !hasSynthesizedForRequest && modelSupportsTools) {
 					if (originalUserMessage) {
 						const userRequest = originalUserMessage.displayContent?.toLowerCase() || ''
 						const actionWords = ['add', 'create', 'edit', 'delete', 'remove', 'update', 'modify', 'change', 'make', 'write', 'build', 'implement', 'fix', 'run', 'execute', 'install', 'setup', 'configure']
@@ -5233,8 +5227,7 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 						)
 
 						// Skip synthesis if user has images and is asking about them
-						// Also skip if we've already read too many files (prevent infinite loops)
-						if (shouldUseTools && nAttempts >= 1 && !isImageAnalysisQuery && filesReadInQuery < MAX_FILES_READ_PER_QUERY) {
+						if (shouldUseTools && nAttempts >= 1 && !isImageAnalysisQuery) {
 							const synthesizedToolCall = this._synthesizeToolCallFromIntent(userRequest, originalUserMessage.displayContent || '')
 							// Also skip if synthesized call is search_for_files and images are present
 							if (synthesizedToolCall && !(hasImages && synthesizedToolCall.toolName === 'search_for_files')) {
@@ -5345,7 +5338,7 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 					)
 
 					// If it's a "how many" question and we haven't searched/read, and response doesn't contain answer, synthesize search
-					const needsMoreSearch = isHowManyQuestion && !hasSearched && !hasRead && !hasCountInResponse && !hasSynthesizedForRequest && filesReadInQuery < MAX_FILES_READ_PER_QUERY
+					const needsMoreSearch = isHowManyQuestion && !hasSearched && !hasRead && !hasCountInResponse && !hasSynthesizedForRequest
 
 					if (needsMoreSearch) {
 						const synthesizedToolCall = this._synthesizeToolCallFromIntent(userRequest, originalUserMessage.displayContent || '')
@@ -5424,44 +5417,6 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 
 				// call tool if there is one
 				if (toolCall) {
-					// Skip tool execution if file read limit was exceeded in a previous iteration
-					if (fileReadLimitExceeded) {
-						// Don't execute any more tools - just continue to final LLM call
-						shouldSendAnotherMessage = true
-						continue
-					}
-
-					// CRITICAL: Prevent excessive file reads that can cause infinite loops
-					// For codebase queries, limit the number of files read
-					// Check limit BEFORE incrementing to ensure we don't exceed it
-					if (toolCall.name === 'read_file') {
-						if (filesReadInQuery >= MAX_FILES_READ_PER_QUERY) {
-							// Too many files read - likely stuck in a loop
-							// Add a message explaining the limit, then make one final LLM call to generate an answer
-							this._addMessageToThread(threadId, {
-								role: 'assistant',
-								displayContent: `I've read ${filesReadInQuery} files, which is the limit. I'll provide an answer based on what I've gathered so far.`,
-								reasoning: '',
-								anthropicReasoning: null
-							})
-
-							// Set flag to prevent further tool calls
-							fileReadLimitExceeded = true
-
-							// Make one final LLM call to generate the answer based on what we've read
-							// Set state to 'LLM' to show we're generating the final answer
-							this._setStreamState(threadId, { isRunning: 'LLM', llmInfo: { displayContentSoFar: 'Generating final answer based on files read...', reasoningSoFar: '', toolCallSoFar: null }, interrupt: Promise.resolve(() => { }) })
-
-							// Force shouldSendAnotherMessage to true to make one more LLM call
-							// This will generate the final answer before returning
-							shouldSendAnotherMessage = true
-							// Skip tool execution and continue to next LLM call
-							continue
-						}
-						// Only increment if we're actually going to read the file
-						filesReadInQuery++
-					}
-
 					// CRITICAL: Check for pending plan before executing tool (fast check)
 					if (checkPlanGenerated()) {
 						this._setStreamState(threadId, { isRunning: 'idle', interrupt: 'not_needed' })

@@ -4,6 +4,12 @@
   --vibe-neon-text-glow: none;
   --vibe-neon-timestamp-fg: #fff951;
   --vibe-neon-timestamp-glow: none;
+
+  /* Skill-pill in neon palette — uses cyan (#03edf9, same accent as active-tab stripe). */
+  --vibe-skill-pill-bg: rgba(3, 237, 249, 0.16);
+  --vibe-skill-pill-fg: #03edf9;
+  --vibe-skill-pill-border: rgba(3, 237, 249, 0.40);
+  --vibe-skill-pill-glow: none;
 }
 
 /* Chat panel + thread history: when neon glow is off, all text falls back to white.

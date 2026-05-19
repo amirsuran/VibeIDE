@@ -5,6 +5,12 @@
   --vibe-neon-text-glow: 0 0 2px rgba(255,255,255,0.45), 0 0 5px rgba(255,255,255,0.2);
   --vibe-neon-timestamp-fg: #fff951;
   --vibe-neon-timestamp-glow: 0 0 4px #fff951, 0 0 8px rgba(255,249,81,0.6);
+
+  /* Skill-pill in neon palette — cyan with a soft halo to match the active-tab look. */
+  --vibe-skill-pill-bg: rgba(3, 237, 249, 0.16);
+  --vibe-skill-pill-fg: #03edf9;
+  --vibe-skill-pill-border: rgba(3, 237, 249, 0.45);
+  --vibe-skill-pill-glow: 0 0 4px rgba(3, 237, 249, 0.55), 0 0 8px rgba(3, 237, 249, 0.30);
 }
 
 /* Chat panel + thread history: repaint all body text white-neon (timestamps stay yellow as

@@ -14,6 +14,15 @@ import { ISecretDetectionService } from '../common/secretDetectionService.js';
 const FIRST_RUN_VALIDATION_KEY = 'vibeide.firstRunValidation';
 const FIRST_RUN_VALIDATION_COMPLETE_KEY = 'vibeide.firstRunValidationComplete';
 
+// Fast-path budget for console-redaction wrappers. Args whose shallow size exceeds
+// this AND don't contain secret markers in the first 1 KB of keys + truncated string
+// values skip the recursive redactSecretsInObject pass. Trade-off: very large objects
+// with secrets buried deep AND no surface markers won't be redacted. Acceptable for
+// known diagnostic logs (promptDump, skill expand) where args are diagnostic envelopes,
+// not raw credential payloads.
+const CONSOLE_REDACT_FAST_PATH_BYTES = 8192;
+const SECRET_MARKERS_RE = /secret|token|api[_-]?key|password|bearer|sk-|authorization/i;
+
 /**
  * First-run smoke test validation
  * Exercises critical paths to catch crashes early
@@ -49,10 +58,17 @@ export class FirstRunValidationContribution extends Disposable implements IWorkb
 		const originalInfo = console.info;
 		const originalDebug = console.debug;
 
+		const maybeRedact = (args: any[]): any[] => {
+			if (this.shouldSkipRedaction(args)) {
+				return args;
+			}
+			const redacted = this.secretDetectionService.redactSecretsInObject(args);
+			return redacted.hasSecrets ? redacted.redacted : args;
+		};
+
 		// Wrap console methods to redact secrets
 		console.log = (...args: any[]) => {
-			const redacted = this.secretDetectionService.redactSecretsInObject(args);
-			originalLog(...(redacted.hasSecrets ? redacted.redacted : args));
+			originalLog(...maybeRedact(args));
 		};
 
 		console.error = (...args: any[]) => {
@@ -63,23 +79,19 @@ export class FirstRunValidationContribution extends Disposable implements IWorkb
 				// Suppress this non-fatal error - it's a known issue with Web Locks API during initialization
 				return;
 			}
-			const redacted = this.secretDetectionService.redactSecretsInObject(args);
-			originalError(...(redacted.hasSecrets ? redacted.redacted : args));
+			originalError(...maybeRedact(args));
 		};
 
 		console.warn = (...args: any[]) => {
-			const redacted = this.secretDetectionService.redactSecretsInObject(args);
-			originalWarn(...(redacted.hasSecrets ? redacted.redacted : args));
+			originalWarn(...maybeRedact(args));
 		};
 
 		console.info = (...args: any[]) => {
-			const redacted = this.secretDetectionService.redactSecretsInObject(args);
-			originalInfo(...(redacted.hasSecrets ? redacted.redacted : args));
+			originalInfo(...maybeRedact(args));
 		};
 
 		console.debug = (...args: any[]) => {
-			const redacted = this.secretDetectionService.redactSecretsInObject(args);
-			originalDebug(...(redacted.hasSecrets ? redacted.redacted : args));
+			originalDebug(...maybeRedact(args));
 		};
 
 		// Restore on dispose
@@ -92,6 +104,49 @@ export class FirstRunValidationContribution extends Disposable implements IWorkb
 				console.debug = originalDebug;
 			},
 		});
+	}
+
+	// Skip recursive secret-redaction for large diagnostic envelopes (e.g. promptDump
+	// with a 20+ KB system prompt) when their surface has no secret markers. Returns
+	// false (do not skip) on any uncertainty so the safe path runs.
+	private shouldSkipRedaction(args: any[]): boolean {
+		let size = 0;
+		let surfaceText = '';
+		let budget = 1024;
+		for (const a of args) {
+			if (typeof a === 'string') {
+				size += a.length;
+				if (budget > 0) {
+					const piece = a.slice(0, budget);
+					surfaceText += piece + ' ';
+					budget -= piece.length;
+				}
+			} else if (a !== null && typeof a === 'object') {
+				try {
+					for (const [k, v] of Object.entries(a)) {
+						if (budget > 0) {
+							surfaceText += k + ' ';
+							budget -= k.length;
+						}
+						if (typeof v === 'string') {
+							size += v.length;
+							if (budget > 0) {
+								const piece = v.slice(0, Math.min(v.length, 200));
+								surfaceText += piece + ' ';
+								budget -= piece.length;
+							}
+						} else if (v !== null && v !== undefined) {
+							size += 32;
+						}
+					}
+				} catch {
+					return false;
+				}
+			}
+			if (size > CONSOLE_REDACT_FAST_PATH_BYTES * 4) break;
+		}
+		if (size <= CONSOLE_REDACT_FAST_PATH_BYTES) return false;
+		return !SECRET_MARKERS_RE.test(surfaceText);
 	}
 
 	private async runValidation(): Promise<void> {

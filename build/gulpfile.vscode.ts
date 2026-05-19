@@ -466,6 +466,17 @@ function packageTask(platform: string, arch: string, sourceFolderName: string, d
 		}
 		let all = es.merge(...mergeStreams);
 
+		// VibeIDE: ship the models.dev catalog snapshot as an offline fallback for
+		// per-model AI SDK routing on aggregator providers (openCode/openCodeZen).
+		// Consumed at runtime by electron-main/llmMessage/modelsDevCatalog.ts —
+		// see localSnapshotCandidates(). Refresh with `npm run update-models-dev-snapshot`
+		// before each release. `allowEmpty` so an absent snapshot doesn't fail the build —
+		// runtime falls back to network fetch or userData cache.
+		all = es.merge(all, gulp.src('resources/vibeide/models.dev.json', {
+			base: '.',
+			allowEmpty: true,
+		}));
+
 		if (platform === 'win32') {
 			all = es.merge(all, gulp.src([
 				'resources/win32/bower.ico',
