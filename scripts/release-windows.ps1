@@ -81,24 +81,6 @@ try {
     Write-Host "⚠ NLS extraction failed (non-fatal): $_" -ForegroundColor Yellow
 }
 
-# ── 0b. Build language packs (if locale bundles exist) ───────────────────────
-$nlsDir = "$Root\out\nls"
-$hasPacks = $false
-if (Test-Path $nlsDir) {
-    $hasPacks = (Get-ChildItem $nlsDir -Filter "vibeide.nls.*.json" | Where-Object { $_.Name -ne "vibeide.nls.json" }).Count -gt 0
-}
-if ($hasPacks) {
-    Step "Building VibeIDE language pack VSIXes..."
-    try {
-        Gulp "build-vibeide-language-packs"
-        OK "Language packs built to out/language-packs/"
-    } catch {
-        Write-Host "⚠ Language pack build failed (non-fatal): $_" -ForegroundColor Yellow
-    }
-} else {
-    Write-Host "⏭ No locale bundles found — skipping language pack VSIX build" -ForegroundColor DarkGray
-}
-
 # ── 0c. Rebuild React tree (scope-tailwind shadow + tsup) ────────────────────
 # build.js full-build mode always regenerates `react/src2/`, which keeps the
 # shadow scope-tailwind copy in sync with edits in `react/src/`. Skipping this
@@ -163,16 +145,7 @@ $zipFiles  = Get-ChildItem "$archiveDir\VibeIDE-*.zip" -ErrorAction SilentlyCont
 if (-not $exeFiles) { Write-Error "No .exe found in $setupDir"; exit 1 }
 if (-not $zipFiles)  { Write-Error "No .zip found in $archiveDir"; exit 1 }
 
-# Language-pack VSIXes (roadmap §L490): glob both gulp + bin output dirs.
-$langPackVsixGulp = Get-ChildItem "$Root\out\language-packs\vibeide-language-pack-*.vsix" -ErrorAction SilentlyContinue
-$langPackVsixBin  = Get-ChildItem "$Root\.build\language-packs\vibeide-language-pack-*.vsix" -ErrorAction SilentlyContinue
-$langPackVsixes   = @(@($langPackVsixGulp) + @($langPackVsixBin) | Where-Object { $_ -ne $null })
-
 $artifacts = @($exeFiles.FullName) + @($zipFiles.FullName)
-if ($langPackVsixes.Length -gt 0) {
-    $artifacts += @($langPackVsixes.FullName)
-    OK "Including $($langPackVsixes.Length) language-pack VSIX(es) in release."
-}
 Write-Host "  Found:" -ForegroundColor DarkGray
 $artifacts | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
 
