@@ -12,6 +12,7 @@ import { Registry } from '../../../../platform/registry/common/platform.js';
 import { IConfigurationRegistry, Extensions as ConfigurationExtensions } from '../../../../platform/configuration/common/configurationRegistry.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { localize } from '../../../../nls.js';
+import { IChatThreadService } from './chatThreadService.js';
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 // Surface the context-guard thresholds in VS Code's Settings UI. Without this
@@ -62,6 +63,14 @@ export interface IVibeContextGuardService {
 	/** Update current context token usage */
 	updateUsage(currentTokens: number, maxTokens: number): void;
 
+	/**
+	 * Reset usage counters to zero (e.g. when the user switches to a different
+	 * chat thread). Status bar refreshes immediately; the next request through
+	 * convertToLLMMessageService.updateUsage re-populates with the new thread's
+	 * real size.
+	 */
+	reset(): void;
+
 	/** Get current status */
 	getStatus(): ContextLimitStatus;
 
@@ -102,6 +111,7 @@ class VibeContextGuardService extends Disposable implements IVibeContextGuardSer
 	constructor(
 		@IConfigurationService private readonly _configurationService: IConfigurationService,
 		@ILogService private readonly _logService: ILogService,
+		@IChatThreadService chatThreadService: IChatThreadService,
 	) {
 		super();
 		this._warningThreshold = this._configurationService.getValue<number>('vibeide.context.warningThresholdPercent') ?? 75;
@@ -112,6 +122,15 @@ class VibeContextGuardService extends Disposable implements IVibeContextGuardSer
 				this._warningThreshold = this._configurationService.getValue<number>('vibeide.context.warningThresholdPercent') ?? 75;
 				this._criticalThreshold = this._configurationService.getValue<number>('vibeide.context.criticalThresholdPercent') ?? 90;
 			}
+		}));
+
+		// Reset counters when the user switches threads (incl. opening a new
+		// chat). Without this, the status bar keeps showing the previous
+		// thread's usage until the next message is sent in the new thread,
+		// which mis-leads on a fresh chat. convertToLLMMessageService will
+		// re-populate the real value on the next request.
+		this._register(chatThreadService.onDidChangeCurrentThread(() => {
+			this.reset();
 		}));
 	}
 
@@ -152,6 +171,15 @@ class VibeContextGuardService extends Disposable implements IVibeContextGuardSer
 			this._warningFired = false;
 			this._criticalFired = false;
 		}
+	}
+
+	reset(): void {
+		this._currentTokens = 0;
+		this._maxTokens = 0;
+		this._warningFired = false;
+		this._criticalFired = false;
+		this._onUsageUpdated.fire(this.getStatus());
+		this._logService.debug('[VibeIDE ContextGuard] Reset (thread changed)');
 	}
 
 	getStatus(): ContextLimitStatus {
