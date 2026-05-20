@@ -1892,8 +1892,16 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 		const budget = Math.max(256, Math.floor(effectiveContextWindow * budgetMultiplier) - rot)
 		const beforeTokens = approximateTotalTokens(llmMessages, systemMessage, aiInstructions)
 
-		// Update status bar with real context usage before any truncation
-		try { this.contextGuardService.updateUsage(beforeTokens, contextWindow) } catch { }
+		// NOTE: ContextGuard status updates intentionally moved to AFTER both
+		// truncation passes. Previously we called updateUsage(beforeTokens, …)
+		// here, which surfaced "100%+ full" warnings reflecting the RAW state
+		// size — but the payload we actually send to the provider is already
+		// truncated below to fit. That made the guard spam Critical warnings
+		// while the request was perfectly fine, and added a hot callback per
+		// stream chunk on long sessions. The intermediate updateUsage on the
+		// truncation branch (after the smart-truncation if-block) and the
+		// final updateUsage (after Step B, line ~2005) are the source of
+		// truth — both reflect post-truncation reality.
 
 		if (beforeTokens > budget && llmMessages.length > 6) {
 			// Smart truncation: Keep recent messages + prioritize user messages with selections
