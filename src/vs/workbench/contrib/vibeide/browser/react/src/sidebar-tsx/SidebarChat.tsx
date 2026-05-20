@@ -4911,9 +4911,10 @@ export const SidebarChat = () => {
 
 		// Error block.
 		if (latestError !== undefined) {
-			const _err = latestError as { message: string; fullError: Error | null; recoverable?: 'dismissPlan' | 'forceReset' }
+			const _err = latestError as { message: string; fullError: Error | null; recoverable?: 'dismissPlan' | 'forceReset' | 'switchModel' }
 			const isPendingPlanGate = _err.recoverable === 'dismissPlan'
 			const isForceReset = _err.recoverable === 'forceReset'
+			const isSwitchModel = _err.recoverable === 'switchModel'
 			items.push({
 				key: 'error-block',
 				render: () => <div className='px-2 my-1 message-enter space-y-2'>
@@ -4942,6 +4943,14 @@ export const SidebarChat = () => {
 							className='text-sm my-1 mx-3'
 							onClick={() => { chatThreadsService.forceResetChatState(currentThread.id) }}
 							text='Сбросить состояние чата'
+						/>
+					) : isSwitchModel ? (
+						// Empty-response circuit breaker tripped — N consecutive empty
+						// replies from the same model. Open Settings so user can switch.
+						<WarningBox
+							className='text-sm my-1 mx-3'
+							onClick={() => { commandService.executeCommand(VIBEIDE_OPEN_SETTINGS_ACTION_ID) }}
+							text='Открыть настройки и выбрать другую модель'
 						/>
 					) : (
 						<>

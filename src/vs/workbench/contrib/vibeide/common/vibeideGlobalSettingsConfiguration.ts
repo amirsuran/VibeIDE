@@ -254,6 +254,14 @@ export class VibeideGlobalSettingsConfigurationContribution extends Disposable i
 					description: localize('vibeide.chat.autoToolSynthesis', 'Эвристика «автосинтеза tool-call» когда модель ответила текстом вместо ожидаемого инструмента. Если включено, VibeIDE подменяет ответ модели захардкоженным «I will help you with that…» / «I will search for files…» и сам выполняет synthesized tool. Полезно для слабых tool-calling моделей; для современных (Claude / GPT-4 / DeepSeek thinking) скорее мешает — реальный ответ модели теряется, цепочка диалога ломается. По умолчанию **off** после инцидента OOM от петли invalid_params в долгой сессии. Включайте только если ваша модель регулярно «забывает» вызвать tool.'),
 					scope: ConfigurationScope.APPLICATION,
 				},
+				'vibeide.chat.emptyResponseCircuitBreakerThreshold': {
+					type: 'number',
+					default: 3,
+					minimum: 1,
+					maximum: 20,
+					description: localize('vibeide.chat.emptyResponseCircuitBreakerThreshold', 'Сколько раз подряд провайдер/модель должны вернуть «Empty response» подряд из одной (thread × provider × model)-комбинации, чтобы VibeIDE заменил стандартный toast на recoverable error с предложением сменить модель. Счётчик сбрасывается на любом успешном ответе из той же комбинации. По умолчанию 3 — баланс между «дайте модели шанс» и «не насилуйте провайдер ещё одним retry». Поднимите для нестабильных сетей, опустите до 1 для агрессивного fail-fast.'),
+					scope: ConfigurationScope.APPLICATION,
+				},
 			},
 		});
 

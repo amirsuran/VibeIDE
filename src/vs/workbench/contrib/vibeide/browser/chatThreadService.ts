@@ -288,7 +288,7 @@ export type IsRunningType =
 export type ThreadStreamState = {
 	[threadId: string]: undefined | {
 		isRunning: undefined;
-		error?: { message: string, fullError: Error | null, recoverable?: 'dismissPlan' | 'forceReset' };
+		error?: { message: string, fullError: Error | null, recoverable?: 'dismissPlan' | 'forceReset' | 'switchModel' };
 		llmInfo?: undefined;
 		toolInfo?: undefined;
 		interrupt?: undefined;
@@ -552,6 +552,16 @@ class ChatThreadService extends Disposable implements IChatThreadService {
 	// and the diagnostic surface — if a thread has been "running" for an implausibly
 	// long time, we forcibly recover instead of hanging the chat indefinitely.
 	private readonly _streamStateSetAt = new Map<string, number>()
+
+	// Per-(thread × provider × model) counter of consecutive "Empty response" errors.
+	// Reset on any successful response from the same combo (onFinalMessage). Trips
+	// when streak reaches `vibeide.chat.emptyResponseCircuitBreakerThreshold` — at
+	// which point the next onError swaps the regular toast for an inline
+	// recoverable: 'switchModel' message ("Model X failed N times in a row, open
+	// settings to switch"). Provider/model identifiers are NEVER hardcoded — both
+	// are parsed at runtime from the VibeIDE-emitted error template via regex.
+	// Key shape: `${threadId}:${providerName}:${modelName}`.
+	private readonly _emptyResponseStreak = new Map<string, number>()
 
 	// Submit-level watchdog: started in _addUserMessageAndStreamResponse, cleared in
 	// _setStreamState when the stream actually transitions to an active state
@@ -4845,6 +4855,13 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 					// Mark message as done to prevent late onText updates
 					messageIsDone = true
 
+					// Reset empty-response streak for this (thread × provider × model)
+					// combo on any successful response. The breaker only trips on
+					// CONSECUTIVE empties; one good reply means the model is alive again.
+					if (modelSelection) {
+						this._emptyResponseStreak.delete(`${threadId}:${modelSelection.providerName}:${modelSelection.modelName}`)
+					}
+
 					// Persist provider-reported token usage on the thread so the UI
 					// context-usage indicator can show real numbers instead of length/4
 					// estimates. `usage` is undefined on early-timeout / non-AI-SDK paths.
@@ -4944,11 +4961,52 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 						// Mark stream as complete with 0 tokens on error
 						chatLatencyAudit.markStreamComplete(finalRequestId, 0)
 
+						// Empty-response circuit breaker. Parse provider/model out of OUR
+						// own error template (no hardcoded names). If the same combo
+						// returns "Empty response" N times in a row, swap the toast for
+						// a sticky inline error with `recoverable: 'switchModel'` so the
+						// user sees one clear "open settings" affordance instead of
+						// hammering Send on a model the aggregator clearly can't drive
+						// right now. Counter is reset on the next successful response
+						// (onFinalMessage below). Type widened to include `recoverable`
+						// since the source `error` parameter (from LLMMessageService
+						// onError contract) doesn't expose that field.
+						type StreamError = { message: string; fullError: Error | null; recoverable?: 'dismissPlan' | 'forceReset' | 'switchModel' }
+						let effectiveError: StreamError | undefined = error as StreamError | undefined
+						const emptyMatch = error?.message?.match(/^VibeIDE: Empty response from ([^/\s]+)\/([^/\s]+) \(/)
+						if (emptyMatch) {
+							const [, errProvider, errModel] = emptyMatch
+							const key = `${threadId}:${errProvider}:${errModel}`
+							const streak = (this._emptyResponseStreak.get(key) ?? 0) + 1
+							this._emptyResponseStreak.set(key, streak)
+							const threshold = Math.max(1, Math.min(20,
+								this._configurationService.getValue<number>('vibeide.chat.emptyResponseCircuitBreakerThreshold') ?? 3
+							))
+							if (streak >= threshold) {
+								this._emptyResponseStreak.delete(key)
+								effectiveError = {
+									message: localize(
+										'vibeide.chatThread.emptyResponseCircuitBreaker',
+										'Модель {0} через {1} вернула пустой ответ {2} раз подряд. Это известный паттерн отказа aggregator-проксированных моделей (минимакс/qwen через openCode-zen и др.) — обычно временный сбой провайдера или несовместимость wire-протокола. Откройте настройки и выберите другую модель, либо подождите и попробуйте позже.',
+										errModel,
+										errProvider,
+										String(streak),
+									),
+									fullError: error?.fullError ?? null,
+									recoverable: 'switchModel',
+								}
+								console.warn(`[VibeIDE chatThread] Empty-response circuit breaker tripped: ${errProvider}/${errModel} × ${streak} (threadId=${threadId}).`)
+							}
+						}
+
 						// Clear stream state immediately so submit button becomes active (avoids stuck "Waiting for model response..." if audit or resolve fails)
-						this._setStreamState(threadId, { isRunning: undefined, error })
+						this._setStreamState(threadId, { isRunning: undefined, error: effectiveError })
 
 						// Unified error toast via agentErrorClassifier (L294).
-						{
+						// SUPPRESSED when the circuit breaker tripped — the sticky inline
+						// error (effectiveError.recoverable === 'switchModel') already
+						// communicates the situation more clearly than a transient toast.
+						if (effectiveError?.recoverable !== 'switchModel') {
 							const rawErr = error?.fullError as any;
 							const httpStatus = rawErr?.statusCode ?? rawErr?.status;
 							const errorCode = rawErr?.code ?? rawErr?.errorCode;
