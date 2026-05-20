@@ -84,6 +84,7 @@ import { resolveModelForPath, decodeRoutingRules } from '../common/modelRoutingB
 import { IVibeMentionService } from '../common/vibeMentionService.js';
 import { IVibeSearchContextService } from '../common/vibeSearchContextService.js';
 import { IVibeAIDebuggingService } from './vibeAIDebuggingContribution.js';
+import { IVibeContextGuardService } from './vibeContextGuardService.js';
 
 // related to retrying when LLM message has error
 // Optimized retry logic: faster initial retry, exponential backoff
@@ -595,6 +596,7 @@ class ChatThreadService extends Disposable implements IChatThreadService {
 		@IVibeMentionService private readonly _mentionService: IVibeMentionService,
 		@IVibeSearchContextService private readonly _searchContextService: IVibeSearchContextService,
 		@IVibeAIDebuggingService private readonly _aiDebuggingService: IVibeAIDebuggingService,
+		@IVibeContextGuardService private readonly _contextGuardService: IVibeContextGuardService,
 	) {
 		super()
 		this.state = { allThreads: {}, currentThreadId: null as unknown as string } // default state
@@ -608,6 +610,18 @@ class ChatThreadService extends Disposable implements IChatThreadService {
 			allThreads: allThreads,
 			currentThreadId: null as unknown as string, // gets set in startNewThread()
 		}
+
+		// Reset ContextGuard counters when the user switches to a different
+		// chat thread (or opens a new one). Without this the status bar would
+		// keep showing the previous thread's usage % until the next message
+		// is actually sent in the new thread. convertToLLMMessageService
+		// will re-populate with the real value on that next request.
+		// Wiring lives here (not in vibeContextGuardService.ts) because the
+		// reverse direction would close a cyclic module graph through
+		// convertToLLMMessageService.
+		this._register(this.onDidChangeCurrentThread(() => {
+			this._contextGuardService.reset();
+		}));
 
 		// always be in a thread
 		this.openNewThread()

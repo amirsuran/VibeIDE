@@ -12,7 +12,6 @@ import { Registry } from '../../../../platform/registry/common/platform.js';
 import { IConfigurationRegistry, Extensions as ConfigurationExtensions } from '../../../../platform/configuration/common/configurationRegistry.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { localize } from '../../../../nls.js';
-import { IChatThreadService } from './chatThreadService.js';
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 // Surface the context-guard thresholds in VS Code's Settings UI. Without this
@@ -111,7 +110,6 @@ class VibeContextGuardService extends Disposable implements IVibeContextGuardSer
 	constructor(
 		@IConfigurationService private readonly _configurationService: IConfigurationService,
 		@ILogService private readonly _logService: ILogService,
-		@IChatThreadService chatThreadService: IChatThreadService,
 	) {
 		super();
 		this._warningThreshold = this._configurationService.getValue<number>('vibeide.context.warningThresholdPercent') ?? 75;
@@ -123,15 +121,12 @@ class VibeContextGuardService extends Disposable implements IVibeContextGuardSer
 				this._criticalThreshold = this._configurationService.getValue<number>('vibeide.context.criticalThresholdPercent') ?? 90;
 			}
 		}));
-
-		// Reset counters when the user switches threads (incl. opening a new
-		// chat). Without this, the status bar keeps showing the previous
-		// thread's usage until the next message is sent in the new thread,
-		// which mis-leads on a fresh chat. convertToLLMMessageService will
-		// re-populate the real value on the next request.
-		this._register(chatThreadService.onDidChangeCurrentThread(() => {
-			this.reset();
-		}));
+		// NOTE: reset on thread switch is driven from ChatThreadService (it owns
+		// the onDidChangeCurrentThread event and calls our reset()). Subscribing
+		// here would create a cyclic module graph: chatThreadService imports
+		// convertToLLMMessageService which imports vibeContextGuardService —
+		// so vibeContextGuardService importing chatThreadService closes the loop
+		// and the bundler refuses to compile. Wiring stays downstream-only.
 	}
 
 	updateUsage(currentTokens: number, maxTokens: number): void {
