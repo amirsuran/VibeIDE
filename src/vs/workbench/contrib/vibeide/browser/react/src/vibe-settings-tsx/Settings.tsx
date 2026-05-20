@@ -418,6 +418,14 @@ const SimpleModelSettingsDialog = ({
 				return;
 			}
 		}
+		// User explicitly took control via the override dialog — clear any
+		// `_autoDetected` metadata from a prior auto-downgrade so the manual
+		// values aren't shadowed by the TTL check in getModelCapabilities, and
+		// so the "this model was auto-downgraded" UI signal doesn't keep showing.
+		// Equivalent to clicking "Pin" in the auto-downgrade safety table below.
+		cleaned._autoDetected = undefined;
+		cleaned._detectedAt = undefined;
+		cleaned._reason = undefined;
 		await settingsStateService.setOverridesOfModel(providerName, modelName, cleaned);
 		onClose();
 	};

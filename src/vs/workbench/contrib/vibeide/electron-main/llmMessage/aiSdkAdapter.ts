@@ -11,6 +11,12 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { API_PROTOCOL_TO_SDK_NPM, ApiProtocolOverride } from '../../common/modelCapabilities.js';
+
+// Module-level memo for SDK-selection diagnostic logs. Keys are
+// `${providerName}|${modelName}|${sdkNpm}|${source}` — log once per unique
+// combo per process. Prevents per-request spam in long sessions while
+// preserving the visibility we want on first use / on routing changes.
+const _loggedSdkSelections = new Set<string>();
 import { fetch as undiciFetch } from 'undici';
 import type { JSONSchema7 } from '@ai-sdk/provider';
 /* eslint-enable */
@@ -614,11 +620,18 @@ export const sendViaAISdk = async (params: SendChatParams_Internal): Promise<voi
 		? API_PROTOCOL_TO_SDK_NPM[apiProtocolOverride]
 		: undefined;
 	const sdkNpm = sdkNpmFromOverride ?? await getModelSdkNpm(baseURL, modelName);
-	// Diagnostic: log which SDK path was taken on first request per provider+model.
-	// Lets us verify models.dev fetch actually reached us and routing decision was
-	// what we expected. Once we're confident, this can become a no-op or be removed.
+	// Diagnostic: log which SDK path was taken on the FIRST request per
+	// (provider × model × source). Cache key prevents per-request spam in
+	// long sessions. Downgraded to console.debug (hidden by default in
+	// devtools) — the routing decision was once-suspect, now stable.
+	// Bypass the dedup if it actually changes for the same combo (rare, but
+	// e.g. catalog refresh mid-session could switch sdkNpm).
 	const sdkSource = sdkNpmFromOverride ? 'override' : (sdkNpm ? 'models.dev' : 'fallback');
-	console.log(`[aiSdkAdapter] provider=${providerName} model=${modelName} baseURL=${baseURL} sdkNpm=${sdkNpm ?? '(unknown → fallback openai-compatible)'} source=${sdkSource}`);
+	const sdkLogKey = `${providerName}|${modelName}|${sdkNpm ?? 'fallback'}|${sdkSource}`;
+	if (!_loggedSdkSelections.has(sdkLogKey)) {
+		_loggedSdkSelections.add(sdkLogKey);
+		console.debug(`[aiSdkAdapter] provider=${providerName} model=${modelName} baseURL=${baseURL} sdkNpm=${sdkNpm ?? '(unknown → fallback openai-compatible)'} source=${sdkSource}`);
+	}
 	const languageModel: LanguageModel = sdkNpm === '@ai-sdk/anthropic'
 		? createAnthropic({
 			baseURL,
