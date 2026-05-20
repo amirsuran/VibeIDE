@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------*/
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { FeatureName, featureNames, isFeatureNameDisabled, ModelSelection, modelSelectionsEqual, ProviderName, providerNames, SettingsOfProvider } from '../../../../../../../workbench/contrib/vibeide/common/vibeideSettingsTypes.js'
+import { displayInfoOfProviderName, FeatureName, featureNames, isFeatureNameDisabled, ModelSelection, modelSelectionsEqual, ProviderName, providerNames, SettingsOfProvider } from '../../../../../../../workbench/contrib/vibeide/common/vibeideSettingsTypes.js'
 import { useSettingsState, useRefreshModelState, useAccessor } from '../util/services.js'
 import { _VibeSelectBox, VibeCustomDropdownBox } from '../util/inputs.js'
 import { SelectBox } from '../../../../../../../base/browser/ui/selectBox/selectBox.js'
@@ -58,7 +58,7 @@ const ModelSelectBox = ({ options, featureName, className }: { options: ModelOpt
 			if (option.selection.providerName === 'auto' && option.selection.modelName === 'auto') {
 				return modelDdS.autoDetail
 			}
-			return option.selection.providerName
+			return displayInfoOfProviderName(option.selection.providerName).title
 		}}
 		getOptionsEqual={(a, b) => optionsEqual([a], [b])}
 		className={className}

@@ -650,7 +650,7 @@ const ChatTrainingPolicyBadge: React.FC = () => {
 	return (
 		<span
 			className="text-[10px] leading-tight text-vibe-fg-4 border border-vibe-border-2 rounded-xl px-1.5 py-0.5 max-w-[5.5rem] truncate"
-			title={`${sel.providerName}/${sel.modelName}\n${tip}`}
+			title={`${displayInfoOfProviderName(sel.providerName).title}/${sel.modelName}\n${tip}`}
 		>
 			📚 {short}
 		</span>
@@ -4714,7 +4714,7 @@ export const SidebarChat = () => {
 				// images and continuing causes the model to hallucinate "what it sees" based on
 				// the system prompt. PDFs are extracted to text upstream, so they keep flowing.
 				if (!isVisionCapable && images.length > 0) {
-					notificationService.error(`Выбранная модель (${currentModelSel.providerName}/${currentModelSel.modelName}) не поддерживает изображения. Переключитесь на vision-модель (Claude, GPT-4o/4.1/5, Gemini, vision-модель OpenRouter или Ollama llava/bakllava) либо удалите вложение.`);
+					notificationService.error(`Выбранная модель (${displayInfoOfProviderName(currentModelSel.providerName).title}/${currentModelSel.modelName}) не поддерживает изображения. Переключитесь на vision-модель (Claude, GPT-4o/4.1/5, Gemini, vision-модель OpenRouter или Ollama llava/bakllava) либо удалите вложение.`);
 					return;
 				}
 				if (!isVisionCapable && pdfs.length > 0) {
@@ -5536,7 +5536,7 @@ export const SidebarChat = () => {
         const activeResource = activeEditor?.resource
         const activeFileLabel = activeResource ? activeResource.path?.split('/').pop() : undefined
         const modelSel = settingsState.modelSelectionOfFeature['Chat']
-        const modelLabel = modelSel ? `${modelSel.providerName}:${modelSel.modelName}` : undefined
+        const modelLabel = modelSel ? `${displayInfoOfProviderName(modelSel.providerName).title}:${modelSel.modelName}` : undefined
         if (!activeFileLabel && !modelLabel) return null
         return (
             <div className='w-full flex items-center gap-2 flex-wrap mt-2 mb-1 px-1'>

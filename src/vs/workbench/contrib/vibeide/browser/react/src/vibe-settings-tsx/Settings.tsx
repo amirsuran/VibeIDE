@@ -2340,7 +2340,7 @@ const AutoDowngradeOverridesPanel = () => {
 					<tbody>
 						{rows.map(r => (
 							<tr key={`${r.providerName}:${r.modelName}`}>
-								<td className='px-2 py-1 align-top'>{r.providerName}</td>
+								<td className='px-2 py-1 align-top'>{displayInfoOfProviderName(r.providerName).title}</td>
 								<td className='px-2 py-1 align-top break-all'>{r.modelName}</td>
 								<td className='px-2 py-1 align-top'>{reasonText(r.reason)}</td>
 								<td className='px-2 py-1 align-top whitespace-nowrap'>{formatAge(r.detectedAt)}</td>
