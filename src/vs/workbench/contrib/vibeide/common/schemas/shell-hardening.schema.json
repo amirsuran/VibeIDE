@@ -1,0 +1,97 @@
+{
+	"$schema": "http://json-schema.org/draft-07/schema#",
+	"$id": "https://vibeide.io/schemas/shell-hardening.json",
+	"title": "VibeIDE Shell Hardening Config",
+	"description": "Workspace-level overrides for the run_command anti-misuse layer. Place at .vibe/shell-hardening.json — VibeIDE merges this with the bundled default ruleset.",
+	"type": "object",
+	"additionalProperties": false,
+	"properties": {
+		"vibeVersion": {
+			"type": "string",
+			"description": "Config schema version. Current: \"1\"."
+		},
+		"allowedPatterns": {
+			"type": "array",
+			"description": "Case-insensitive regex sources. If a shell command matches ANY of these, all default rules are bypassed (the command is allowed through). Use to whitelist patterns specific to this workspace.",
+			"items": {
+				"type": "string",
+				"examples": [
+					"^dir\\s+/s\\s+/b\\s+",
+					"^find\\s+\\.\\s+-name\\s+",
+					"^grep\\s+--include"
+				]
+			}
+		},
+		"disableDefaultRules": {
+			"type": "array",
+			"description": "Stable ids of default rules to disable for this workspace. See shellHardeningDefaults.ts for the full list. Useful when a workspace genuinely prefers shell over the built-in tool (e.g. wants ripgrep CLI features).",
+			"items": {
+				"type": "string",
+				"enum": [
+					"read_file_streamers",
+					"read_file_head_tail",
+					"list_tree",
+					"list_dir",
+					"search_pathnames",
+					"search_content",
+					"edit_file_inplace"
+				]
+			}
+		},
+		"extraRules": {
+			"type": "array",
+			"description": "Additional workspace-specific rules, applied after the default ruleset. Use to block project-specific anti-patterns.",
+			"items": {
+				"$ref": "#/definitions/rule"
+			}
+		}
+	},
+	"definitions": {
+		"rule": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": ["id", "bareName", "kind", "suggestedTool", "hint"],
+			"properties": {
+				"id": {
+					"type": "string",
+					"description": "Stable identifier for telemetry and override-by-id."
+				},
+				"bareName": {
+					"type": "string",
+					"description": "Case-insensitive regex matched against the bare command name (no path, no .exe/.cmd/.bat/.ps1 suffix). Anchor with ^ and $ for an exact match."
+				},
+				"requires": {
+					"type": "object",
+					"additionalProperties": false,
+					"properties": {
+						"tailMatches": {
+							"type": "string",
+							"description": "Rule fires only if the tail-after-bareName matches this regex."
+						},
+						"notPiped": {
+							"type": "boolean",
+							"description": "Rule fires only if the command does NOT contain a pipe character."
+						}
+					}
+				},
+				"exempts": {
+					"type": "array",
+					"description": "Regex sources. If ANY matches the tail-after-bareName, the rule SKIPS even when requires would have fired.",
+					"items": { "type": "string" }
+				},
+				"kind": {
+					"type": "string",
+					"enum": ["read_file", "list_dir", "search_pathnames", "search_content", "edit_file", "tree"]
+				},
+				"suggestedTool": {
+					"type": "string",
+					"description": "Name of the built-in VibeIDE tool the model should use instead."
+				},
+				"hint": {
+					"type": "string",
+					"description": "Hint shown to the model when this rule fires. {bareName} is substituted with the matched command name."
+				}
+			}
+		}
+	}
+}

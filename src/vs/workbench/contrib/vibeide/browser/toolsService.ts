@@ -52,6 +52,7 @@ import { IGitAutoStashService } from '../common/gitAutoStashService.js'
 import { decideAutoStash } from '../common/autoStashPolicy.js'
 import { ITextFileService } from '../../../services/textfile/common/textfiles.js'
 import { detectShellMisuse, ToolValidationError, truncateHeadTail } from '../common/toolHardening.js'
+import { IShellHardeningService } from './shellHardeningService.js'
 
 // tool use for AI
 type ValidateBuiltinParams = { [T in BuiltinToolName]: (p: RawToolParamsObj) => BuiltinToolCallParams[T] }
@@ -252,6 +253,7 @@ export class ToolsService implements IToolsService {
 		@IConfigurationService private readonly _configurationService: IConfigurationService,
 		@IGitAutoStashService private readonly _gitAutoStashService: IGitAutoStashService,
 		@ITextFileService private readonly _textFileService: ITextFileService,
+		@IShellHardeningService private readonly _shellHardeningService: IShellHardeningService,
 	) {
 		this._offlineGate = new OfflinePrivacyGate();
 		const queryBuilder = instantiationService.createInstance(QueryBuilder);
@@ -517,7 +519,7 @@ export class ToolsService implements IToolsService {
 				const command = validateStr('command', commandUnknown)
 				// Anti-shell contract: bounce commands that duplicate dedicated tools (read_file/grep/glob/edit_file/…).
 				// Prevents the model from collapsing into shell pipes and hanging the IDE on large stdout.
-				const misuse = detectShellMisuse(command)
+				const misuse = detectShellMisuse(command, this._shellHardeningService.getConfig())
 				if (misuse) {
 					throw new ToolValidationError({
 						code: 'shell_misuse',
@@ -546,7 +548,7 @@ export class ToolsService implements IToolsService {
 			run_persistent_command: (params: RawToolParamsObj) => {
 				const { command: commandUnknown, persistent_terminal_id: persistentTerminalIdUnknown, timeout_ms: timeoutMsUnknown } = params;
 				const command = validateStr('command', commandUnknown);
-				const misuse = detectShellMisuse(command)
+				const misuse = detectShellMisuse(command, this._shellHardeningService.getConfig())
 				if (misuse) {
 					throw new ToolValidationError({
 						code: 'shell_misuse',

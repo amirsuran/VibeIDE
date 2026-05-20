@@ -9,104 +9,114 @@
  * Goal: prevent the LLM from collapsing into shell pipes (Get-Content / cat / findstr)
  * when a dedicated built-in tool exists. Long shell stdout is the primary cause of
  * IDE/host hangs we observed in other agent frontends.
+ *
+ * Rules are data-driven via `shellHardeningDefaults.ts` and workspace overrides in
+ * `.vibe/shell-hardening.json` (loaded by `shellHardeningService.ts`). The legacy
+ * `detectShellMisuse(cmd)` signature still works — it falls back to the bundled
+ * default ruleset and an empty allow-list, which preserves behaviour for callers
+ * that haven't been migrated to the service yet.
  */
 
-export type ShellMisuseKind =
-	| 'read_file'
-	| 'list_dir'
-	| 'search_pathnames'
-	| 'search_content'
-	| 'edit_file'
-	| 'tree';
+import { DEFAULT_SHELL_HARDENING_RULES } from './shellHardeningDefaults.js';
+import { ShellHardeningConfig, ShellHardeningRule, ShellMisuse } from './shellHardeningTypes.js';
 
-export interface ShellMisuse {
-	kind: ShellMisuseKind;
-	suggestedTool: string;
-	hint: string;
+export type { ShellMisuse, ShellMisuseKind } from './shellHardeningTypes.js';
+
+/**
+ * Compile a regex source into a cached RegExp. We cache because the same patterns
+ * are matched against every shell command issued in a session — recompiling per
+ * call would burn CPU on hot paths.
+ */
+const _regexCache = new Map<string, RegExp>();
+function compile(source: string, flags = 'i'): RegExp {
+	const key = `${flags}:${source}`;
+	let re = _regexCache.get(key);
+	if (!re) {
+		re = new RegExp(source, flags);
+		_regexCache.set(key, re);
+	}
+	return re;
+}
+
+/** Extract bare command name (no path, no .exe/.cmd/.bat/.ps1 suffix). */
+function extractHead(rawCommand: string): { stripped: string; bareName: string } | null {
+	const cmd = rawCommand.trim();
+	if (!cmd) return null;
+	const stripped = cmd
+		.replace(/^(?:[A-Z_][A-Z0-9_]*=\S+\s+)+/i, '') // POSIX env-var prefix
+		.replace(/^&\s+/, '')                            // PowerShell call-operator
+		.replace(/^['"]?/, '')                           // leading quote (e.g. `"path with spaces" arg`)
+		.trim();
+	const head = stripped.split(/[\s|&;]/, 1)[0]?.toLowerCase() ?? '';
+	const bareName = head.split(/[\\/]/).pop()?.replace(/\.(exe|cmd|bat|ps1)$/i, '') ?? '';
+	return { stripped, bareName };
+}
+
+/**
+ * Apply a single rule to a command. Returns ShellMisuse if the rule fires, null otherwise.
+ */
+function applyRule(rule: ShellHardeningRule, stripped: string, bareName: string): ShellMisuse | null {
+	if (!compile(rule.bareName).test(bareName)) return null;
+
+	const tail = stripped.slice(bareName.length).trim();
+
+	if (rule.requires?.notPiped && stripped.includes('|')) return null;
+	if (rule.requires?.tailMatches && !compile(rule.requires.tailMatches).test(tail)) return null;
+
+	if (rule.exempts) {
+		for (const ex of rule.exempts) {
+			if (compile(ex).test(tail)) return null;
+		}
+	}
+
+	return {
+		kind: rule.kind,
+		suggestedTool: rule.suggestedTool,
+		hint: rule.hint.replace(/\{bareName\}/g, bareName),
+	};
 }
 
 /**
  * Returns a misuse descriptor if the given shell command duplicates a built-in tool.
  * Returns null for legitimate shell usage (git, npm, build scripts, tests, etc).
  *
- * Conservative on purpose: only flags head-of-command invocations of well-known
- * file-reading / grep / ls binaries. Commands that *contain* these as substrings
- * inside a larger pipeline are not blocked.
+ * Conservative on purpose: only flags head-of-command invocations. Commands that
+ * *contain* these as substrings inside a larger pipeline are not blocked.
+ *
+ * When `config` is provided, `config.allowedPatterns` short-circuits (any match
+ * returns null = allowed), then default rules run minus `config.disableDefaultRules`,
+ * then `config.extraRules` run last.
  */
-export function detectShellMisuse(rawCommand: string): ShellMisuse | null {
-	const cmd = rawCommand.trim();
-	if (!cmd) return null;
+export function detectShellMisuse(rawCommand: string, config?: ShellHardeningConfig): ShellMisuse | null {
+	const head = extractHead(rawCommand);
+	if (!head) return null;
+	const { stripped, bareName } = head;
+	if (!bareName) return null;
 
-	// Strip leading env-var assignments (POSIX) and PowerShell `& ` call-operator prefixes.
-	const stripped = cmd
-		.replace(/^(?:[A-Z_][A-Z0-9_]*=\S+\s+)+/i, '')
-		.replace(/^&\s+/, '')
-		.replace(/^['"]?/, '')
-		.trim();
-
-	const head = stripped.split(/[\s|&;]/, 1)[0]?.toLowerCase() ?? '';
-	const bareName = head.split(/[\\/]/).pop()?.replace(/\.(exe|cmd|bat|ps1)$/i, '') ?? '';
-
-	// 1. Read file
-	if (/^(get-content|gc|type|cat|bat|nl|more|less)$/i.test(bareName)) {
-		return {
-			kind: 'read_file',
-			suggestedTool: 'read_file',
-			hint: `Use the read_file tool for reading file contents. Shell readers like ${bareName} stream through stdout and can block the IDE on large files. read_file paginates and accepts startLine/endLine.`,
-		};
-	}
-
-	// head/tail with a file argument (not piped). If piped, leave it alone — common shell hygiene.
-	if (/^(head|tail)$/i.test(bareName) && !/\|/.test(stripped)) {
-		return {
-			kind: 'read_file',
-			suggestedTool: 'read_file',
-			hint: `Use read_file with start_line/end_line/line_limit instead of ${bareName}. read_file returns numbered lines suitable for subsequent edit_file calls.`,
-		};
-	}
-
-	// 2. List dir / tree
-	if (/^(dir|ls|tree)$/i.test(bareName)) {
-		// Allow `dir <file>` (no flags, single arg) — harmless. Block recursive forms.
-		const tailFlags = stripped.slice(bareName.length).trim();
-		const isRecursive = /-r|\/s|\/b|--recursive|-R\b|-la\b|-al\b/i.test(tailFlags);
-		const isPlainName = !tailFlags || /^[\w.\-/\\:]+$/.test(tailFlags);
-		if (isRecursive || !isPlainName) {
-			return {
-				kind: bareName === 'tree' ? 'tree' : 'list_dir',
-				suggestedTool: bareName === 'tree' ? 'get_dir_tree' : 'ls_dir',
-				hint: bareName === 'tree'
-					? `Use the get_dir_tree tool for recursive directory views — it respects workspace boundaries and pagination.`
-					: `Use the ls_dir tool (or glob for patterns) instead of "${bareName}". Recursive shell listings can produce huge stdout and stall the chat.`,
-			};
+	// Workspace allow-list short-circuit.
+	if (config?.allowedPatterns) {
+		for (const pattern of config.allowedPatterns) {
+			try {
+				if (compile(pattern).test(stripped)) return null;
+			} catch {
+				// Invalid user regex — skip silently. Service surfaces a corrupt-config
+				// notification once at load time; per-call logging would spam.
+			}
 		}
 	}
 
-	// 3. Find files by name
-	if (/^(find|fd|where)$/i.test(bareName) && /-name\b|--name\b|-iname\b/i.test(stripped)) {
-		return {
-			kind: 'search_pathnames',
-			suggestedTool: 'glob',
-			hint: `Use the glob tool with a pattern like "**/*.ts" instead of "${bareName} -name". glob uses VS Code's indexed search and returns URIs directly.`,
-		};
+	const disabledIds = new Set(config?.disableDefaultRules ?? []);
+	for (const rule of DEFAULT_SHELL_HARDENING_RULES) {
+		if (disabledIds.has(rule.id)) continue;
+		const misuse = applyRule(rule, stripped, bareName);
+		if (misuse) return misuse;
 	}
 
-	// 4. Content search
-	if (/^(grep|egrep|fgrep|rg|ag|ack|findstr|select-string|sls)$/i.test(bareName)) {
-		return {
-			kind: 'search_content',
-			suggestedTool: 'grep',
-			hint: `Use the grep tool for content search. It is built on ripgrep and supports glob/type/output_mode/multiline. Shell ${bareName} blows up stdout on large repos.`,
-		};
-	}
-
-	// 5. In-place editors
-	if (/^(sed|awk|perl)$/i.test(bareName) && /-i\b/i.test(stripped)) {
-		return {
-			kind: 'edit_file',
-			suggestedTool: 'edit_file',
-			hint: `Use the edit_file tool with SEARCH/REPLACE blocks instead of "${bareName} -i". edit_file integrates with the IDE diff view and respects per-file permissions.`,
-		};
+	if (config?.extraRules) {
+		for (const rule of config.extraRules) {
+			const misuse = applyRule(rule, stripped, bareName);
+			if (misuse) return misuse;
+		}
 	}
 
 	return null;

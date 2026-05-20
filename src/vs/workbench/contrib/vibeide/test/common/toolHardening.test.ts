@@ -63,6 +63,70 @@ suite('ToolHardening', () => {
 		test('does NOT flag a single-file dir/ls', () => {
 			assert.strictEqual(detectShellMisuse('dir package.json'), null);
 		});
+
+		// File-existence idiom: `dir /s /b "<path>\file.ext"` is bounded output.
+		// Used by aggregator-proxied models (Nemotron/qwen via openCode/zen) as
+		// a "does this file exist anywhere under here?" probe. Should be allowed.
+		test('does NOT flag dir /s /b with specific file (extension at path end)', () => {
+			assert.strictEqual(
+				detectShellMisuse('dir /s /b "c:\\Repo\\Promed\\.cursor\\notes\\process.md" 2>nul || echo "File not found"'),
+				null,
+			);
+			assert.strictEqual(detectShellMisuse('dir /s /b file.txt'), null);
+		});
+
+		test('still flags dir /s on a directory (no extension on tail token)', () => {
+			assert.ok(detectShellMisuse('dir /s C:\\proj'));
+			assert.ok(detectShellMisuse('dir /s /b D:\\repo'));
+		});
+
+		test('does NOT flag dir /b on a single file (bare format alone is not recursive)', () => {
+			assert.strictEqual(detectShellMisuse('dir /b file.md'), null);
+		});
+	});
+
+	suite('detectShellMisuse — workspace config overrides', () => {
+		test('allowedPatterns short-circuits default rules', () => {
+			// `grep -r foo .` would normally flag (search_content rule)
+			assert.ok(detectShellMisuse('grep -r foo .'));
+			// With workspace allowlist entry, it passes through.
+			assert.strictEqual(
+				detectShellMisuse('grep -r foo .', { allowedPatterns: ['^grep\\s+'] }),
+				null,
+			);
+		});
+
+		test('disableDefaultRules turns off a specific rule by id', () => {
+			assert.ok(detectShellMisuse('grep -r foo .'));
+			assert.strictEqual(
+				detectShellMisuse('grep -r foo .', { disableDefaultRules: ['search_content'] }),
+				null,
+			);
+			// Other rules still active when only one is disabled.
+			assert.ok(detectShellMisuse('cat foo.md', { disableDefaultRules: ['search_content'] }));
+		});
+
+		test('extraRules adds workspace-specific blocks after defaults', () => {
+			const cfg = {
+				extraRules: [{
+					id: 'block_yarn_install',
+					bareName: '^yarn$',
+					requires: { tailMatches: '^install\\b' },
+					kind: 'edit_file' as const,
+					suggestedTool: 'package_manager',
+					hint: 'Use the package_manager tool for {bareName}.',
+				}],
+			};
+			assert.ok(detectShellMisuse('yarn install', cfg));
+			// Default rules still pass-through when extra rule doesn't match.
+			assert.strictEqual(detectShellMisuse('yarn build', cfg), null);
+		});
+
+		test('invalid allowedPatterns regex is silently skipped (does not throw)', () => {
+			// Unbalanced bracket — should not crash detection.
+			const result = detectShellMisuse('grep foo .', { allowedPatterns: ['[invalid('] });
+			assert.ok(result); // grep still flagged by default rule
+		});
 	});
 
 	suite('detectShellMisuse — search', () => {

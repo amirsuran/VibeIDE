@@ -187,6 +187,9 @@ import './vibeLoopDetectorService.js'
 // VibeIDE: Constraints service
 import '../common/vibeConstraintsService.js'
 
+// VibeIDE: Shell-hardening config service (.vibe/shell-hardening.json overrides)
+import './shellHardeningService.js'
+
 // VibeIDE: Prompt guard service (injection + context poisoning detection)
 import '../common/vibePromptGuardService.js'
 
