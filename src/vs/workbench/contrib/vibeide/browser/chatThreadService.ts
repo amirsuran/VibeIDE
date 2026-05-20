@@ -3216,6 +3216,30 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 			});
 			return {};
 		}
+		// Shape-based tool-name correction (BEFORE alias resolution). Some
+		// aggregator-proxied models (Nemotron via openCode/zen, qwen variants)
+		// emit the right params shape under the wrong tool name — e.g.
+		// `{command, cwd}` (the `run_command` shape) under tool name `read_file`
+		// or `grep`. Without this guard, validation rejects → schema-hint reply
+		// → model retries same wrong combo → infinite loop accumulating
+		// tool-error history (the very pattern that OOM'd long agent sessions).
+		// Only override when the shape is unambiguous: `command` is a non-empty
+		// string and all keys ⊆ {command, cwd, timeout_ms} — no other tool
+		// shares this signature.
+		const paramsObjForShape = opts.unvalidatedToolParams as Record<string, unknown> | undefined;
+		let effectiveRequestedToolName: ToolName = requestedToolName;
+		if (paramsObjForShape && typeof paramsObjForShape === 'object' && typeof paramsObjForShape.command === 'string' && paramsObjForShape.command.length > 0) {
+			const keys = Object.keys(paramsObjForShape);
+			const isRunCommandShape = keys.every(k => k === 'command' || k === 'cwd' || k === 'timeout_ms');
+			if (isRunCommandShape && requestedToolName !== 'run_command' && isABuiltinToolName('run_command')) {
+				console.warn(`[VibeIDE/Tool] auto-routing ${requestedToolName} → run_command (run_command-shape params)`, {
+					originalTool: requestedToolName,
+					keys,
+				});
+				effectiveRequestedToolName = 'run_command' as ToolName;
+			}
+		}
+
 		// Resolve raw tool name to canonical VibeIDE name via aliases. Stages:
 		//   1. Exact match (`isABuiltinToolName(raw)`) — already a real name.
 		//   2. Lowercase match (`Read_File` → `read_file`).
@@ -3225,13 +3249,13 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 		// (extractGrammar.ts) — single source of truth in common/prompt/toolAliases.
 		// Bound to a `const` so downstream TypeScript narrowing via type guards is
 		// preserved (a `let` parameter breaks `isABuiltinToolName(toolName)` flow).
-		const loweredRequested = (requestedToolName as string).toLowerCase();
+		const loweredRequested = (effectiveRequestedToolName as string).toLowerCase();
 		const toolName: ToolName = (
-			isABuiltinToolName(requestedToolName) ? requestedToolName :
+			isABuiltinToolName(effectiveRequestedToolName) ? effectiveRequestedToolName :
 				isABuiltinToolName(loweredRequested) ? loweredRequested as ToolName :
 					(TOOL_NAME_ALIASES[loweredRequested] && isABuiltinToolName(TOOL_NAME_ALIASES[loweredRequested]))
 						? TOOL_NAME_ALIASES[loweredRequested] as ToolName
-						: requestedToolName
+						: effectiveRequestedToolName
 		);
 
 		// Param-name aliases (`{path: ...}` → `{uri: ...}`, `{filePath: ...}` →
@@ -3254,6 +3278,50 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 
 		// Check if it's a built-in tool
 		const isBuiltInTool = isABuiltinToolName(toolName)
+
+		// Circuit breaker for invalid_params loops. If the last N tool messages
+		// were all `invalid_params` for the same tool with the same param-shape
+		// signature, the model is stuck (typical for aggregator-proxied models
+		// that misalign tool-name ↔ params shape). Abort with a clear user-facing
+		// error instead of bouncing more schema hints — which only enlarge the
+		// loop and eventually OOM the renderer.
+		const CIRCUIT_BREAKER_LIMIT = 3;
+		const currentParamKeysSig = paramsObjForShape && typeof paramsObjForShape === 'object'
+			? Object.keys(paramsObjForShape).slice().sort().join(',')
+			: '';
+		const threadForBreaker = this.state.allThreads[threadId];
+		const recentToolMessages = (threadForBreaker?.messages ?? [])
+			.filter(m => m.role === 'tool')
+			.slice(-CIRCUIT_BREAKER_LIMIT);
+		const sameLoop = recentToolMessages.length >= CIRCUIT_BREAKER_LIMIT && recentToolMessages.every(m =>
+			m.role === 'tool' &&
+			m.type === 'invalid_params' &&
+			m.name === toolName &&
+			(m.rawParams && typeof m.rawParams === 'object'
+				? Object.keys(m.rawParams).slice().sort().join(',') === currentParamKeysSig
+				: false)
+		);
+		if (sameLoop) {
+			const keysLabel = currentParamKeysSig || '(без параметров)';
+			const breakerMsg = `Прервано: модель ${CIRCUIT_BREAKER_LIMIT + 1} раз подряд вызвала "${toolName}" с одной и той же неверной формой параметров (${keysLabel}). Похоже на петлю — переключитесь на другую модель или начните новый чат.`;
+			console.warn('[VibeIDE/Tool] circuit breaker tripped', { toolName, keys: currentParamKeysSig });
+			this._addMessageToThread(threadId, {
+				role: 'tool',
+				type: 'tool_error',
+				params: {} as ToolCallParams<ToolName>,
+				rawParams: opts.unvalidatedToolParams,
+				result: breakerMsg,
+				name: toolName,
+				content: breakerMsg,
+				id: toolId,
+				mcpServerName,
+			});
+			this._setStreamState(threadId, {
+				isRunning: undefined,
+				error: { message: breakerMsg, fullError: null },
+			});
+			return { interrupted: true };
+		}
 
 		if (!opts.preapproved) { // skip this if pre-approved
 			// 1. validate tool params
