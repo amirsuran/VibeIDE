@@ -248,6 +248,12 @@ export class VibeideGlobalSettingsConfigurationContribution extends Disposable i
 					description: localize('vibeide.chat.compactToolResultsAfterTurns', 'Сжимать tool-results старше указанного числа user-turns (отсчёт от текущего сообщения). Старые tool-outputs заменяются на short summary с пометкой `[summarized: N tokens]`, что предотвращает линейный рост входного prompt при долгих агентских циклах (главная причина AI_RetryError у openCode/minimax-m2.7 на больших проектах). 0 — отключить сжатие; 3 — баланс между сохранением свежего контекста и контролем токенов.'),
 					scope: ConfigurationScope.APPLICATION,
 				},
+				'vibeide.chat.autoToolSynthesis': {
+					type: 'boolean',
+					default: false,
+					description: localize('vibeide.chat.autoToolSynthesis', 'Эвристика «автосинтеза tool-call» когда модель ответила текстом вместо ожидаемого инструмента. Если включено, VibeIDE подменяет ответ модели захардкоженным «I will help you with that…» / «I will search for files…» и сам выполняет synthesized tool. Полезно для слабых tool-calling моделей; для современных (Claude / GPT-4 / DeepSeek thinking) скорее мешает — реальный ответ модели теряется, цепочка диалога ломается. По умолчанию **off** после инцидента OOM от петли invalid_params в долгой сессии. Включайте только если ваша модель регулярно «забывает» вызвать tool.'),
+					scope: ConfigurationScope.APPLICATION,
+				},
 			},
 		});
 

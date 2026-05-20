@@ -5296,8 +5296,12 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 				// 1. Model has specialToolFormat set (native tool calling support)
 				// 2. We haven't already synthesized tools for this request (prevents loops)
 				// 3. Model actually responded (not an error case)
+				// 4. User opted in via `vibeide.chat.autoToolSynthesis` (default OFF — synthesis
+				//    is a relic for weak tool-callers and tends to confuse modern models by
+				//    replacing the real reply with hardcoded "I'll help…" text).
+				const autoToolSynthesisEnabled = this._configurationService.getValue<boolean>('vibeide.chat.autoToolSynthesis') ?? false
 				let modelSupportsTools = false
-				if (modelSelection && modelSelection.providerName !== 'auto') {
+				if (autoToolSynthesisEnabled && modelSelection && modelSelection.providerName !== 'auto') {
 					const { getModelCapabilities } = await import('../common/modelCapabilities.js')
 					const capabilities = getModelCapabilities(modelSelection.providerName, modelSelection.modelName, overridesOfModel)
 					// Model supports tools if it has specialToolFormat set (native tool calling)
@@ -5470,7 +5474,10 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 				// CRITICAL: Check if model responded with text but no tool call after executing tools
 				// This can happen when model explores codebase but doesn't continue to answer the question
 				// For "how many endpoints" type questions, we need to ensure model searches for endpoints
-				if (!toolCall && info.fullText.trim() && toolsExecutedInRequest.length > 0 && originalUserMessage) {
+				// Gated by `vibeide.chat.autoToolSynthesis` (default OFF) — same reasoning as the
+				// agent-tool-synth branch above. The model's real reply is preserved on the canonical
+				// save path (above this block) when synthesis is disabled.
+				if (autoToolSynthesisEnabled && !toolCall && info.fullText.trim() && toolsExecutedInRequest.length > 0 && originalUserMessage) {
 					const userRequest = originalUserMessage.displayContent?.toLowerCase() || ''
 
 					// Check if this is a "how many" question that requires searching files
