@@ -262,6 +262,30 @@ export class VibeideGlobalSettingsConfigurationContribution extends Disposable i
 					description: localize('vibeide.chat.emptyResponseCircuitBreakerThreshold', 'Сколько раз подряд провайдер/модель должны вернуть «Empty response» подряд из одной (thread × provider × model)-комбинации, чтобы VibeIDE заменил стандартный toast на recoverable error с предложением сменить модель. Счётчик сбрасывается на любом успешном ответе из той же комбинации. По умолчанию 3 — баланс между «дайте модели шанс» и «не насилуйте провайдер ещё одним retry». Поднимите для нестабильных сетей, опустите до 1 для агрессивного fail-fast.'),
 					scope: ConfigurationScope.APPLICATION,
 				},
+				'vibeide.chat.toolInvalidParamsCircuitBreakerThreshold': {
+					type: 'number',
+					default: 3,
+					minimum: 1,
+					maximum: 20,
+					description: localize('vibeide.chat.toolInvalidParamsCircuitBreakerThreshold', 'Сколько раз подряд модель должна вызвать один и тот же tool с одной и той же неверной формой параметров (`invalid_params` подряд) до того, как VibeIDE прервёт чат с явной ошибкой вместо продолжения цикла schema-hint-ов. Защищает от OOM-петель когда aggregator-проксированные модели (Nemotron/qwen/minimax через openCode-zen) застревают в неверном tool-call shape. Сравнить с `emptyResponseCircuitBreakerThreshold` — оба ловят разные классы repetitive failures. По умолчанию 3.'),
+					scope: ConfigurationScope.APPLICATION,
+				},
+				'vibeide.chat.maxMessagesPerThread': {
+					type: 'number',
+					default: 500,
+					minimum: 100,
+					maximum: 5000,
+					description: localize('vibeide.chat.maxMessagesPerThread', 'Жёсткий потолок на количество сообщений в одном thread. При превышении старые сообщения обрезаются до `maxMessagesPerThread - 100` + вставляется маркер с подсчётом. Это **независимо** от LLM-payload truncation (smart truncation в convertToLLMMessageService) — этот лимит ограничивает JSON, который хранится в renderer-памяти и на диске, чтобы долгие агент-сессии не приводили к OOM рендерера. Поднимите для очень длинных проектов; опустите если у вас слабая машина.'),
+					scope: ConfigurationScope.APPLICATION,
+				},
+				'vibeide.catalog.modelsDevCacheTtlHours': {
+					type: 'number',
+					default: 24,
+					minimum: 1,
+					maximum: 720,
+					description: localize('vibeide.catalog.modelsDevCacheTtlHours', 'TTL для дискового кеша `models.dev` каталога в часах. В пределах TTL VibeIDE подаёт catalog мгновенно с диска и refresh-ит из сети в фоне (stale-while-revalidate). За пределами TTL fetch синхронный (~500ms на первом запросе). По умолчанию 24h — aggregator-каталог обновляется редко. Поднимите до 168 (неделя) для медленных корпоративных сетей, опустите до 1 для очень частого refresh при работе с быстро меняющимися моделями.'),
+					scope: ConfigurationScope.APPLICATION,
+				},
 			},
 		});
 

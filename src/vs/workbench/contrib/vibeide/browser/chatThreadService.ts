@@ -3377,16 +3377,21 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 		// signature, the model is stuck (typical for aggregator-proxied models
 		// that misalign tool-name ↔ params shape). Abort with a clear user-facing
 		// error instead of bouncing more schema hints — which only enlarge the
-		// loop and eventually OOM the renderer.
-		const CIRCUIT_BREAKER_LIMIT = 3;
+		// loop and eventually OOM the renderer. Threshold configurable via
+		// `vibeide.chat.toolInvalidParamsCircuitBreakerThreshold` — parallel to
+		// the empty-response breaker (Stage K), so both repetitive failure
+		// classes have consistent tunability.
+		const invalidParamsBreakerLimit = Math.max(1, Math.min(20,
+			this._configurationService.getValue<number>('vibeide.chat.toolInvalidParamsCircuitBreakerThreshold') ?? 3
+		));
 		const currentParamKeysSig = paramsObjForShape && typeof paramsObjForShape === 'object'
 			? Object.keys(paramsObjForShape).slice().sort().join(',')
 			: '';
 		const threadForBreaker = this.state.allThreads[threadId];
 		const recentToolMessages = (threadForBreaker?.messages ?? [])
 			.filter(m => m.role === 'tool')
-			.slice(-CIRCUIT_BREAKER_LIMIT);
-		const sameLoop = recentToolMessages.length >= CIRCUIT_BREAKER_LIMIT && recentToolMessages.every(m =>
+			.slice(-invalidParamsBreakerLimit);
+		const sameLoop = recentToolMessages.length >= invalidParamsBreakerLimit && recentToolMessages.every(m =>
 			m.role === 'tool' &&
 			m.type === 'invalid_params' &&
 			m.name === toolName &&
@@ -3396,7 +3401,7 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 		);
 		if (sameLoop) {
 			const keysLabel = currentParamKeysSig || '(без параметров)';
-			const breakerMsg = `Прервано: модель ${CIRCUIT_BREAKER_LIMIT + 1} раз подряд вызвала "${toolName}" с одной и той же неверной формой параметров (${keysLabel}). Похоже на петлю — переключитесь на другую модель или начните новый чат.`;
+			const breakerMsg = `Прервано: модель ${invalidParamsBreakerLimit + 1} раз подряд вызвала "${toolName}" с одной и той же неверной формой параметров (${keysLabel}). Похоже на петлю — переключитесь на другую модель или начните новый чат.`;
 			console.warn('[VibeIDE/Tool] circuit breaker tripped', { toolName, keys: currentParamKeysSig });
 			this._addMessageToThread(threadId, {
 				role: 'tool',
@@ -6536,14 +6541,18 @@ We only need to do it for files that were edited since `from`, ie files between 
 		// don't even attempt abortRunning — go straight to forceResetChatState.
 		// abortRunning has its own 2s timeout on interrupt, but it also does
 		// work like committing partial assistant content which can itself hang
-		// against bad state. Threshold matches the submitWatchdog default (120s)
-		// — long enough that a legit slow request isn't killed, short enough
-		// that a hung thread doesn't permanently lock the chat.
-		const STUCK_THRESHOLD_MS = 120_000
+		// against bad state. Threshold REUSES `vibeide.chat.streamHardStallSeconds`
+		// (default 120s) — same semantic ("how long is too long for a stream to
+		// be active without finishing"), so the two settings stay in sync. User
+		// raising hard-stall timeout to 300s also extends the stuck-detection
+		// threshold, no separate knob needed.
+		const stuckThresholdMs = (Math.max(30, Math.min(1800,
+			this._configurationService.getValue<number>('vibeide.chat.streamHardStallSeconds') ?? DEFAULT_HARD_STALL_SECONDS
+		))) * 1000
 		const setAt = this._streamStateSetAt.get(threadId)
 		const ageMs = setAt !== undefined ? Date.now() - setAt : 0
-		if (this.streamState[threadId]?.isRunning && ageMs > STUCK_THRESHOLD_MS) {
-			console.warn(`[VibeIDE chatThread] Detected stuck running state on send (age=${Math.floor(ageMs / 1000)}s, isRunning=${this.streamState[threadId]?.isRunning}). Force-resetting instead of awaiting abortRunning.`)
+		if (this.streamState[threadId]?.isRunning && ageMs > stuckThresholdMs) {
+			console.warn(`[VibeIDE chatThread] Detected stuck running state on send (age=${Math.floor(ageMs / 1000)}s > ${stuckThresholdMs / 1000}s threshold, isRunning=${this.streamState[threadId]?.isRunning}). Force-resetting instead of awaiting abortRunning.`)
 			this.forceResetChatState(threadId)
 		} else if (this.streamState[threadId]?.isRunning) {
 			await this.abortRunning(threadId)
@@ -7171,13 +7180,15 @@ We only need to do it for files that were edited since `from`, ie files between 
 	// this bounds the JSON we keep in renderer memory and persist to disk. Long
 	// agent sessions, especially retry/loop storms, used to grow unbounded and
 	// OOM the Electron renderer (~thousand+ messages of accumulated tool errors
-	// + assistant retries). When `messages.length` exceeds MAX_MESSAGES_PER_THREAD
-	// after an append, we drop the oldest messages back down to TRIM_TARGET and
+	// + assistant retries). When `messages.length` exceeds the configured cap
+	// after an append, we drop the oldest messages back down to (cap - 100) and
 	// insert a single synthetic assistant marker at the new head documenting the
 	// trim. orphaned tool-result references in the surviving tail are handled
 	// transparently by aiSdkAdapter's source-level orphan guard.
-	private static readonly MAX_MESSAGES_PER_THREAD = 500;
-	private static readonly TRIM_TARGET = 400;
+	// Configurable via `vibeide.chat.maxMessagesPerThread` (default 500, range
+	// 100..5000). Trim headroom is fixed at 100 (delta between cap and target)
+	// — keeps trim runs amortised, no need for two separate settings.
+	private static readonly TRIM_HEADROOM = 100;
 
 	private _addMessageToThread(threadId: string, message: ChatMessage) {
 		// Invalidate plan cache when plan messages are added
@@ -7195,9 +7206,13 @@ We only need to do it for files that were edited since `from`, ie files between 
 			? { ...message, createdAt: Date.now() } as ChatMessage
 			: message
 		// Compute new messages array, applying the hard cap if exceeded.
+		const cap = Math.max(100, Math.min(5000,
+			this._configurationService.getValue<number>('vibeide.chat.maxMessagesPerThread') ?? 500
+		))
+		const target = Math.max(100, cap - ChatThreadService.TRIM_HEADROOM)
 		let nextMessages: ChatMessage[] = [...oldThread.messages, stampedMessage]
-		if (nextMessages.length > ChatThreadService.MAX_MESSAGES_PER_THREAD) {
-			const dropCount = nextMessages.length - ChatThreadService.TRIM_TARGET
+		if (nextMessages.length > cap) {
+			const dropCount = nextMessages.length - target
 			const trimMarker: ChatMessage = {
 				role: 'assistant',
 				displayContent: `_(${dropCount} earlier message${dropCount === 1 ? '' : 's'} trimmed from thread to keep memory bounded. Convert pipeline still summarises older context into each LLM request.)_`,
@@ -7206,7 +7221,7 @@ We only need to do it for files that were edited since `from`, ie files between 
 				createdAt: Date.now(),
 			}
 			nextMessages = [trimMarker, ...nextMessages.slice(dropCount)]
-			console.warn(`[VibeIDE] Trimmed ${dropCount} oldest messages from thread ${threadId} (cap=${ChatThreadService.MAX_MESSAGES_PER_THREAD}, target=${ChatThreadService.TRIM_TARGET})`)
+			console.warn(`[VibeIDE] Trimmed ${dropCount} oldest messages from thread ${threadId} (cap=${cap}, target=${target})`)
 		}
 		// update state and store it
 		const newThreads = {

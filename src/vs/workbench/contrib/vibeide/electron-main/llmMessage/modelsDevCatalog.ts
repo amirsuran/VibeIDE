@@ -45,10 +45,24 @@ const FETCH_TIMEOUT_MS = 10_000;
 const LOCAL_SNAPSHOT_FILENAME = 'models.dev.json';
 // Disk-cache TTL for the userData snapshot. Within this window we serve from
 // disk INSTANTLY (no network wait) and kick off a background refresh — the
-// classic stale-while-revalidate pattern. 24h is the roadmap-suggested
-// default: aggregators don't add models more than ~once per week, but a daily
-// refresh keeps catalogue rot under control without hammering models.dev.
-const DISK_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+// classic stale-while-revalidate pattern. Default 24h: aggregators don't add
+// models more than ~once per week, but a daily refresh keeps catalogue rot
+// under control without hammering models.dev. Configurable per-process via
+// the `VIBEIDE_MODELS_DEV_CACHE_TTL_HOURS` env var, which the renderer
+// populates from `vibeide.catalog.modelsDevCacheTtlHours` setting at startup.
+// Env-var indirection chosen over importing IConfigurationService because
+// modelsDevCatalog is a module-level singleton without DI; env var also
+// survives the renderer ↔ main IPC boundary without extra plumbing.
+const DEFAULT_DISK_CACHE_TTL_HOURS = 24;
+const resolveDiskCacheTtlMs = (): number => {
+	const raw = process.env.VIBEIDE_MODELS_DEV_CACHE_TTL_HOURS;
+	if (!raw) return DEFAULT_DISK_CACHE_TTL_HOURS * 60 * 60 * 1000;
+	const parsed = Number(raw);
+	if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_DISK_CACHE_TTL_HOURS * 60 * 60 * 1000;
+	// Clamp to the same range as the setting (1h..720h = 30 days).
+	const clamped = Math.max(1, Math.min(720, parsed));
+	return clamped * 60 * 60 * 1000;
+};
 
 // Per-model SDK npm override (from `models[].provider.npm`). Key is model id
 // lowercased; value is e.g. '@ai-sdk/anthropic'. If a model has no override
@@ -174,12 +188,12 @@ const tryReadLocalSnapshot = async (): Promise<{ catalog: CatalogIndex; from: st
 };
 
 // Fast-path read of the userData snapshot ONLY, plus its age. Used by the
-// stale-while-revalidate fast start: if the snapshot was written within
-// DISK_CACHE_TTL_MS, serve it immediately and skip the synchronous network
-// fetch on cold start (a background refresh runs anyway). userData is the
-// only candidate we wrote ourselves — exeDir / resourcesPath bundles were
-// placed by a human and we have no provenance on their freshness, so they
-// stay on the slow path (network-fail fallback) only.
+// stale-while-revalidate fast start: if the snapshot was written within the
+// configured TTL, serve it immediately and skip the synchronous network fetch
+// on cold start (a background refresh runs anyway). userData is the only
+// candidate we wrote ourselves — exeDir / resourcesPath bundles were placed
+// by a human and we have no provenance on their freshness, so they stay on
+// the slow path (network-fail fallback) only.
 const tryReadFreshUserDataSnapshot = async (): Promise<{ catalog: CatalogIndex; from: string; ageMs: number } | null> => {
 	const userData = resolveUserDataDir();
 	if (!userData) return null;
@@ -187,7 +201,7 @@ const tryReadFreshUserDataSnapshot = async (): Promise<{ catalog: CatalogIndex; 
 	try {
 		const stat = await fs.promises.stat(file);
 		const ageMs = Date.now() - stat.mtimeMs;
-		if (ageMs > DISK_CACHE_TTL_MS) return null;
+		if (ageMs > resolveDiskCacheTtlMs()) return null;
 		const raw = await fs.promises.readFile(file, 'utf-8');
 		const indexed = indexJson(JSON.parse(raw));
 		if (!indexed) return null;
@@ -228,10 +242,11 @@ const getCatalog = (): Promise<CatalogIndex | null> => {
 	}
 	inFlight = (async () => {
 		// Fast path — stale-while-revalidate. If we have a userData snapshot
-		// younger than DISK_CACHE_TTL_MS, serve it INSTANTLY (no network wait)
-		// and kick off a background refresh so the next start gets newer data
-		// AND this session picks up any new models mid-flight. This drops cold-
-		// start LLM-request latency by ~500ms on warm runs.
+		// younger than the configured TTL (resolveDiskCacheTtlMs(), default 24h),
+		// serve it INSTANTLY (no network wait) and kick off a background refresh
+		// so the next start gets newer data AND this session picks up any new
+		// models mid-flight. This drops cold-start LLM-request latency by ~500ms
+		// on warm runs.
 		const fresh = await tryReadFreshUserDataSnapshot();
 		if (fresh) {
 			cachedCatalog = fresh.catalog;

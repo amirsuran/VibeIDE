@@ -19,6 +19,7 @@ export type ModelsDevCatalogStatus =
 export interface IModelsDevCatalogStatusService {
 	readonly _serviceBrand: undefined;
 	getStatus(): Promise<ModelsDevCatalogStatus>;
+	setDiskCacheTtlHours(hours: number): Promise<void>;
 }
 
 export const IModelsDevCatalogStatusService =
@@ -36,6 +37,10 @@ export class ModelsDevCatalogStatusService implements IModelsDevCatalogStatusSer
 
 	getStatus(): Promise<ModelsDevCatalogStatus> {
 		return this.proxy.getStatus();
+	}
+
+	setDiskCacheTtlHours(hours: number): Promise<void> {
+		return this.proxy.setDiskCacheTtlHours(hours);
 	}
 }
 

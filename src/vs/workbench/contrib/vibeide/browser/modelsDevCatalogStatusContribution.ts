@@ -8,6 +8,7 @@ import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase 
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
 import { IOpenerService } from '../../../../platform/opener/common/opener.js';
 import { URI } from '../../../../base/common/uri.js';
+import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { IModelsDevCatalogStatusService } from '../common/modelsDevCatalogStatusService.js';
 
 /**
@@ -34,10 +35,24 @@ export class ModelsDevCatalogStatusContribution extends Disposable implements IW
 		@IModelsDevCatalogStatusService statusService: IModelsDevCatalogStatusService,
 		@INotificationService notificationService: INotificationService,
 		@IOpenerService openerService: IOpenerService,
+		@IConfigurationService configurationService: IConfigurationService,
 	) {
 		super();
 		// Fire-and-forget. Status check failure (IPC down etc) is non-critical.
 		void this._check(statusService, notificationService, openerService);
+
+		// Push the user's `modelsDevCacheTtlHours` setting to main-process at
+		// startup, then re-push whenever it changes. Without this, the setting
+		// would be silently ignored — modelsDevCatalog reads from an env var
+		// that main-process owns, and renderer<->main don't share process.env.
+		const pushTtl = () => {
+			const hours = configurationService.getValue<number>('vibeide.catalog.modelsDevCacheTtlHours') ?? 24;
+			void statusService.setDiskCacheTtlHours(hours).catch(() => { /* IPC down — config will be re-tried on next change */ });
+		};
+		pushTtl();
+		this._register(configurationService.onDidChangeConfiguration(e => {
+			if (e.affectsConfiguration('vibeide.catalog.modelsDevCacheTtlHours')) pushTtl();
+		}));
 	}
 
 	private async _check(
