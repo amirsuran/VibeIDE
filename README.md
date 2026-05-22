@@ -271,6 +271,39 @@ mkdir D:\github-runner && cd D:\github-runner
 
 ---
 
+## Поведенческие квирки моделей
+
+Некоторые LLM-модели (особенно через aggregator'ы вроде opencode.ai/zen) требуют специфической настройки, чтобы стримить стабильно: одни шлют пустой ответ при стандартной `temperature`, другие падают без `reasoning_content` обратно, третьи галлюцинируют имена параметров в native function-calling и работают только через XML-формат. Все aggregator-проксированные клиенты (cursor, continue, opencode CLI) поддерживают похожие таблицы — у нас это **внешний каталог**.
+
+**Где живут квирки:** [`resources/model-quirks.json`](resources/model-quirks.json) — JSON-каталог в этом репо.
+
+**Как работает обновление:**
+- IDE при старте читает bundled-копию из `resources/`.
+- Параллельно фоном тянет свежую версию через CDN с `main`-ветки: `https://raw.githubusercontent.com/VibeIDETeam/VibeIDE/main/resources/model-quirks.json`. ETag-кэш в `${userData}/model-quirks-cache.json`.
+- Refresh каждые 24 часа (настройка `vibeide.modelQuirks.refreshIntervalHours`, 0 — отключить).
+- Если merge в `main` → новый квирк доступен всем пользователям **без релиза VibeIDE** на следующем refresh-цикле.
+
+**Как добавить квирк для новой модели:** PR в этот репо, правка одного файла `resources/model-quirks.json`. Поля правила:
+
+| Поле | Тип | Что делает |
+|---|---|---|
+| `match` | string | Substring модели (case-insensitive). First match wins по порядку в массиве — специфические правила сверху, family-fallback снизу. |
+| `temperature` | 0..2 | Override default temperature провайдера. |
+| `topP` | 0..1 | Nucleus sampling. |
+| `topK` | int ≥1 | Только для провайдеров, которые его уважают. |
+| `forceEmptyReasoning` | boolean | Для DeepSeek-семейства: вшивать пустой reasoning placeholder на каждый assistant message (иначе HTTP 400). |
+| `mirrorReasoningContent` | boolean | Дублировать reasoning в `providerOptions.openaiCompatible.reasoning_content` (interleaved-семейства). |
+| `forceToolCallFormat` | `"native"` / `"xml"` / `"auto"` | Override формата tool-call'ов. `"xml"` для моделей с broken native FC (qwen, например). |
+| `note` | string | Свободный комментарий для контрибьюторов, не консумируется рантаймом. |
+
+**User-уровневый override:** настройка `vibeide.modelQuirks` (JSON-объект `{ <modelId>: { …поля… } }`). Перекрывает каталог per-field. Полезно для приватных моделей или быстрого тюнинга без PR.
+
+**Принудительный refresh:** команда `VibeIDE: Refresh model quirks catalog` через палитру.
+
+Подробнее: [`docs/knowledge/architecture/model-quirks.md`](docs/knowledge/architecture/model-quirks.md) (локально, если есть).
+
+---
+
 ## Участие в разработке
 
 Pull request'ы приветствуются. Перед началом значимой работы — откройте issue для обсуждения подхода.

@@ -15,6 +15,7 @@ import { product } from './bootstrap-meta.js';
 import { parse } from './vs/base/common/jsonc.js';
 import { getUserDataPath } from './vs/platform/environment/node/userDataPath.js';
 import { startVibeIdleWatchdog } from './vs/workbench/contrib/vibeide/electron-main/vibeIdleWatchdogService.js';
+import { initModelQuirksService } from './vs/workbench/contrib/vibeide/electron-main/modelQuirks/modelQuirksService.js';
 import * as perf from './vs/base/common/performance.js';
 import { resolveNLSConfiguration } from './vs/base/node/nls.js';
 import { getUNCHost, addUNCHostToAllowlist } from './vs/base/node/unc.js';
@@ -100,6 +101,11 @@ app.setPath('userData', userDataPath);
 // (see docs/knowledge/runtime-quirks/idle-memory.md). Configured by
 // `vibeide.diagnostics.idleWatchdog.*` settings; restart-required to re-read.
 startVibeIdleWatchdog(userDataPath);
+
+// VibeIDE model-quirks catalog — loads bundled resources/model-quirks.json + tries
+// CDN refresh in the background. Synchronous getModelQuirks() is callable from
+// the LLM adapter after this point. See docs/knowledge/architecture/model-quirks.md.
+initModelQuirksService(userDataPath);
 
 // Resolve code cache path
 const codeCachePath = getCodeCachePath();

@@ -1,0 +1,34 @@
+{
+	"version": 1,
+	"description": "VibeIDE model behaviour quirks. Source of truth — see README.md section 'Model behaviour quirks'. PRs welcome. Schema: ./src/vs/workbench/contrib/vibeide/common/modelQuirks/modelQuirksTypes.ts.",
+	"docs": "https://github.com/VibeIDETeam/VibeIDE#model-behaviour-quirks",
+	"rules": [
+		{ "match": "kimi-k2.6", "temperature": 1.0, "topP": 0.95, "mirrorReasoningContent": true,
+		  "note": "kimi-k2.x family — opencode upstream transform.ts:478-510" },
+		{ "match": "kimi-k2.5", "temperature": 1.0, "topP": 0.95, "mirrorReasoningContent": true },
+		{ "match": "kimi-k2-thinking", "temperature": 1.0, "topP": 0.95, "mirrorReasoningContent": true },
+		{ "match": "kimi-k2", "temperature": 0.6,
+		  "note": "Legacy kimi-k2 (non-thinking, non-versioned) — opencode upstream uses T=0.6" },
+		{ "match": "kimi", "temperature": 1.0, "topP": 0.95,
+		  "note": "Future kimi versions — defaults to 'new-style' preset" },
+
+		{ "match": "minimax-m2.7", "temperature": 1.0, "topP": 0.95, "topK": 40 },
+		{ "match": "minimax-m2.5", "temperature": 1.0, "topP": 0.95, "topK": 40 },
+		{ "match": "minimax-m2", "temperature": 1.0, "topP": 0.95, "topK": 20,
+		  "note": "Base minimax-m2 — opencode upstream uses topK=20; m2.x variants prefer topK=40" },
+		{ "match": "minimax", "temperature": 1.0, "topP": 0.95, "topK": 40,
+		  "note": "Future minimax versions — defaults to higher topK" },
+
+		{ "match": "deepseek", "forceEmptyReasoning": true, "mirrorReasoningContent": true,
+		  "note": "DeepSeek family — every assistant message must carry a reasoning slot (HTTP 400 otherwise); reasoning text must be mirrored on top-level message field" },
+
+		{ "match": "qwen", "temperature": 0.55, "topP": 1.0, "forceToolCallFormat": "xml",
+		  "note": "Qwen-family — native FC unreliable (hallucinates param names like 'path_pattern' instead of 'pattern'). Forcing XML mode routes the output through extractXMLToolsWrapper which handles the naked-tag <grep><pattern>...</pattern></grep> format the model naturally emits." },
+
+		{ "match": "glm", "temperature": 1.0,
+		  "note": "GLM family (z.ai) — 4.6/4.7/5/5.1, single preset" },
+
+		{ "match": "gemini", "temperature": 1.0, "topP": 0.95, "topK": 64,
+		  "note": "Gemini via aggregator (NOT native @ai-sdk/google path, which has its own settings)" }
+	]
+}

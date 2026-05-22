@@ -28,6 +28,7 @@ import { TOOL_NAME_ALIASES } from '../../common/prompt/toolAliases.js';
 import { getModelSdkNpm } from './modelsDevCatalog.js';
 import { getModelCapabilities } from '../../common/modelCapabilities.js';
 import { buildContextOverflowError, buildEmptyResponseError, isContextOverflow, LLMChatMessage, LLMTokenUsage, RawToolCallObj, RawToolParamsObj } from '../../common/sendLLMMessageTypes.js';
+import { getModelQuirks } from '../modelQuirks/modelQuirksService.js';
 import { SettingsOfProvider } from '../../common/vibeideSettingsTypes.js';
 import { ensureSystemCADispatcher } from './systemCAFetch.js';
 import { extractReasoningWrapper, extractXMLToolsWrapper } from './extractGrammar.js';
@@ -61,81 +62,11 @@ const EMPTY_CONTENT_PLACEHOLDER = '(no content)';
 const OPENCODE_PROCESS_PROJECT_ID = `vibeide-${createHash('sha256').update(process.execPath).digest('hex').slice(0, 16)}`;
 const OPENCODE_PROCESS_SESSION_ID = `vibeide-${generateUuid()}`;
 
-// ────────────────────────────────────────────────────────────────────
-// Model-family helpers ported from opencode upstream
-// (anomalyco/opencode src/provider/transform.ts).
-// ────────────────────────────────────────────────────────────────────
-
-/**
- * Empirically-tuned generation params per model family. Source:
- * `packages/opencode/src/provider/transform.ts:478-510` (temperature, topP, topK
- * functions). These values are not in models.dev — they come from opencode CLI
- * field testing of which combos avoid the "empty response", "infinite reasoning
- * loop", and "degenerate output" pathologies on free/aggregated routes.
- *
- * Applied only when user has NOT explicitly set the param in
- * `modelSelectionOptions` — user override always wins.
- *
- * If a model id matches multiple branches (unlikely with current taxonomy), the
- * first match wins. Adding a new family: append a branch keyed on a substring
- * unique enough to not collide with existing ids.
- */
-const getModelParamPresets = (modelId: string): { temperature?: number; topP?: number; topK?: number } => {
-	const id = modelId.toLowerCase();
-	// kimi-k2 family — old k2 vs. newer thinking/k2.5/k2p/k2-5 split.
-	if (id.includes('kimi-k2')) {
-		const isNewer = ['thinking', 'k2.', 'k2p', 'k2-5'].some((s) => id.includes(s));
-		return isNewer
-			? { temperature: 1.0, topP: 0.95 }
-			: { temperature: 0.6 };
-	}
-	// minimax-m2 family — m2.x / m25 / m21 needs higher topK.
-	if (id.includes('minimax-m2')) {
-		const isHighTopK = ['m2.', 'm25', 'm21'].some((s) => id.includes(s));
-		return { temperature: 1.0, topP: 0.95, topK: isHighTopK ? 40 : 20 };
-	}
-	// Gemini family (when routed via aggregator — see comments in openCode branch).
-	if (id.includes('gemini')) {
-		return { temperature: 1.0, topP: 0.95, topK: 64 };
-	}
-	// GLM 4.6 / 4.7 — z.ai upstream.
-	if (id.includes('glm-4.6') || id.includes('glm-4.7')) {
-		return { temperature: 1.0 };
-	}
-	// Qwen — opencode sets topP=1, temperature=0.55. We mirror only topP because
-	// Qwen-coder variants in practice need higher temperature; user-level control
-	// remains via modelSelectionOptions.
-	if (id.includes('qwen')) {
-		return { topP: 1.0 };
-	}
-	return {};
-};
-
-/**
- * True for any DeepSeek-family model (deepseek-chat, deepseek-reasoner, deepseek-r1,
- * deepseek-v3, deepseek-v4-pro, etc.). DeepSeek's API rejects assistant turns that
- * lack a `reasoning` block on continuation — `convertMessagesToModelMessages` uses
- * this to force an empty placeholder.
- *
- * Source: `opencode/src/provider/transform.ts:286` — same substring check.
- */
-const isDeepseekFamily = (modelId: string): boolean => modelId.toLowerCase().includes('deepseek');
-
-/**
- * Models that need reasoning text mirrored on a top-level message field
- * (`providerOptions.openaiCompatible.reasoning_content`) IN ADDITION to the
- * AI SDK `{ type: 'reasoning' }` part inside content. opencode marks this as
- * `model.capabilities.interleaved` in their catalog; we don't have that field
- * in models.dev today, so we hardcode the families known to require it.
- *
- * Source: `opencode/src/provider/transform.ts:303-336` — "Always set the field
- * even when empty — some providers (e.g. DeepSeek) may return empty
- * reasoning_content which still needs to be sent back in subsequent requests".
- */
-const hasInterleavedReasoning = (modelId: string): boolean => {
-	const id = modelId.toLowerCase();
-	return id.includes('deepseek') || id.includes('minimax-m2') || id.includes('kimi-k2-thinking');
-};
+// Model-family quirks (temperature/topP/topK presets, reasoning-content mirror,
+// XML tool-format overrides) are no longer hardcoded here — they live in
+// `resources/model-quirks.json`, served via CDN + bundled fallback, accessed
+// via `getModelQuirks(modelId)` from the modelQuirksService. See
+// docs/knowledge/architecture/model-quirks.md.
 
 // Per-model AI SDK adapter selection is fully data-driven via models.dev:
 // see `modelsDevCatalog.ts`. No hardcoded model names / families / regex —
@@ -384,8 +315,12 @@ const convertMessagesToModelMessages = (messages: LLMChatMessage[], modelName: s
 	const toolNameLookup = buildToolNameLookup(messages);
 	const lastIdx = messages.length - 1;
 	const out: ModelMessage[] = [];
-	const isDeepseek = isDeepseekFamily(modelName);
-	const needsInterleavedMirror = hasInterleavedReasoning(modelName);
+	// Family-specific normalization comes from the model-quirks catalog (was hardcoded
+	// before v0.13.6). Empty quirks → both flags `false` → no special handling, same as
+	// for a model with no known quirks.
+	const quirks = getModelQuirks(modelName);
+	const isDeepseek = quirks.forceEmptyReasoning === true;
+	const needsInterleavedMirror = quirks.mirrorReasoningContent === true;
 
 	for (let i = 0; i < messages.length; i++) {
 		const msg = messages[i] as any;
@@ -723,17 +658,26 @@ export const sendViaAISdk = async (params: SendChatParams_Internal): Promise<voi
 	// `vibeide.llm.assumeNativeTools`) for aggregator-synthesized fallbacks.
 	// Scope is intentionally narrow: known models (Claude, GPT, etc.) keep their
 	// catalog-defined specialToolFormat regardless. See roadmap O.8.
+	//
+	// Priority for the final `specialToolFormat`:
+	//   1. Model-quirks `forceToolCallFormat` ("native" / "xml") — explicit per-model
+	//      override from `resources/model-quirks.json` or user `vibeide.modelQuirks`.
+	//      Wins because the quirks catalog is the curated source of truth for
+	//      known-broken combinations (e.g. qwen-* needs XML on naked-tag grammar).
+	//   2. User runtime `toolFallbackMode` ("native" / "xml") — global per-session knob.
+	//   3. Catalog `specialToolFormat` from getModelCapabilities + auto-downgrade.
+	const quirks = getModelQuirks(modelName);
 	const isAggregatorSynthesized = caps.recognizedModelName === '__aggregator_unknown__';
 	const toolFallbackMode = runtimeOptions?.toolFallbackMode ?? 'auto';
 	const specialToolFormat = (() => {
+		// Tier 1: model-quirks override. Applies regardless of aggregator-synth status —
+		// these overrides are explicitly curated for the model.
+		if (quirks.forceToolCallFormat === 'native') return 'openai-style' as const;
+		if (quirks.forceToolCallFormat === 'xml') return undefined;
+		// Tier 2 (existing): only for aggregator-synthesized fallbacks.
 		if (!isAggregatorSynthesized) return caps.specialToolFormat;
-		// `native`: force native FC even over auto-detected overrides (`caps.specialToolFormat`
-		// may be `undefined` if an auto-downgrade already fired — user wants to override that).
 		if (toolFallbackMode === 'native') return 'openai-style' as const;
-		// `xml`: force XML-in-prompt regardless of caps.
 		if (toolFallbackMode === 'xml') return undefined;
-		// `auto`: respect caps (which respects user/auto-detected overrides).
-		// Legacy backward-compat: assumeNativeTools=false still forces xml here.
 		if (runtimeOptions?.assumeNativeTools === false) return undefined;
 		return caps.specialToolFormat;
 	})();
@@ -957,12 +901,15 @@ export const sendViaAISdk = async (params: SendChatParams_Internal): Promise<voi
 	}, timeoutMs);
 
 	try {
-		// Model-family generation params (kimi/minimax/glm/gemini/qwen). See
-		// `getModelParamPresets` doc above. `ModelSelectionOptions` does not
-		// currently surface temperature/topP/topK, so these presets are not
-		// shadowed by per-call user settings — they apply unconditionally for
-		// the matched families and are a no-op for everything else.
-		const modelParams = getModelParamPresets(modelName);
+		// Model-family generation params (kimi/minimax/glm/gemini/qwen/...). Catalog-driven
+		// via getModelQuirks() — see resources/model-quirks.json. `ModelSelectionOptions`
+		// does not currently surface temperature/topP/topK, so catalog values apply
+		// unconditionally for matched models and are a no-op for everything else.
+		// User can override per-model via `vibeide.modelQuirks` setting.
+		const modelParams: { temperature?: number; topP?: number; topK?: number } = {};
+		if (quirks.temperature !== undefined) modelParams.temperature = quirks.temperature;
+		if (quirks.topP !== undefined) modelParams.topP = quirks.topP;
+		if (quirks.topK !== undefined) modelParams.topK = quirks.topK;
 
 		const result = streamText({
 			model: languageModel,
