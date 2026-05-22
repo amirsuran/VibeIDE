@@ -23,7 +23,6 @@
 
 import * as path from 'node:path'
 import * as fs from 'original-fs'
-import { app } from 'electron'
 import { parse as parseJsonc } from '../../../../../base/common/jsonc.js'
 import {
 	ModelQuirksCatalog,
@@ -33,6 +32,7 @@ import {
 	matchQuirks,
 	validateCatalog,
 } from '../../common/modelQuirks/modelQuirksTypes.js'
+import { BUNDLED_CATALOG } from '../../common/modelQuirks/bundledCatalog.js'
 
 const DEFAULT_CDN_URL = 'https://raw.githubusercontent.com/VibeIDETeam/VibeIDE/main/resources/model-quirks.json'
 const CACHE_FILENAME = 'model-quirks-cache.json'
@@ -89,32 +89,25 @@ function clampInt(v: unknown, min: number, max: number, fallback: number): numbe
 	return Math.max(min, Math.min(max, Math.round(n)))
 }
 
-function bundledCatalogPath(): string | null {
-	try {
-		// `app.getAppPath()` returns the install root that contains `resources/`.
-		// In dev: D:\...\VibeIDE (repo root). In packaged: <install>\resources\app.
-		const appPath = app.getAppPath()
-		return path.join(appPath, 'resources', 'model-quirks.json')
-	} catch {
-		// `app` may not be ready (called too early); caller will retry.
-		return null
-	}
-}
-
 function cacheFilePath(userDataPath: string): string {
 	return path.join(userDataPath, CACHE_FILENAME)
 }
 
 function readBundled(): ModelQuirksCatalog | null {
-	const p = bundledCatalogPath()
-	if (!p) return null
+	// Bundled catalog ships as a TS constant `BUNDLED_CATALOG` (auto-generated mirror
+	// of `resources/model-quirks.json`). We do NOT read from disk because the gulp
+	// build doesn't copy that JSON into the packaged app, and there's no stdout/stderr
+	// on Windows GUI to log file-not-found errors — any `console.warn` here would
+	// EPIPE-crash the main process. The TS constant approach guarantees the fallback
+	// is always available, and `resources/model-quirks.json` remains the source of
+	// truth for the CDN endpoint (the JSON file is what `raw.githubusercontent.com`
+	// serves to running IDEs).
 	try {
-		const raw = fs.readFileSync(p, 'utf-8')
-		return validateCatalog(JSON.parse(raw))
-	} catch (e) {
-		// File missing / bad JSON / schema violation. Don't crash IDE — fall through
-		// to empty catalog (every model gets provider defaults).
-		console.warn(`[ModelQuirks] failed to load bundled catalog at ${p}:`, (e as Error).message)
+		return validateCatalog(BUNDLED_CATALOG)
+	} catch {
+		// BUNDLED_CATALOG is a typed TS object that already passed compile — should
+		// never throw, but defensively swallow if validateCatalog rejects a future
+		// schema breaking change in the constant.
 		return null
 	}
 }
@@ -159,9 +152,12 @@ async function fetchFromCDN(url: string, userDataPath: string, currentEtag: stri
 
 		// Atomic swap.
 		_catalog = validated
-	} catch (e) {
-		// Network down / DNS / TLS / aggregator rate-limit — silent failure, keep current catalog.
-		console.warn('[ModelQuirks] CDN fetch failed:', (e as Error).message)
+	} catch {
+		// Network down / DNS / TLS / aggregator rate-limit — silent failure, keep
+		// current catalog. NOTE: must NOT call console.warn/error here — Windows GUI
+		// process has no stderr, and any console output triggers EPIPE → unhandled
+		// rejection → main-process crash dialog (same root cause as v0.13.3 / pre-v0.13.7
+		// crash with __dirname in ESM).
 	}
 }
 
