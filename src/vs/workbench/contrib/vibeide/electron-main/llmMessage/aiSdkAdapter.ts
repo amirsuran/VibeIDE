@@ -46,16 +46,19 @@ const EMPTY_CONTENT_PLACEHOLDER = '(no content)';
 // IDs for opencode.ai aggregator headers. opencode CLI computes
 // `x-opencode-project` from a workspace-stable source (`InstanceState.context.project.id`)
 // and `x-opencode-session` per chat-session. We approximate:
-//   - project: SHA-256 of `__dirname` of this module (= the VibeIDE install root).
-//     Stable across IDE restarts on the same install, so the aggregator's
-//     project-scoped cache / quota survives reopens. Different installs / portable
-//     copies get different IDs — that's the intended grain.
+//   - project: SHA-256 of `process.execPath` (= the Electron binary path of the
+//     current VibeIDE install). Stable across IDE restarts on the same install,
+//     so the aggregator's project-scoped cache / quota survives reopens. Different
+//     installs / portable copies get different IDs — that's the intended grain.
+//     We use `process.execPath` and NOT `__dirname` because this module is bundled
+//     into ESM (`out/main.js` uses `--format=esm`) where `__dirname` is undefined;
+//     using it crashes init_main with a TypeError on every cold start.
 //   - session: per-process UUID (= "new IDE launch = new aggregator session"),
 //     close enough to the per-chat-session grain at upstream without plumbing
 //     chat-thread IDs through the main-process adapter layer.
 // Note: `x-opencode-request` is generated per `resolveEndpoint()` call (one
 // per streamText invocation) — see the openCode branch below.
-const OPENCODE_PROCESS_PROJECT_ID = `vibeide-${createHash('sha256').update(__dirname).digest('hex').slice(0, 16)}`;
+const OPENCODE_PROCESS_PROJECT_ID = `vibeide-${createHash('sha256').update(process.execPath).digest('hex').slice(0, 16)}`;
 const OPENCODE_PROCESS_SESSION_ID = `vibeide-${generateUuid()}`;
 
 // ────────────────────────────────────────────────────────────────────
