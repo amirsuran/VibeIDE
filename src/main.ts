@@ -14,6 +14,7 @@ import minimist from 'minimist';
 import { product } from './bootstrap-meta.js';
 import { parse } from './vs/base/common/jsonc.js';
 import { getUserDataPath } from './vs/platform/environment/node/userDataPath.js';
+import { startVibeIdleWatchdog } from './vs/workbench/contrib/vibeide/electron-main/vibeIdleWatchdogService.js';
 import * as perf from './vs/base/common/performance.js';
 import { resolveNLSConfiguration } from './vs/base/node/nls.js';
 import { getUNCHost, addUNCHostToAllowlist } from './vs/base/node/unc.js';
@@ -92,6 +93,13 @@ if (process.platform === 'win32') {
 	}
 }
 app.setPath('userData', userDataPath);
+
+// VibeIDE Idle Watchdog — periodically samples process.memoryUsage() + handle
+// counts to `${userDataPath}/logs/vibe-idle-watchdog/YYYY-MM-DD.jsonl`. Catches
+// slow leaks / overnight OOMs that DevTools can't see when no one is watching
+// (see docs/knowledge/runtime-quirks/idle-memory.md). Configured by
+// `vibeide.diagnostics.idleWatchdog.*` settings; restart-required to re-read.
+startVibeIdleWatchdog(userDataPath);
 
 // Resolve code cache path
 const codeCachePath = getCodeCachePath();

@@ -79,6 +79,41 @@ export class VibeideGlobalSettingsConfigurationContribution extends Disposable i
 			},
 		});
 
+		// `vibeide.diagnostics.idleWatchdog.*` — main-process memory/handle sampler.
+		// Writes JSONL snapshots to `${userDataPath}/logs/vibe-idle-watchdog/YYYY-MM-DD.jsonl`.
+		// Implementation: `electron-main/vibeIdleWatchdogService.ts`. Reads config ONCE
+		// at startup directly from `User/settings.json` (no IPC channel) — restart required
+		// to apply changes. See docs/knowledge/runtime-quirks/idle-memory.md.
+		registry.registerConfiguration({
+			id: 'vibeide.diagnostics.idleWatchdog',
+			title: localize('vibeide.diagnostics.idleWatchdog.title', 'VibeIDE — Idle Watchdog (diagnostics)'),
+			type: 'object',
+			properties: {
+				'vibeide.diagnostics.idleWatchdog.enabled': {
+					type: 'boolean',
+					default: true,
+					description: localize('vibeide.diagnostics.idleWatchdog.enabled', 'Периодически писать снимок памяти и счётчиков дескрипторов в `${userData}/logs/vibe-idle-watchdog/YYYY-MM-DD.jsonl`. Помогает диагностировать медленные утечки и ночные OOM, которые DevTools не ловит. Изменение требует перезапуска IDE.'),
+					scope: ConfigurationScope.APPLICATION,
+				},
+				'vibeide.diagnostics.idleWatchdog.intervalMinutes': {
+					type: 'number',
+					default: 5,
+					minimum: 1,
+					maximum: 60,
+					description: localize('vibeide.diagnostics.idleWatchdog.intervalMinutes', 'Интервал между снимками памяти в минутах. Меньше = более гранулярная статистика, чуть больше записей на диск. Один день с дефолтным интервалом ≈ 75 КБ. Изменение требует перезапуска IDE.'),
+					scope: ConfigurationScope.APPLICATION,
+				},
+				'vibeide.diagnostics.idleWatchdog.retentionDays': {
+					type: 'number',
+					default: 3,
+					minimum: 1,
+					maximum: 90,
+					description: localize('vibeide.diagnostics.idleWatchdog.retentionDays', 'Сколько дней хранить файлы снимков. Старые удаляются при каждом старте IDE. По умолчанию 3 — достаточно для разбора недавнего инцидента; увеличить, если ловите редкий баг. Изменение требует перезапуска IDE.'),
+					scope: ConfigurationScope.APPLICATION,
+				},
+			},
+		});
+
 		// `vibeide.commands.*` — Project Commands settings (roadmap §K.4 L306, L322).
 		// Pure helpers landed in `projectCommandsGlobalPaths.ts` (decoder + workspace-wins
 		// merge) and `projectCommandsToolbar.ts` (position decoder + visibility predicate).
