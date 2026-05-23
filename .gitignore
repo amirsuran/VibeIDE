@@ -72,7 +72,9 @@ CLAUDE.md
 .vibe/
 .agents/
 .config/
-docs/
+# `docs/` is now tracked (2026-05-23 — became the project knowledge base).
+# Only exclude editor-specific noise inside:
+docs/.obsidian/
 # Root bin/: ignore local scratch by default; allow selected committed utilities (see script-save / knowledge.md)
 bin/*
 !bin/vibe-language-pack-nls.mjs
