@@ -123,7 +123,7 @@ brand-names; «русские описания настроек» — нет.
 
 ## Связанные документы
 
-- [build/configuration-registry.md](../build/configuration-registry.md) — если есть, общая инфра
+- [architecture/settings-namespaces.md](../architecture/settings-namespaces.md) — общая инфра namespacing'а ключей
 - [orphan-services.md](../architecture/orphan-services.md) — список «сирот» с
   pending registration работой
 - `docs/roadmap.md` §K.4 L520 (i18n baseline) + §K.4 L1056 (perf guardrails dashboard)

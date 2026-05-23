@@ -68,8 +68,17 @@ export class VibeideStatusBarContribution extends Disposable implements IWorkben
 			this.modelEntry?.update(this.getModelEntryProps());
 		}));
 
-		// Update latency every 500ms during active requests
+		// W.20 fix — pre-2026-05-23 unconditionally pushed 3 status-bar entry
+		// updates 2×/sec forever even on idle (~36k allocs per 5h idle).
+		// Now: early-return when no stream is running. `modelEntry` /
+		// `privacyEntry` are still kept fresh by `onDidChangeStreamState`
+		// + `onDidChangeState` events above; only the latency clock needs
+		// polling during active requests.
 		const latencyUpdateInterval = setInterval(() => {
+			const streamState = this.chatThreadService.streamState;
+			const currentThreadId = this.chatThreadService.state.currentThreadId;
+			const isRunning = currentThreadId ? streamState[currentThreadId]?.isRunning : undefined;
+			if (!isRunning) return;
 			this.latencyEntry?.update(this.getLatencyEntryProps());
 			this.modelEntry?.update(this.getModelEntryProps());
 			this.privacyEntry?.update(this.getPrivacyEntryProps());

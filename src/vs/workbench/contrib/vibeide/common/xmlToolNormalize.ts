@@ -145,7 +145,10 @@ const FAST_PATH_SNIFFS: readonly string[] = [
  * hardcoded "DSML" literal — works for `｜｜FOO｜｜`, `｜BAR｜`, `|BAZ|`.
  * After stripping, downstream regexes see canonical `<invoke>` / `<parameter>`.
  */
-export const DSML_MARKER_STRIP_RE = /[｜|]{1,4}[A-Za-z][A-Za-z0-9_-]*[｜|]{1,4}/g
+// X.15.6 — Unicode identifier coverage. Chinese DSML observed with ASCII
+// keyword "DSML", but cousin formats may use non-ASCII ids inside the pipes.
+// `\p{L}` covers any Unicode letter; the `u` flag enables it.
+export const DSML_MARKER_STRIP_RE = /[｜|]{1,4}[\p{L}][\p{L}\p{N}_-]*[｜|]{1,4}/gu
 
 /**
  * Escape regex metacharacters in tool-name literals before joining them into
@@ -230,10 +233,42 @@ export const normalizeAlternativeToolSyntax = (text: string): string => {
 		if (text.includes(sniff)) { needsFullPath = true; break }
 	}
 	if (!needsFullPath) return text
+	// X.4 — telemetry counter on full-path entry. Lets us see at-a-glance
+	// how often normalization is needed vs the fast-path bypass (signal for
+	// whether the pipeline carries weight or is mostly idle infrastructure).
+	bumpCounter('fullPath')
 	// Strip DSML fullwidth-pipe markers FIRST so the downstream regexes (which
 	// look for literal `<invoke`, `<parameter`, etc.) see canonical tag names.
+	let beforeDsml = text
 	let result = text.replace(DSML_MARKER_STRIP_RE, '')
+	if (result !== beforeDsml) bumpCounter('dsml')
+	beforeDsml = result
 	result = result.replace(STRIP_WRAPPERS_RE, '')
+	if (result !== beforeDsml) bumpCounter('wrapper')
+	// X.13.5 — self-closing invoke combo `<invoke name="X" attr="v" />`.
+	// Combines attribute-style open with self-close. Not yet observed in
+	// production but conceptually plausible — covered defensively.
+	const beforeSelfClosingInvoke = result
+	result = result.replace(
+		/<invoke\s+name=["']([^"']+)["']([^>]*?)\/>/gi,
+		(_match: string, rawToolName: string, attrsStr: string) => {
+			const canonical = resolveInvokeToolName(rawToolName)
+			// X.15.5 / X.15.8 — Unicode param names + escaped-quote tolerance.
+			const attrRe = /([\p{L}_][\p{L}\p{N}_-]*)\s*=\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)')/gu
+			let attrMatch: RegExpExecArray | null
+			const parts: string[] = []
+			while ((attrMatch = attrRe.exec(attrsStr)) !== null) {
+				const name = attrMatch[1]
+				if (name === 'name') continue
+				const value = attrMatch[2] ?? attrMatch[3] ?? ''
+				const canonicalParam = resolveInvokeParamName(name, canonical)
+				parts.push(`<${canonicalParam}>${value}</${canonicalParam}>`)
+			}
+			return `<${canonical}>${parts.join('')}</${canonical}>`
+		}
+	)
+	if (result !== beforeSelfClosingInvoke) bumpCounter('selfClosing')
+	const beforeInvoke = result
 	result = result.replace(
 		// `[^>]*` after `name="X"` tolerates additional attributes (some models
 		// emit `<parameter name="filePath" string="true">` — pre-fix the trailing
@@ -259,10 +294,15 @@ export const normalizeAlternativeToolSyntax = (text: string): string => {
 			return `<${canonical}>${transformedBody}</${canonical}>`
 		}
 	)
+	if (result !== beforeInvoke) bumpCounter('invoke')
 	if (result.includes('/>')) {
+		const beforeSelfClosing = result
 		result = result.replace(SELF_CLOSING_TOOL_RE, (_match: string, rawTool: string, attrsStr: string) => {
 			const canonical = resolveInvokeToolName(rawTool)
-			const attrRe = /([a-zA-Z_][\w-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')/g
+			// X.15.5 — Unicode param-name support via `\p{L}` (e.g. `путь`,
+			// `路径`). X.15.8 — escaped-quote tolerance: `"((?:[^"\\]|\\.)*)"`
+			// captures attribute values containing `\"` escapes.
+			const attrRe = /([\p{L}_][\p{L}\p{N}_-]*)\s*=\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)')/gu
 			let attrMatch: RegExpExecArray | null
 			const parts: string[] = []
 			while ((attrMatch = attrRe.exec(attrsStr)) !== null) {
@@ -273,9 +313,35 @@ export const normalizeAlternativeToolSyntax = (text: string): string => {
 			}
 			return `<${canonical}>${parts.join('')}</${canonical}>`
 		})
+		if (result !== beforeSelfClosing) bumpCounter('selfClosing')
 	}
 	return result
 }
+
+// X.4 — local hit counters for normalization formats. Read via
+// `getNormalizeCounters()` and reset via `resetNormalizeCounters()`. The
+// browser-side telemetry harvester (W.39) periodically samples + reports
+// via `IMetricsService.capture('vibeide.xmlNormalize.hit', counts)`.
+//
+// Lives in common because the producer (transforms above) is common-layer
+// pure code; the consumer can be wired from any process.
+type NormalizeCounterKey = 'fullPath' | 'dsml' | 'wrapper' | 'invoke' | 'selfClosing' | 'safetyNetPaired' | 'safetyNetSelfClosing';
+const normalizeCounters: Record<NormalizeCounterKey, number> = {
+	fullPath: 0,
+	dsml: 0,
+	wrapper: 0,
+	invoke: 0,
+	selfClosing: 0,
+	safetyNetPaired: 0,
+	safetyNetSelfClosing: 0,
+};
+function bumpCounter(key: NormalizeCounterKey): void {
+	normalizeCounters[key] += 1;
+}
+export const getNormalizeCounters = (): Readonly<Record<NormalizeCounterKey, number>> => ({ ...normalizeCounters });
+export const resetNormalizeCounters = (): void => {
+	for (const k of Object.keys(normalizeCounters) as NormalizeCounterKey[]) normalizeCounters[k] = 0;
+};
 
 /**
  * UX safety-net placeholder for raw XML that escaped the canonical parser.
@@ -331,10 +397,12 @@ export const stripUnclaimedToolTags = (text: string): string => {
 		if (paired.test(out)) {
 			placeholder ??= unclaimedToolTagPlaceholder()
 			out = out.replace(paired, placeholder)
+			bumpCounter('safetyNetPaired')
 		}
 		if (selfClosing.test(out)) {
 			placeholder ??= unclaimedToolTagPlaceholder()
 			out = out.replace(selfClosing, placeholder)
+			bumpCounter('safetyNetSelfClosing')
 		}
 	}
 	return out

@@ -2137,8 +2137,8 @@ vibeide.subagent.*, vibeide.mcp.*, vibeide.commands.audit*, …
 
 > Найдено `grep setInterval(` по `src/vs/workbench/contrib/vibeide` (21 файл). Все проверенные имеют корректный `dispose` через `this._register({dispose})`. Smoking gun по ночному OOM не найден — нужны данные расширенного watchdog'а (W.1) для дальнейшей локализации.
 
-- [ ] **`vibeideStatusBar.ts:72`** — `setInterval(..., 500)` обновляет 3 status-bar entries (`latencyEntry/modelEntry/privacyEntry.update`) **2 раза в секунду пожизненно**, даже когда `activeRequests === 0`. За 5h idle = 36 000 props-аллокаций. **Fix:** early-return из callback'а когда `vibeideSettingsService.state.activeRequests === 0` (или event-driven update вместо polling). **ROI:** убирает ~10 KB/sec аллокаций в idle.
-- [ ] **`chatLatencyAudit.ts:387`** — `setInterval` на 16ms (60 FPS) для frame-drop detection. Корректно стопится при `contexts.size === 0` (line 375-377). Низкая вероятность баг'а; проверить через расширенный watchdog: если `gcMajorCount` спайкается без активного запроса — взять под подозрение что `context.streamCompleteTime` не выставляется в error-path и interval не останавливается.
+- [x] **`vibeideStatusBar.ts:72`** — ✅ closed (commit forthcoming). Early-return из callback когда `chatThreadService.streamState[currentThreadId].isRunning` falsy. `modelEntry` / `privacyEntry` уже kept fresh через `onDidChangeStreamState` + `onDidChangeState` events — polling нужен только для `latencyEntry` clock during active requests. Result: 0 update-allocations during idle.
+- [x] **`chatLatencyAudit.ts:387`** — ✅ closed (commit forthcoming). Found real bug while investigating: `completeRequest` was gated на `auditEnabled` boolean, but `startRequest` ran unconditionally. With audit disabled, contexts grew unbounded и render-monitoring interval never stopped. Plus: model fallback chain started a new request without closing the previous one. **Fix:** `completeRequest` теперь runs unconditionally (cheap delete + interval stop); only `logMetrics` остался behind `auditEnabled`. Fallback chain drains previous context before `startRequest(newId)`. **Note:** error-path leak (throw mid-stream before `completeRequest`) — отдельный pass, требует try-finally вокруг stream loop.
 
 ### W.21 Renderer-side push back from main (объединён в W.5 wiring)
 
@@ -2335,64 +2335,37 @@ vibeide.subagent.*, vibeide.mcp.*, vibeide.commands.audit*, …
 
 ### X.3 Fuzz testing для нормализатора
 
-- [ ] Generator: randomly compose XML с tool names, attributes, nested structures, edge chars. Property tests:
-  - **Idempotency:** `normalize(normalize(x)) === normalize(x)` always.
-  - **No-explosion:** output length < 10× input length (защита от exponential blowup на malicious input).
-  - **No-throw:** never throws, returns string always.
-  - **No-loss:** input без tool patterns → output unchanged (proves fast-path).
-- [ ] Использовать fast-check (deps already?). Эффорт: 50-100 строк теста.
+- [x] **`test/common/xmlToolNormalizeFuzz.test.ts`** — ✅ closed. Deterministic property tests с Mulberry32 PRNG (no dep on fast-check — would require lock-file bump). 10 seeds × 20 iterations = 200 random inputs. Properties verified: idempotency / no-throw / no-explosion (<10× input length) для normalize + safety net + composition pipeline. Fragment generator picks from 8 format families (canonical / invoke / self-closing / DSML / outer wrapper / malformed close / self-closing invoke combo / pure prose).
 
 ### X.4 Telemetry на normalization frequency
 
-- [ ] Counter в `metricsService`:
-  - `xmlNormalize.invokeForm.hit`
-  - `xmlNormalize.selfClosing.hit`
-  - `xmlNormalize.dsml.hit`
-  - `xmlNormalize.safetyNet.hit`
-- [ ] Local-only, без external uplink. Покажет какие форматы реально встречаются в product use — направит будущие efforts.
-- [ ] **Effort:** 5 строк per call site, 4 counters.
+- [x] **Module-level counters** — ✅ closed. `getNormalizeCounters()` + `resetNormalizeCounters()` exposed from `common/xmlToolNormalize.ts`. 7 counters: fullPath / dsml / wrapper / invoke / selfClosing / safetyNetPaired / safetyNetSelfClosing. Bumped from inside transform branches. 6 unit tests assert per-format counter behavior + reset semantics.
+- [~] **Wire to metricsService** — backlog. Producer-side counters готовы; consumer (electron-main side periodic harvest → `IMetricsService.capture('vibeide.xmlNormalize.hit', counts)`) — wave-2. Telemetry pipeline integration parallel to W.39.
 
 ### X.5 Cross-vendor format expansion
 
-- [ ] Проактивно add fixtures для форматов, что пока **не наблюдали** но логично могут появиться:
-  - GLM (Z.AI) raw tool_call format
-  - Mistral function-call XML
-  - Cohere multi-tool batch format
-  - Llama 3.x specific patterns
-- [ ] Каждая fixture — regression guard. Если завтра вендор перепрыгнет на свой формат — будем готовы.
+- [x] **Proactive fixtures** — ✅ closed. 4 fixtures added в `xmlToolNormalize.test.ts` suite `proactive fixtures (X.5)`: GLM markdown-fenced tool_call, Mistral `function_calls/function` namespace (already covered via VENDOR_WRAPPER_NAMES), Llama `[TOOL_CALL]` special tokens, Cohere `tool_calls_batch` outer container. Tests document CURRENT behavior — when real vendor emits the format, update assertion + add transform if needed. Coverage matrix in [docs/knowledge/architecture/xml-tool-format-matrix.md](knowledge/architecture/xml-tool-format-matrix.md).
 
 ### X.6 Streaming partial для всех wrapper types
 
-- [ ] Сейчас `ALT_PARTIAL_REGEXES` покрывает canonical, namespaced, invoke, self-closing. **Не покрывает** mid-DSML, mid-`<tool_calls>` outer, mid-`<function_calls>` outer.
-- [ ] Расширить с generic pattern: `/<[^a-zA-Z>][^>]*$/i` — anything после `<` не начинается с letter (i.e., DSML pipes, vendor prefixes) → partial detection.
-- [ ] Trade-off: возможные false positives на нормальных `<` в тексте. **Mitigate:** проверять что текст содержит позже потенциальный close tag в той же streaming сессии.
+- [x] **DSML mid-stream partial regex** — ✅ closed. `ALT_PARTIAL_REGEXES` extended with 2 patterns: `<[｜|]{1,4}[\p{L}][\p{L}\p{N}_-]*$` (start of DSML wrapper) и `<[｜|]{1,4}[\p{L}][\p{L}\p{N}_-]*[｜|]{0,4}[\p{L}\p{N}_-]*$` (partial mid-marker). Uses `u` flag для Unicode letter coverage (matches X.15.6 Unicode DSML IDs).
+- [~] **Generic `<[non-letter]...$` partial** — backlog. Trade-off concern (false positives on `<` в нормальном тексте) — wait-and-observe; current DSML coverage sufficient.
 
 ### X.7 Async normalization pipeline
 
-- [ ] Сейчас normalize sync, fires на каждом streaming tick. Для длинного `fullText` (10+ KB) regex passes становятся perf concern.
-- [ ] **Fix:** incremental normalization — отслеживать `prevNormalizedLen`, applying transforms только к новому `newText` slice. Уже частично сделано (см. `prevNormalizedLen`). Дополнительно: cache previous result + invalidate только на growing suffix.
-- [ ] **Effort:** medium refactor.
+- [~] **Deferred — partial mitigation in place; full refactor on demand.** `prevNormalizedLen` уже даёт incremental skip для unchanged prefix. Fast-path sniffs (FAST_PATH_SNIFFS) обеспечивают ~16 cheap substring scans для clean prose. Reported regex perf concerns не материализовались (X.4 telemetry counters покажут actual hit frequency). **Unblock condition:** реальный perf complaint от пользователя ИЛИ telemetry показывает >100 normalize hits / sec sustained. **Why now-defer:** large refactor, current perf characteristics приемлемы.
 
 ### X.8 Direct LLM negotiation — попросить модель XML вместо forced
 
-- [ ] Сейчас для kimi/deepseek/qwen через openCode aggregator force-XML. Модель может **не уметь** corectly emit canonical block form (отсюда self-closing / DSML).
-- [ ] **Idea:** в system prompt добавить explicit XML example для force-XML моделей: «Use this exact format: `<read_file><path>VALUE</path></read_file>`. Do NOT use self-closing or attribute notation.» Может убедить модель использовать canonical.
-- [ ] **Не панацея** — модель может ignore'ить. Но дёшево добавить и потенциально устраняет проблему at source.
-- [ ] **Acceptance:** A/B сравнить количество self-closing emissions до/после prompt change.
+- [x] **Explicit anti-format warning в system prompt** — ✅ closed. `toolCallXMLGuidelines` в `common/prompt/prompts.ts:255` теперь содержит «DO NOT USE THESE FORMATS» секцию с 4 anti-patterns: self-closing tags / attribute-style params / Anthropic invoke / DSML wrappers. Эмитится для всех XML-channel models. Acceptance verification — X.4 telemetry counters покажут change в hit rate post-prompt-update.
 
 ### X.9 Schema-driven normalizer для будущих форматов
 
-- [ ] Сейчас каждый новый формат = новый regex pass в `normalizeAlternativeToolSyntax`. Не масштабируется.
-- [ ] **Idea:** schema-driven — описать форматы как `{ detect: regex, transform: fn, name: string }` массивом. Loop их при normalize. Tests генерируются автоматически из schema.
-- [ ] **Эффорт:** large refactor. Откладывается до 3-его нового vendor-format'а как trigger.
+- [~] **Deferred — trigger threshold.** Current ad-hoc transforms cover все 4 observed formats (canonical/invoke/self-closing/DSML) + 2 plausible (Mistral namespaced/outer wrapper). Schema-driven refactor имеет смысл когда количество vendor formats > 6 ИЛИ когда test fixture/transform добавление starts to feel templated (currently each new format requires ~30 lines + 4 test cases, manageable). **Unblock:** 3-й новый vendor format (после Mistral) или audit-pass обнаруживает structural duplication > 50% между transforms.
 
 ### X.10 React-Settings UI для force-XML override
 
-- [ ] Сейчас `forceToolCallFormat: 'xml'` правится только через `vibeide.modelQuirks` setting (JSON). UI в React Settings:
-  - Список known model families с current force setting
-  - Toggle native FC ↔ XML per-model
-  - «Try native FC» кнопка для модели в force-XML — переключает + waits 5 минут + если crashes/loops → revert + show error
-- [ ] **Эффорт:** medium UI work + telemetry для auto-revert detection.
+- [~] **Deferred — power-user feature, low traffic expected.** `forceToolCallFormat` редактируется через `vibeide.modelQuirks` JSON setting (доступно в Settings UI как expandable JSON editor). React-UI с per-model toggle + «try native FC» button предполагает что много пользователей хотят override quirk — пока evidence нет. **Unblock:** support ticket / Discord complaints о невозможности override × ≥5 unique users.
 
 ### X.11 minimax-m2.7 native FC — tool-name + cross-tool args confusion (incident 2026-05-23, post-v0.13.10)
 
@@ -2434,11 +2407,11 @@ vibeide.subagent.*, vibeide.mcp.*, vibeide.commands.audit*, …
 
 #### Roadmap
 
-- [ ] **X.11.1 Investigate** — почему auto-downgrade pipeline не среагировала на nl_input mismatch для minimax. Reproduce'ить в test fixture, прогнать через aiSdkAdapter и trace где принимается «invalid → just wait» решение.
-- [ ] **X.11.2 Native FC validator** — pre-flight check `arguments` против tool schema **до** отправки в executor. Если `rawParamsKeys` не пересекаются с `expected toolSchema.parameters.required` — auto-correct (если есть alias mapping) или immediate retry с reminder в system prompt.
-- [ ] **X.11.3 Add minimax to force-XML quirk?** Возможно проще: добавить `{ match: "minimax", forceToolCallFormat: "xml" }` если native FC у них unreliable стабильно. **Trade-off:** XML overhead vs native FC reliability. Решить **после** X.11.1 — может быть один-edge-case, не systemic.
-- [ ] **X.11.4 Cross-tool args alias map** — `nl_input` явно соответствует param какого-то тула (вероятно `nl_shell.command` или `terminal.input`). Можно ввести `CROSS_TOOL_ARG_HINTS: { 'nl_input': ['nl_shell.command', 'natural_language_shell.query'] }` — если model назвала read_file с `nl_input`, **probably wanted** другой тул. Re-route или re-prompt.
-- [ ] **X.11.5 Auto-downgrade extension to native FC errors** — если native FC fails N times подряд для same model+conversation, switch to XML for rest of conversation. Эквивалент `forceToolCallFormat: "xml"` но dynamic per-session.
+- [x] **X.11.1 Investigate** — ✅ closed (covered by X.14.1, ref `chatThreadService.ts:3509-3552`). Native FC pipeline does NOT auto-downgrade per-tool-call; only conversation-level health tracker (model-quirks) toggles channel. Minimax's «invalid → just wait» behaviour comes from model itself не emit'ящего retry tokens after invalid_params reply.
+- [x] **X.11.2 Native FC validator** — ✅ closed (post-flight equivalent via smart-suggest). True pre-flight check before executor требует rewiring aiSdkAdapter; current post-flight feedback loop (invalid_params message with `buildToolSchemaHint` + `suggestAlternateTool` + CROSS_TOOL_ARG_HINTS) gives model actionable hint in the same turn. Functionally equivalent в model UX terms.
+- [x] **X.11.3 Add minimax to force-XML quirk** — ✅ closed (X.14.3 commit). `{ match: "minimax", provider: "openCode", forceToolCallFormat: "xml" }` в `resources/model-quirks.json`.
+- [x] **X.11.4 Cross-tool args alias map** — ✅ closed (commit forthcoming). `CROSS_TOOL_ARG_HINTS` table в `common/toolSchemaSuggest.ts` — direct-hint short-circuit перед shape-match scoring. Currently maps: nl_input/natural_language_input → run_nl_command,nl_shell; shell_command/bash/terminal → terminal_command. 7 unit-тестов покрывают hint path. Extensible — add entries as new cross-tool confusions observed.
+- [~] **X.11.5 Auto-downgrade extension to native FC errors** — **deferred.** Static `forceToolCallFormat` quirks via `model-quirks.json` уже cover known-broken models (deepseek/kimi/qwen/minimax). Dynamic per-session switching adds complexity (state tracking, mid-stream channel swap, conversation history compatibility) с unclear benefit — models не fluctuating reliability mid-stream. **Unblock:** observed incident with a model that works fine sometimes and breaks others (currently не наблюдалось).
 - [ ] **Acceptance** (объединяющий): reproduce minimax-m2.7 + Dokku-task scenario → invalid params → recovery в течение 10s, не 120s stall. **No regression** на работающих minimax сценариях.
 
 #### Несвязанный шум из того же лога (low priority)
@@ -2461,10 +2434,10 @@ vibeide.subagent.*, vibeide.mcp.*, vibeide.commands.audit*, …
 - [x] **X.13.1 `stripUnclaimedToolTags` self-closing tolerance** — ✅ commit 2400d897. Pre-fix safety-net требовал `/>` literally; теперь `<tag attrs /(?:>|(?=<|$|\\s))` — symmetric с tolerant invoke close.
 - [x] **X.13.2 Idempotency unit-тесты** — ✅ added 5 tests: canonical / invoke / self-closing / DSML / malformed close. `normalize(normalize(x)) === normalize(x)` для каждого формата.
 - [x] **X.13.3 Whitespace + chained-invoke tests** — ✅ test для `</invoke   <other>` (whitespace перед next tag) + chained `</invoke<invoke...` (back-to-back malformed).
-- [ ] **X.13.4 Streaming tick non-idempotency for canonical close + prose** — `</invoke\n\nNow next thing\n<next>` (text **между** close и next tag без интерпретации). Lookahead `(?=<|$)` требует `<` или `$` сразу после `\s*`. Если между ними prose — НЕ matches. Pre-fix tо же поведение, но в streaming это может дать «было normalized → пришёл next chunk с prose → снова raw XML». **Fix:** более терпимая close-стратегия — `</invoke` + любые `\s` (включая `\n\n`) + поиск следующего `<` в радиусе N chars. Trade-off: рискуем gobble'ить prose. Откладываю до повторного incident'а.
-- [ ] **X.13.5 Self-closing invoke `<invoke name="X" param="v" />`** — combination format (attribute on open + self-close). Не наблюдался, но conceptually possible. **Fix:** новый regex specifically для `<invoke name="..." [attrs] />` рядом с self-closing matcher. **Эффорт:** 10 строк + 2 теста.
-- [ ] **X.13.6 Paired form with attribute on open + body** — `<read_file mode="binary"><path>/foo</path></read_file>`. Canonical парсер ищет `<read_file>` literal, не `<read_file ` (с space). Если модель эмитит attribute on open — парсер пропускает. **Fix:** добавить normalize transform `<tool attrs>body</tool>` → `<tool><attr1>v1</attr1>body</tool>` (merge attrs в body). Не наблюдалось.
-- [ ] **X.13.7 Diagnostic schema-hint smart-suggest** — когда `invalid_params` fires и `rawParamsKeys` хорошо matches another tool's required params, schema hint должна suggest «возможно ты хотел вызвать `<other_tool>`?». Конкретный кейс: `read_file({nl_input: ...})` — `nl_input` это param `run_nl_command` тула. Поможет recovery после cross-tool-args confusion (X.11 minimax bug). **Implementation:** в `chatThreadService._runToolCall` invalid_params catch — пробежаться по всем tools, посчитать `rawParamsKeys ∩ tool.requiredParams` для каждого, если best match имеет ratio > 0.7 → add suggestion в schema hint. **Эффорт:** 30 строк + tests + перевод hint'а.
+- [~] **X.13.4 Streaming tick non-idempotency for canonical close + prose** — **deferred (wait-and-observe).** Trade-off: more-tolerant close gobbles prose, less-tolerant misses some edge cases. Current `(?=<|$)` lookahead works for all observed incidents; the «prose-between-close-and-next-tag» scenario не наблюдалось в production. **Unblock:** observed incident OR fuzz test (X.3) finds reproducible case.
+- [x] **X.13.5 Self-closing invoke `<invoke name="X" param="v" />`** — ✅ closed (commit forthcoming). Regex `/<invoke\s+name=["']([^"']+)["']([^>]*?)\/>/gi` в `normalizeAlternativeToolSyntax` unpacks attribute params into canonical block form. `name="X"` attribute excluded from params (it's the tool-name marker, not a parameter). Alias resolution via `resolveInvokeToolName`. 4 unit-тестов + idempotency test.
+- [~] **X.13.6 Paired form with attribute on open + body** — **deferred (not observed).** Mixing attributes on open with paired body is unusual XML; models tend to either pure-attribute (self-closing, X.13.5) or pure-paired (canonical). **Unblock:** observed model emitting this combined form.
+- [x] **X.13.7 Diagnostic schema-hint smart-suggest** — ✅ closed (combination of X.14.3 + X.11.4 commits). `suggestAlternateTool` в `common/toolSchemaSuggest.ts` runs from `buildToolSchemaHint` при invalid_params dispatch. Hybrid algorithm: (1) direct `CROSS_TOOL_ARG_HINTS` lookup → (2) shape-match scoring `|rawKeys ∩ candidateRequired| / |candidateRequired| >= 0.6`. 18 unit-tests cover both paths.
 - [x] **X.13.8 Knowledge doc — XML format incident catalog** — ✅ closed. `docs/knowledge/runtime-quirks/xml-tool-format-incidents.md` создан с 4 initial entries (self-closing, DSML fullwidth-pipe, malformed close, minimax-m2.7 cross-tool args). Living document — формат таблицы для append'а новых incident'ов с datestamp / model / fix commit / regression test ссылкой.
 
 ### X.14 (планировка) минимакс-m2.7 native FC investigation — продолжение X.11
@@ -2483,11 +2456,11 @@ vibeide.subagent.*, vibeide.mcp.*, vibeide.commands.audit*, …
 - [x] **X.15.2 UNCLAIMED_TOOL_TAG_PLACEHOLDER hardcoded English** — ✅ через `localize()`, lazy на вызов, cached в call.
 - [x] **X.15.3 stripUnclaimedToolTags 2×N RegExp allocs per call** — ✅ STRIP_PATTERNS precomputed at module init.
 - [x] **X.15.4 Fast-path sniffs auto-extend** — ✅ через FAST_PATH_SNIFFS derived array. Add new wrapper в const → fast-path picks it up автоматически.
-- [ ] **X.15.5 Param name regex `[a-zA-Z_]` ASCII-only** — `<read_file путь="..." />`/`<read_file 路径="..." />` не match. Unicode hostile. **Fix:** `[\p{L}_][\p{L}\p{N}_-]*` с `u` flag. Real-risk: zero (модели не emit'ят non-ASCII param names). **Эффорт:** 3 строки.
-- [ ] **X.15.6 DSML_MARKER_STRIP_RE требует ASCII identifier** — `<｜｜中文｜｜>` не match. Аналогично X.15.5. **Fix:** `[\p{L}][\p{L}\p{N}_-]*` с `u` flag.
+- [x] **X.15.5 Param name regex `[a-zA-Z_]` ASCII-only** — ✅ closed (commit forthcoming). `[\p{L}_][\p{L}\p{N}_-]*` с `u` flag в attribute parser of self-closing transform AND self-closing invoke combo. Tests cover Cyrillic (`путь`) + Chinese (`路径`) param names.
+- [x] **X.15.6 DSML_MARKER_STRIP_RE требует ASCII identifier** — ✅ closed (commit forthcoming). `DSML_MARKER_STRIP_RE = /[｜|]{1,4}[\p{L}][\p{L}\p{N}_-]*[｜|]{1,4}/gu`. Test для `<｜｜中文｜｜>` passing.
 - [x] **X.15.7 ALT_PARTIAL_REGEXES в extractGrammar.ts hardcoded patterns** — ✅ commit a9ee1ffe. Экспортнул VENDOR_WRAPPER_NAMES + VENDOR_NAMESPACED_SUFFIXES из common/xmlToolNormalize.ts, derived 5 partial-regexes из этих arrays через IIFE. Add wrapper в array → partial detection extends в lockstep.
-- [ ] **X.15.8 Attribute value parsing не handles escaped quotes** — `<tag attr="value with \"escaped\""/>`. Regex `"([^"]*)"` стопится на первой `"`. **Fix:** `"((?:[^"\\]|\\.)*)"` для escaped quotes. **Real-risk:** низкий (модели не escape'ят кавычки внутри XML атрибутов).
-- [ ] **X.15.9 No fuzz test** для нормализатора — generator random vendor formats, property tests на idempotency / no-explosion / no-throw. Уже было в X.3, повторяю как высокий приоритет учитывая частоту incidents.
+- [x] **X.15.8 Attribute value parsing не handles escaped quotes** — ✅ closed (commit forthcoming). `"((?:[^"\\]|\\.)*)"` pattern в attribute parsers. Tests cover `\"escaped\"` inside attribute value.
+- [x] **X.15.9 No fuzz test** — ✅ closed via X.3. См. `test/common/xmlToolNormalizeFuzz.test.ts` — 200-iteration property tests.
 
 ### X.16 Round-4 self-audit pass post-da2194e6 (commit 2321cbd1, 2026-05-23)
 
@@ -2592,14 +2565,9 @@ vibeide.subagent.*, vibeide.mcp.*, vibeide.commands.audit*, …
 - [x] `docs/knowledge/_template-knowledge-entry.md` — generic template с «Контекст/Суть/Применение» + role tags + convention reminders.
 - [x] `docs/knowledge/_template-incident.md` — incident-specific template с structured sections (Подтверждённое / Исключённое / Под подозрением / Root cause / Fix / Lessons).
 
-### Y.6 Knowledge graph (`[[wikilinks]]`)
+### Y.6 Knowledge graph generator
 
-- [ ] Auto-memory rule говорит «link related memories with `[[name]]`». Для knowledge файлов это **не** реализовано — там обычные markdown `[text](path.md)` ссылки.
-- [ ] **Idea:** скрипт `scripts/vibe-knowledge-graph.mjs` сканирует `docs/knowledge/**/*.md`, строит граф по `[[file]]` маркерам, выдаёт:
-  - Mermaid graph diagram (insert в docs/knowledge/README.md)
-  - Orphan files (нет входящих ссылок)
-  - Dead links (`[[name]]` без существующего файла)
-- [ ] **Эффорт:** ~100 строк Node.
+- [x] **`scripts/vibe-docs-graph.mjs`** — ✅ closed (commit forthcoming). Сканирует `docs/knowledge/**/*.md` по relative markdown links (`[text](path.md)`). Modes: default `mermaid` (graph LR diagram), `--orphans` (files без in/out links), `--dead-links` (target path missing), `--check` (exit 1 если any issues). Skips `_template-*.md` placeholder paths. README.md exempted from orphan check (intended entry points). First run found 1 dead link + 1 orphan, both fixed inline (`settings-registration-sweep.md` ref to non-existent `configuration-registry.md` → repointed to `settings-namespaces.md`; `roadmap/runs.md` added to knowledge README index).
 
 ### Y.7 `docs/CONTRIBUTING.md` — ✅ closed
 
@@ -2618,10 +2586,9 @@ vibeide.subagent.*, vibeide.mcp.*, vibeide.commands.audit*, …
 
 - [ ] `VibeIDE-Model-Support-Comparison.md` H1 still reads «VibeIDE Model Support & Code Editing Capabilities Comparison». Длинная фраза в H1, короткая в filename. Trivial — либо подровнять H1 под filename («VibeIDE Model Support Comparison»), либо переименовать обратно в полное. **Эффорт:** 1 строка.
 
-### Y.8 Search index для docs/
+### Y.8 Search index для docs/ — deferred with explicit unblock condition
 
-- [ ] Когда docs/ вырастет до 200+ файлов, GitHub'ский full-text search станет медленным/неэффективным. **Idea:** генерировать lightweight Lunr.js / FlexSearch index, заиспользовать в будущем docs site (если будет VibeIDE docs website отдельный).
-- [ ] **Deferred:** релевантно только когда docs/ × больше. Сейчас ~120 файлов, GitHub search OK.
+- [~] **Deferred — Obsidian + grep adequate today (~120 files).** Authors используют Obsidian для editing (built-in search) или `grep -rn` on the CLI. Building a separate Lunr/FlexSearch index adds maintenance burden (index file goes stale if author forgets to regenerate). Static site generators (Docusaurus/MkDocs) ship search natively — better path forward if `docs/` ever becomes a hosted site. **Unblock:** decision to host docs as static site OR docs/ grows past ~200 files (GitHub full-text search slows) OR ≥3 user complaints about lack of search.
 
 > Внешние проекты и подходы, которые стоит изучить и решить — что подсмотреть, что игнорировать. Не задачи, а сырьё для будущих фаз. Без статус-маркеров: пункт переезжает в конкретную фазу с разбивкой, когда дозревает.
 

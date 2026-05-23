@@ -248,6 +248,14 @@ const systemToolsXMLPrompt = (chatMode: ChatMode, mcpTools: InternalToolInfo[] |
 
     REMEMBER: When user asks you to DO something, start with a tool call immediately. DO NOT explain what you're going to do - JUST DO IT using tools.
 
+    DO NOT USE THESE FORMATS (they will be rejected):
+    - Self-closing tags like <read_file path="..." /> — use paired open/close tags only.
+    - Attribute-style parameters like <read_file path="..."> — put parameters inside child tags.
+    - Anthropic <invoke name="X"><parameter name="Y">... — emit the canonical block form directly.
+    - DSML / pipe-wrapped markers like <｜｜DSML｜｜...> — emit raw tag names.
+
+    Always emit the canonical block form shown in the examples above.
+
     Use the tool names exactly as shown in the Available tools list above. Use <uri> for file paths.
     For shell commands match the user's OS shown in <system_info> (PowerShell on Windows, bash on Linux/macOS),
     and prefer <read_file> over reading files via shell.`)

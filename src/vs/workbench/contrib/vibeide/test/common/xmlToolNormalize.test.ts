@@ -28,7 +28,9 @@
 
 import * as assert from 'assert';
 import {
+	getNormalizeCounters,
 	normalizeAlternativeToolSyntax,
+	resetNormalizeCounters,
 	SELF_CLOSING_PARTIAL_RE,
 	stripUnclaimedToolTags,
 } from '../../common/xmlToolNormalize.js';
@@ -290,6 +292,177 @@ suite('XML tool normalization (v0.13.10)', () => {
 			const once = normalizeAlternativeToolSyntax(input);
 			const twice = normalizeAlternativeToolSyntax(once);
 			assert.strictEqual(once, twice);
+		});
+
+		test('normalize(normalize(x)) === normalize(x) — self-closing invoke combo (X.13.5)', () => {
+			const input = '<invoke name="read_file" path="/foo" />';
+			const once = normalizeAlternativeToolSyntax(input);
+			const twice = normalizeAlternativeToolSyntax(once);
+			assert.strictEqual(once, twice);
+		});
+	});
+
+	suite('self-closing invoke combo (X.13.5)', () => {
+
+		test('basic <invoke name="X" attr="v" /> → canonical', () => {
+			const input = '<invoke name="read_file" path="/foo.ts" />';
+			const out = normalizeAlternativeToolSyntax(input);
+			assert.match(out, /<read_file>/);
+			assert.match(out, /<path>\/foo\.ts<\/path>/);
+			assert.doesNotMatch(out, /<invoke/);
+		});
+
+		test('multiple attributes are unpacked as params', () => {
+			const input = '<invoke name="write_file_text" uri="/x.json" contents="data" />';
+			const out = normalizeAlternativeToolSyntax(input);
+			assert.match(out, /<write_file_text>/);
+			assert.match(out, /<uri>\/x\.json<\/uri>/);
+			assert.match(out, /<contents>data<\/contents>/);
+		});
+
+		test('name attribute itself is excluded from params', () => {
+			// The `name="X"` is the tool name marker, not a param. Must not
+			// emit `<name>X</name>` inside the canonical body.
+			const input = '<invoke name="read_file" path="/foo" />';
+			const out = normalizeAlternativeToolSyntax(input);
+			assert.doesNotMatch(out, /<name>/);
+		});
+
+		test('alias resolution in self-closing invoke', () => {
+			// `<invoke name="read" ...>` → `<read_file>` via alias.
+			const input = '<invoke name="read" path="/foo" />';
+			const out = normalizeAlternativeToolSyntax(input);
+			assert.match(out, /<read_file>/);
+		});
+	});
+
+	suite('proactive fixtures (X.5) — plausible-but-unobserved formats', () => {
+
+		// These tests assert CURRENT behavior on hypothetical vendor formats.
+		// When a real vendor format lands, copy verbatim model output as a
+		// new fixture and either (a) update the assertion if the format is
+		// now handled, or (b) leave as «leaks through, awaiting transform».
+		//
+		// See `docs/knowledge/architecture/xml-tool-format-matrix.md` for
+		// the full vendor coverage matrix and status of each format.
+
+		test('GLM-style raw tool_call markdown block (NOT YET COVERED)', () => {
+			// Hypothetical: Z.AI/GLM models may emit tool calls inside fenced
+			// markdown code blocks. Pre-coverage, this passes through unchanged.
+			const input = '```tool_call\n{"name": "read_file", "arguments": {"path": "/foo"}}\n```';
+			const out = normalizeAlternativeToolSyntax(input);
+			// No transform → input survives. Safety net doesn't touch JSON.
+			assert.strictEqual(out, input);
+		});
+
+		test('Mistral function-call XML in `function_calls/function` namespace', () => {
+			// Hypothetical Mistral wire format. The namespaced suffix
+			// `function_calls` is in VENDOR_WRAPPER_NAMES, so the OUTER wrapper
+			// gets stripped; inner Anthropic-style invoke is handled by the
+			// invoke regex.
+			const input = '<function_calls><invoke name="read_file"><parameter name="path">/foo</parameter></invoke></function_calls>';
+			const out = normalizeAlternativeToolSyntax(input);
+			assert.match(out, /<read_file>/);
+			assert.doesNotMatch(out, /<function_calls/);
+		});
+
+		test('Llama-style special-token format (NOT YET COVERED)', () => {
+			// Hypothetical: Llama 3.x special tokens. Square brackets are not
+			// in our matcher universe — passes through. When observed, add
+			// transform `[TOOL_CALL]...[/TOOL_CALL]` → canonical.
+			const input = '[TOOL_CALL]\nread_file path=/foo\n[/TOOL_CALL]';
+			const out = normalizeAlternativeToolSyntax(input);
+			assert.strictEqual(out, input);
+		});
+
+		test('Cohere multi-tool batch JSON-in-XML (NOT YET COVERED)', () => {
+			// Hypothetical Cohere batch tool calls. The outer container shape
+			// is unknown until observed; current behavior is leak-through.
+			const input = '<tool_calls_batch>[{"name":"read_file","arguments":{"path":"/foo"}}]</tool_calls_batch>';
+			const out = normalizeAlternativeToolSyntax(input);
+			// Outer wrapper `tool_calls_batch` is not in VENDOR_WRAPPER_NAMES,
+			// so it survives. Test documents current behavior for future fix.
+			assert.match(out, /tool_calls_batch/);
+		});
+	});
+
+	suite('Unicode + escaped quotes (X.15.5 / X.15.6 / X.15.8)', () => {
+
+		test('Cyrillic param name `путь` in self-closing is captured', () => {
+			const input = '<read_file путь="/foo.ts" />';
+			const out = normalizeAlternativeToolSyntax(input);
+			// Unicode param name flows through resolveInvokeParamName; result
+			// should be a valid block with the value preserved.
+			assert.match(out, /<read_file>/);
+			assert.match(out, /\/foo\.ts/);
+		});
+
+		test('Chinese param name `路径` in self-closing is captured', () => {
+			const input = '<read_file 路径="/foo.ts" />';
+			const out = normalizeAlternativeToolSyntax(input);
+			assert.match(out, /<read_file>/);
+			assert.match(out, /\/foo\.ts/);
+		});
+
+		test('escaped quotes in attribute value preserved', () => {
+			// `"value with \"escaped\" inside"` — without escaped-quote support
+			// the regex used to truncate at the first `"`. Now full value passes.
+			const input = '<read_file path="hello \\"world\\"" />';
+			const out = normalizeAlternativeToolSyntax(input);
+			assert.match(out, /<read_file>/);
+			// The backslash-escape sequence survives intact in the value.
+			assert.match(out, /hello \\"world\\"/);
+		});
+
+		test('DSML with non-ASCII identifier inside pipes is stripped', () => {
+			// X.15.6 — pipe-wrapped non-ASCII id `<｜｜中文｜｜>` is now matched.
+			const input = '<｜｜中文｜｜invoke name="read_file"><｜｜中文｜｜parameter name="path">/foo</｜｜中文｜｜parameter></｜｜中文｜｜invoke>';
+			const out = normalizeAlternativeToolSyntax(input);
+			assert.match(out, /<read_file>/);
+			assert.doesNotMatch(out, /中文/);
+		});
+	});
+
+	suite('telemetry counters (X.4)', () => {
+
+		test('full-path counter increments on transform', () => {
+			resetNormalizeCounters();
+			normalizeAlternativeToolSyntax('plain text no tags');
+			assert.strictEqual(getNormalizeCounters().fullPath, 0, 'fast path should not increment');
+			normalizeAlternativeToolSyntax('<read_file path="/foo" />');
+			assert.strictEqual(getNormalizeCounters().fullPath, 1);
+		});
+
+		test('selfClosing counter increments when self-closing transform fires', () => {
+			resetNormalizeCounters();
+			normalizeAlternativeToolSyntax('<read_file path="/foo" />');
+			assert.ok(getNormalizeCounters().selfClosing >= 1);
+		});
+
+		test('invoke counter increments when invoke transform fires', () => {
+			resetNormalizeCounters();
+			normalizeAlternativeToolSyntax('<invoke name="read_file"><parameter name="path">x</parameter></invoke>');
+			assert.ok(getNormalizeCounters().invoke >= 1);
+		});
+
+		test('dsml counter increments on fullwidth-pipe stripping', () => {
+			resetNormalizeCounters();
+			normalizeAlternativeToolSyntax('<｜｜DSML｜｜invoke name="read_file"><｜｜DSML｜｜parameter name="path">/foo</｜｜DSML｜｜parameter></｜｜DSML｜｜invoke>');
+			assert.ok(getNormalizeCounters().dsml >= 1);
+		});
+
+		test('safetyNet counter increments on stripUnclaimedToolTags', () => {
+			resetNormalizeCounters();
+			stripUnclaimedToolTags('Leaked: <read_file><path>x</path></read_file>');
+			assert.ok(getNormalizeCounters().safetyNetPaired >= 1);
+		});
+
+		test('reset zeros all counters', () => {
+			normalizeAlternativeToolSyntax('<read_file path="/foo" />');
+			resetNormalizeCounters();
+			for (const [key, value] of Object.entries(getNormalizeCounters())) {
+				assert.strictEqual(value, 0, `${key} should be 0 after reset`);
+			}
 		});
 	});
 

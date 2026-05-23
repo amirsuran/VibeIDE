@@ -18,7 +18,7 @@
  */
 
 import * as assert from 'assert';
-import { scoreToolMatch, suggestAlternateTool, ToolCandidate } from '../../common/toolSchemaSuggest.js';
+import { CROSS_TOOL_ARG_HINTS, scoreToolMatch, suggestAlternateTool, suggestByArgHints, ToolCandidate } from '../../common/toolSchemaSuggest.js';
 
 const readFile: ToolCandidate = { name: 'read_file', params: { required: ['uri'] } };
 const runNlCommand: ToolCandidate = { name: 'run_nl_command', params: { required: ['nl_input'] } };
@@ -123,6 +123,65 @@ suite('toolSchemaSuggest', () => {
 			// (No actual tie here; covered the deterministic path.)
 			const out = suggestAlternateTool(readFile, [runNlCommand, searchForFiles], ['nl_input']);
 			assert.strictEqual(out, 'run_nl_command');
+		});
+	});
+
+	suite('suggestByArgHints (X.11.4)', () => {
+
+		test('nl_input → run_nl_command when available', () => {
+			const out = suggestByArgHints(['nl_input'], new Set(['read_file', 'run_nl_command']));
+			assert.strictEqual(out, 'run_nl_command');
+		});
+
+		test('nl_input fallback to nl_shell when run_nl_command absent', () => {
+			const out = suggestByArgHints(['nl_input'], new Set(['nl_shell']));
+			assert.strictEqual(out, 'nl_shell');
+		});
+
+		test('no hint match → null', () => {
+			const out = suggestByArgHints(['totally_random_key'], new Set(['read_file']));
+			assert.strictEqual(out, null);
+		});
+
+		test('hint match but candidate not available → null', () => {
+			const out = suggestByArgHints(['nl_input'], new Set(['read_file']));
+			assert.strictEqual(out, null);
+		});
+
+		test('case-insensitive key lookup', () => {
+			const out = suggestByArgHints(['NL_INPUT'], new Set(['run_nl_command']));
+			assert.strictEqual(out, 'run_nl_command');
+		});
+
+		test('multiple rawKeys — first hit wins', () => {
+			const out = suggestByArgHints(['unknown', 'nl_input'], new Set(['run_nl_command']));
+			assert.strictEqual(out, 'run_nl_command');
+		});
+
+		test('CROSS_TOOL_ARG_HINTS table is non-empty (regression guard)', () => {
+			assert.ok(Object.keys(CROSS_TOOL_ARG_HINTS).length > 0);
+		});
+	});
+
+	suite('suggestAlternateTool — hint path integration', () => {
+
+		test('hint short-circuits when shape match would return null', () => {
+			// rawKeys=[nl_input] — neither read_file nor edit_file's required
+			// params (uri, content) appear. Shape match scores all candidates
+			// at 0. But hint table says nl_input → run_nl_command.
+			const out = suggestAlternateTool(readFile, [editFile, runNlCommand], ['nl_input']);
+			assert.strictEqual(out, 'run_nl_command');
+		});
+
+		test('hint to called tool itself is ignored (no self-suggestion)', () => {
+			// If somehow CROSS_TOOL_ARG_HINTS suggested the called tool, we
+			// should not return it (would loop the model).
+			const customRunNl: ToolCandidate = { name: 'run_nl_command', params: { required: ['nl_input'] } };
+			const out = suggestAlternateTool(customRunNl, [readFile], ['nl_input']);
+			// suggestByArgHints returns 'run_nl_command' from hint table, but it
+			// equals called tool → skipped. Shape scoring on readFile (uri) → 0
+			// for ['nl_input'] → no suggestion.
+			assert.strictEqual(out, null);
 		});
 	});
 });

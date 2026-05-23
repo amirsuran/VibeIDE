@@ -28,6 +28,47 @@ export interface ToolCandidate {
 }
 
 /**
+ * X.11.4 — direct param-name → tool hints. Some param names are
+ * unambiguously associated with a specific tool. If the model called the
+ * wrong tool but passed a hint-param, we can suggest the right tool even
+ * before scoring kicks in (handles 0% score cases where the called tool
+ * wouldn't get suggested via shape-match).
+ *
+ * Observed incident 2026-05-23 (minimax-m2.7): model called `read_file`
+ * with `{nl_input: ...}` — `nl_input` is the strong-signal hint for
+ * `run_nl_command`.
+ *
+ * Add entries here as observed in production. Keep it conservative —
+ * a wrong hint loops the model.
+ */
+export const CROSS_TOOL_ARG_HINTS: Readonly<Record<string, readonly string[]>> = Object.freeze({
+	nl_input: ['run_nl_command', 'nl_shell'],
+	natural_language_input: ['run_nl_command', 'nl_shell'],
+	shell_command: ['terminal_command', 'run_terminal_command'],
+	bash: ['terminal_command', 'run_terminal_command'],
+	terminal: ['terminal_command', 'run_terminal_command'],
+});
+
+/**
+ * Returns the first hinted tool whose name is in the `availableNames` set,
+ * or null if no rawParamKey carries a strong hint. Used as a fast-path
+ * before the score-based heuristic — direct evidence > shape inference.
+ */
+export const suggestByArgHints = (
+	rawParamKeys: readonly string[],
+	availableNames: ReadonlySet<string>,
+): string | null => {
+	for (const key of rawParamKeys) {
+		const candidates = CROSS_TOOL_ARG_HINTS[key.toLowerCase()];
+		if (!candidates) continue;
+		for (const candidate of candidates) {
+			if (availableNames.has(candidate)) return candidate;
+		}
+	}
+	return null;
+};
+
+/**
  * Fraction of `requiredParams` present (case-insensitive) in `rawKeys`.
  * Returns 0 when `requiredParams` is empty (no required → no signal).
  */
@@ -60,6 +101,14 @@ export const suggestAlternateTool = (
 	minScore: number = 0.6,
 ): string | null => {
 	if (rawParamKeys.length === 0) return null;
+	// X.11.4 — direct hint short-circuit. If any rawParamKey is a known
+	// strong signal for a specific tool, return it without scoring. Beats
+	// the shape-match algorithm when called tool's required params don't
+	// appear at all (shape match would return null, hint catches it).
+	const availableNames = new Set(candidates.map(c => c.name));
+	availableNames.add(calledTool.name);
+	const hinted = suggestByArgHints(rawParamKeys, availableNames);
+	if (hinted && hinted !== calledTool.name) return hinted;
 	const calledScore = scoreToolMatch(calledTool.params.required, rawParamKeys);
 	let best: { name: string; score: number } | null = null;
 	for (const candidate of candidates) {

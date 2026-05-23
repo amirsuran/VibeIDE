@@ -180,6 +180,12 @@ const ALT_PARTIAL_REGEXES: RegExp[] = (() => {
 		/<\/invoke\b[^>]*$/i,
 		// Self-closing partial (v0.13.10): `<read_file path="d:\Project` etc.
 		SELF_CLOSING_PARTIAL_RE,
+		// X.6 — DSML fullwidth-pipe partial: `<｜｜DSML｜｜inv` mid-stream
+		// without closing pipes. Without this, the marker leaks 50-300ms
+		// onto screen between chunks before its closing `｜｜` arrives.
+		// `\p{L}` matches Unicode-letter identifiers (X.15.6).
+		/<[｜|]{1,4}[\p{L}][\p{L}\p{N}_-]*$/u,
+		/<[｜|]{1,4}[\p{L}][\p{L}\p{N}_-]*[｜|]{0,4}[\p{L}\p{N}_-]*$/u,
 	]
 })()
 

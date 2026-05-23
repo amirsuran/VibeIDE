@@ -5058,10 +5058,12 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 						// More accurate token estimation: account for markdown, code blocks, etc.
 						const outputTokens = textToCount.length > 0 ? Math.max(1, Math.ceil(textToCount.length / 3.5)) : 0
 						chatLatencyAudit.markStreamComplete(finalRequestId, outputTokens)
-						// Log metrics for debugging
-						// PERFORMANCE: Only compute metrics if audit is enabled (metrics computation has overhead)
-						const metrics = auditEnabled ? chatLatencyAudit.completeRequest(finalRequestId) : null
-						if (metrics) {
+						// W.20 fix — completeRequest unconditionally drops the context
+						// (and stops the 60fps render-monitoring interval when contexts
+						// drain to zero). Pre-W.20 it was gated on `auditEnabled`, so with
+						// audit disabled the context (and interval) leaked forever.
+						const metrics = chatLatencyAudit.completeRequest(finalRequestId)
+						if (auditEnabled && metrics) {
 							chatLatencyAudit.logMetrics(metrics)
 						}
 
@@ -5445,7 +5447,12 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 								// Type assertion is safe because nextModel is not "auto" (it came from fallback chain)
 								const nextProviderName = nextModel.providerName as Exclude<typeof nextModel.providerName, 'auto'>
 								resolvedModelSelectionOptions = this._settingsService.state.optionsOfModelSelection['Chat']?.[nextProviderName]?.[nextModel.modelName]
-								// Update request ID for new model
+								// Update request ID for new model.
+								// W.20 fix — drain the previous context first; the fallback
+								// path used to start a new request without closing the old
+								// one, leaking 60fps render-monitoring contexts on every
+								// model switch.
+								chatLatencyAudit.completeRequest(finalRequestId)
 								const newRequestId = generateUuid()
 								chatLatencyAudit.startRequest(newRequestId, nextModel.providerName, nextModel.modelName)
 								chatLatencyAudit.markRouterStart(newRequestId)

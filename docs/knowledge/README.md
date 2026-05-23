@@ -106,6 +106,12 @@
 | [watchdog-commands.md](runtime-quirks/watchdog-commands.md) | Idle Watchdog: Command Palette entries, всех 18 settings keys, on-disk artefact layout, .jsonl schema v=1 |
 | [xml-tool-format-incidents.md](runtime-quirks/xml-tool-format-incidents.md) | Chronological catalog of observed XML tool-call format incidents (model / format / fix commit / regression test) |
 
+### [roadmap/](roadmap/) — run logs (long sessions)
+
+| Файл | О чём |
+|---|---|
+| [runs.md](roadmap/runs.md) | Run logs ночных roadmap-max сессий |
+
 ### [assets/](assets/) — лого, иконки, онбординг
 
 | Файл | О чём |
