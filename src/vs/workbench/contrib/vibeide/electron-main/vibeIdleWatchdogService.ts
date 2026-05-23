@@ -802,11 +802,16 @@ export class VibeIdleWatchdogService {
 	}
 
 	private _clearTimer(key: '_intervalTimer' | '_firstTickTimer' | '_midnightTimer'): void {
-		const t = this[key];
+		// Cast `this` to a writable map of timer handles — TS strict mode rejects
+		// the bare `this[key]` indexing because the union of private-field names
+		// isn't a structural key of the class type. Equivalent at runtime; the
+		// cast is local to this helper and doesn't escape.
+		const self = this as unknown as Record<typeof key, TimerHandle | null>;
+		const t = self[key];
 		if (t !== null) {
 			if (key === '_intervalTimer') clearInterval(t);
 			else clearTimeout(t);
-			this[key] = null;
+			self[key] = null;
 		}
 	}
 
