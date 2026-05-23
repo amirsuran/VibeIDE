@@ -61,7 +61,13 @@ export const resolveInvokeParamName = (rawParamName: string, canonicalToolName: 
  *   - tool_use        Anthropic
  *   - tools           Generic
  */
-const VENDOR_WRAPPER_NAMES: readonly string[] = [
+/**
+ * Vendor wrapper names — exported so streaming-state code in `extractGrammar.ts`
+ * can derive its `ALT_PARTIAL_REGEXES` partial-detection patterns from the same
+ * source (avoids the hardcoded `/<invoke\b[^>]*$/i` style that loses sync when
+ * a new wrapper joins this list).
+ */
+export const VENDOR_WRAPPER_NAMES: readonly string[] = [
 	'tool_code',
 	'function_calls',
 	'tool_calls',
@@ -72,8 +78,9 @@ const VENDOR_WRAPPER_NAMES: readonly string[] = [
 /**
  * Namespaced suffix patterns: `<vendor:tool_call>`, `<minimax:invoke>`, etc.
  * Each entry is the part AFTER the colon. Vendor prefix is `[a-z][\w-]*`.
+ * Exported for the same reason as `VENDOR_WRAPPER_NAMES`.
  */
-const VENDOR_NAMESPACED_SUFFIXES: readonly string[] = [
+export const VENDOR_NAMESPACED_SUFFIXES: readonly string[] = [
 	'tool_call',
 	'tool_calls',
 	'tool_use',

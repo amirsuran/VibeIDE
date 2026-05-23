@@ -10,7 +10,7 @@ import { PARAM_ALIASES_BY_TOOL, TOOL_NAME_ALIASES } from '../../common/prompt/to
 import { OnFinalMessage, OnText, RawToolCallObj, RawToolParamsObj } from '../../common/sendLLMMessageTypes.js'
 import { ToolName, ToolParamName } from '../../common/toolsServiceTypes.js'
 import { ChatMode } from '../../common/vibeideSettingsTypes.js'
-import { normalizeAlternativeToolSyntax, SELF_CLOSING_PARTIAL_RE, stripUnclaimedToolTags } from '../../common/xmlToolNormalize.js'
+import { normalizeAlternativeToolSyntax, SELF_CLOSING_PARTIAL_RE, stripUnclaimedToolTags, VENDOR_NAMESPACED_SUFFIXES, VENDOR_WRAPPER_NAMES } from '../../common/xmlToolNormalize.js'
 
 
 // =============== reasoning ===============
@@ -143,54 +143,45 @@ export const extractReasoningWrapper = (
 
 // =============== tools (XML) ===============
 
-// Tool name + per-tool param-name aliases moved to common/prompt/toolAliases.ts
-// so the dispatcher (chatThreadService._runToolCall) and the AI SDK repair
-// hook (aiSdkAdapter.ts) can apply the same map. Previously these were
-// XML-only, which left AI SDK native function-calling and legacy native
-// channels with no recovery for cross-ecosystem name/field differences
-// (e.g. minimax/qwen emitting `{path: ...}` for read_file → undefined uri).
-// See: TOOL_NAME_ALIASES and PARAM_ALIASES_BY_TOOL imports above.
+// All pure XML-normalization helpers (STRIP_WRAPPERS_RE, DSML_MARKER_STRIP_RE,
+// SELF_CLOSING_TOOL_RE, normalizeAlternativeToolSyntax, stripUnclaimedToolTags,
+// resolveInvokeToolName, resolveInvokeParamName) live in `common/xmlToolNormalize.ts`
+// so they can be unit-tested in isolation. The only logic that stays here is
+// the streaming-state machine (`extractXMLToolsWrapper`) — it owns transient
+// per-stream buffers and can't be made pure.
+//
+// Tool/param name alias maps live in `common/prompt/toolAliases.ts` (TOOL_NAME_ALIASES,
+// PARAM_ALIASES_BY_TOOL) — applied by both this file's parser and the dispatcher
+// (chatThreadService._runToolCall) and AI SDK repair hook (aiSdkAdapter.ts) so
+// every channel (native FC, legacy native, XML fallback) gets identical alias
+// recovery.
 
 /**
- * Outer wrapper tags used by some models to frame a list of tool invocations.
- * Detected by SHAPE rather than by enumerated vendor list:
- *   - Fixed canonicals: <tool_code> (Gemini), <function_calls> (Anthropic),
- *     <tool_use>, <tools>.
- *   - Vendor-namespaced: any <vendor:suffix> where the suffix carries a
- *     "tool" or "function" semantic — covers <minimax:tool_call>,
- *     <claude:tool_use>, <mistral:function_call>, <openai:invoke>, plus
- *     any future vendor that follows the same convention.
+ * Partial-tag regexes — match in-progress vendor syntaxes at the buffer end so
+ * the streaming state machine holds them in `openToolTagBuffer` instead of
+ * flushing as user-visible text. Each must be anchored with `$` (end of buffer).
  *
- * The actual tool call lives inside as <invoke name=...>. Wrappers are
- * stripped first; whatever remains is fed to the invoke-pattern normalizer.
+ * Derived from `VENDOR_NAMESPACED_SUFFIXES` and `VENDOR_WRAPPER_NAMES` const
+ * arrays (v0.13.11 audit pass X.15.7) — adding a new wrapper to either array
+ * updates partial detection in lockstep. Pre-derivation, the literal patterns
+ * `/<invoke\b[^>]*$/i` etc lived hardcoded here and silently lost coverage when
+ * a new wrapper joined the strip list.
  */
-// Pure XML-normalization helpers (resolveInvokeToolName, resolveInvokeParamName,
-// STRIP_WRAPPERS_RE, DSML_MARKER_STRIP_RE, SELF_CLOSING_TOOL_RE,
-// normalizeAlternativeToolSyntax, stripUnclaimedToolTags) live in
-// `../../common/xmlToolNormalize.ts` so they can be unit-tested in isolation.
-// This file imports them above; the only logic that stays here is the
-// streaming-state machine (`extractXMLToolsWrapper`) which owns transient
-// buffers and can't be made pure.
-
-/**
- * Regex patterns that identify in-progress alt-syntax tool calls at the end
- * of the buffer. Used as additional partial-tag hints so half-written wrapper
- * or invoke openings are held in `openToolTagBuffer` instead of leaking into
- * chat. Each pattern must be anchored with `$` so it only matches at end.
- *
- * Detection by SHAPE — no enumerated vendor list:
- *   - `<vendor:partial`  → any `<word_chars:partial_chars` ending with no `>`
- *   - `<invoke …` → any `<invoke` followed by anything not yet containing `>`
- *   - `</vendor:partial` → closing form of the above
- */
-// `SELF_CLOSING_PARTIAL_RE` is now in `common/xmlToolNormalize.ts` and imported
-// at the top of this file.
-const ALT_PARTIAL_REGEXES: RegExp[] = [
-	/<\/?[a-z][\w-]*:[\w_-]*$/i,
-	/<invoke\b[^>]*$/i,
-	/<\/invoke\b[^>]*$/i,
-	SELF_CLOSING_PARTIAL_RE,
-]
+const ALT_PARTIAL_REGEXES: RegExp[] = (() => {
+	const wrapperAlt = VENDOR_WRAPPER_NAMES.join('|')
+	const suffixAlt = VENDOR_NAMESPACED_SUFFIXES.join('|')
+	return [
+		// Namespaced opening / closing partial: `<vendor:tool_call`, `</vendor:invoke`, etc.
+		new RegExp(`<\\/?[a-z][\\w-]*:(?:${suffixAlt})?[\\w_-]*$`, 'i'),
+		// Bare wrapper partial: `<tool_calls`, `<function_calls`, etc. (open or close)
+		new RegExp(`<\\/?(?:${wrapperAlt})\\b[^>]*$`, 'i'),
+		// Invoke partial: `<invoke ...` (open) or `</invoke...` (close) without `>`.
+		/<invoke\b[^>]*$/i,
+		/<\/invoke\b[^>]*$/i,
+		// Self-closing partial (v0.13.10): `<read_file path="d:\Project` etc.
+		SELF_CLOSING_PARTIAL_RE,
+	]
+})()
 
 const findPartiallyWrittenToolTagAtEnd = (fullText: string, toolTags: string[]) => {
 	for (const toolTag of toolTags) {
@@ -403,10 +394,10 @@ export const extractXMLToolsWrapper = (
 		return canonicalTagSet.has(target) && !canonicalTagSet.has(alias)
 	})
 	const toolOpenTags = [...tools.map(t => `<${t.name}>`), ...aliasTagsForActiveTools.map(a => `<${a}>`)]
-	// Alt-syntax partial detection (vendor wrappers, <invoke name=...>, etc.)
-	// is now handled by ALT_PARTIAL_REGEXES inside findPartiallyWrittenToolTagAtEnd
-	// — shape-based, no enumerated vendor list.
-	const partialDetectionTags = toolOpenTags
+	// `toolOpenTags` doubles as `partialDetectionTags` — the partial-tag detector
+	// uses both endsWithAnyPrefixOf (matches per-tag prefix) AND ALT_PARTIAL_REGEXES
+	// (shape-based vendor detection). Pre-X.16 had a separate `partialDetectionTags`
+	// alias = `toolOpenTags`, useless indirection.
 
 	const toolId = generateUuid()
 
@@ -436,7 +427,7 @@ export const extractXMLToolsWrapper = (
 			const newFullText = openToolTagBuffer + newText
 			// ensure the code below doesn't run if only half a tag has been written
 			// (canonical or alt-syntax wrapper like <invoke ...> still streaming)
-			const isPartial = findPartiallyWrittenToolTagAtEnd(newFullText, partialDetectionTags)
+			const isPartial = findPartiallyWrittenToolTagAtEnd(newFullText, toolOpenTags)
 			if (isPartial) {
 				openToolTagBuffer += newText
 			}
