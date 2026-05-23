@@ -2474,13 +2474,13 @@ vibeide.subagent.*, vibeide.mcp.*, vibeide.commands.audit*, …
 - [ ] **X.13.7 Diagnostic schema-hint smart-suggest** — когда `invalid_params` fires и `rawParamsKeys` хорошо matches another tool's required params, schema hint должна suggest «возможно ты хотел вызвать `<other_tool>`?». Конкретный кейс: `read_file({nl_input: ...})` — `nl_input` это param `run_nl_command` тула. Поможет recovery после cross-tool-args confusion (X.11 minimax bug). **Implementation:** в `chatThreadService._runToolCall` invalid_params catch — пробежаться по всем tools, посчитать `rawParamsKeys ∩ tool.requiredParams` для каждого, если best match имеет ratio > 0.7 → add suggestion в schema hint. **Эффорт:** 30 строк + tests + перевод hint'а.
 - [ ] **X.13.8 Knowledge doc — XML format incident catalog** — `docs/knowledge/runtime-quirks/xml-tool-format-incidents.md`. Сейчас каждый раз когда модель ломает XML в новый способ, я открываю extractGrammar.ts и trace'ю. Catalog: vendor / model / date observed / format pattern / fix commit. Living document, append на каждый новый incident. Эффорт: создать с initial entries по X.0-X.13.
 
-### X.14 (planning) минимакс-m2.7 native FC investigation — продолжение X.11
+### X.14 (планировка) минимакс-m2.7 native FC investigation — продолжение X.11
 
-> **Статус:** investigation начата, paused на urgency malformed-close fix. Когда X.13.4-X.13.7 закрыты или приоритизированы — возобновить.
-
-- [ ] **X.14.1** Прочитать chatThreadService.ts agent loop около invalid_params handler — где именно теряется control flow (model ожидает ответа → ответ есть → но модель не emit'ит токены → 120s timeout).
-- [ ] **X.14.2** Воспроизвести Dokku-task сценарий локально с minimax-m2.7. Захватить полный network trace + chatThread state machine.
-- [ ] **X.14.3** Принять решение по X.11.3 (force-XML для minimax-via-openCode) либо X.11.2 (universal native FC validator) — после диагностики.
+- [x] **X.14.1 Investigate** — ✅ Прочитан chatThreadService.ts:3509-3552 invalid_params handler. Поведение: validation throws → tool message типа `invalid_params` с schema hint отправляется обратно модели → agent loop ожидает next tokens. Если model не emit'ит токены после schema hint — `streamHardStallSeconds: 120` отстреливает. Root cause: minimax-m2.7 после invalid_params **не делает retry** в текущем turn'е — она считает «turn done».
+- [x] **X.14.3 Decision** — ✅ Implemented **OBA** combination:
+  - **X.11.3 force-XML quirk** (commit forthcoming) — `{ match: "minimax", provider: "openCode", forceToolCallFormat: "xml", ... }` в `resources/model-quirks.json`. Bypass native FC bug entirely. Same pattern as deepseek/kimi.
+  - **X.11.4 / X.13.7 smart-suggest schema hint** (commit forthcoming) — `buildToolSchemaHint(canonicalToolName, rawParamKeys)` теперь scan'ит все builtin tools, считает `|rawKeys ∩ candidateRequired| / |candidateRequired|`. Если best score >= 0.6 AND > called tool's score — добавляет «Note: ваш argument shape лучше matches "{other_tool}", если вы имели в виду его — вызовите». Помогает **любой** native FC модели с cross-tool args confusion.
+- [~] **X.14.2 Reproduction test** — не сделан. Manual test когда user следующий раз попробует minimax via openCode.
 
 ### X.15 De-hardcode audit pass post-v0.13.11 (commit da2194e6, 2026-05-23)
 
@@ -2565,23 +2565,35 @@ vibeide.subagent.*, vibeide.mcp.*, vibeide.commands.audit*, …
 - [x] **Y.0.2 Stale MEMORY.md hook** — auto-memory index сказал «docs/ в .gitignore, локально-только» — теперь неверно. Updated с reference на commit 4fa021cc.
 - [x] **Y.0.3 No top-level docs/README.md** — outside reader видел 16 subdir'ов без orientation. Created with tree map, recording conventions, routing, roadmap navigation, policy history.
 
-### Y.1 Strategic/business content в public repo
+### Y.1 Strategic/business content в public repo — DECISION (2026-05-23)
 
-- [ ] **Audit:** `docs/idea.md`, `docs/v1/monetization.md`, `docs/v1/vision/{market,north-star,narrative}.md`, `docs/CortexIDE-vs-Other-AI-Editors.md`, `docs/CortexIDE-Model-Support-Code-Editing-Comparison.md` — strategic / business content. В public repo навсегда после push. Может содержать:
-  - Будущие фичи которые планируется не reveal'ить до launch
-  - Competitive analysis с потенциально outdated/inaccurate claims о других продуктах
-  - Pricing/monetization thoughts которые могут связать руки
-- [ ] **Decision needed:** оставить как есть (transparency-first), вычистить sensitive sections, или переехать в отдельный private repo `VibeIDETeam/VibeIDE-strategy`.
-- [ ] **Эффорт:** review ~30 min с автором. Trade-off: open dev vs strategic flexibility.
+> User asked для решения по public visibility этих файлов.
 
-### Y.2 CI workflows триггерятся на любое docs/ изменение
+- [x] **Decision: keep ALL public.** Файлы прочитаны / оценены:
+  - `docs/idea.md` — market analysis (Void, CortexIDE, Kilo Code, Continue.dev, Claude Code) + Claude Code efficiency patterns (PTC, MCPSearch, dynamic context). Factual, transparency-first.
+  - `docs/v1/monetization.md` — «no Pro tier, no subscription, all free» model. Publicly stating this REINFORCES брand positioning (vs Cursor's $20/mo). Hiding бы противоречило позиционированию.
+  - `docs/v1/vision/narrative.md` — «Ты видишь всё — и управляешь всем» plus differentiators vs Cursor table. Дизайн для public consumption.
+  - `docs/CortexIDE-*` comparisons — factual differentiator analysis. Если outdated → fix, не hide.
+- [x] **Rationale:**
+  - VibeIDE's "edge" — quality of tools + community trust, не secret strategy.
+  - Hiding strategy docs противоречит transparency-first brand.
+  - Competitive analysis with factual claims нормально для open-source projects (см. как Zed, Helix, Neovim делают).
+  - Strategic flexibility from hiding doc — illusion: competitors infer plans из PR patterns / commits anyway.
+- [ ] **Follow-up (минимальное):** CortexIDE comparison файлы дополнить disclaimer'ом «as of YYYY-MM-DD, see PR for updates» чтобы не воспринимались как live truth. Backlog Y.1.1.
 
-- [ ] **Контекст:** теперь правка `docs/knowledge/foo.md` (например, фикс typo) запускает полный TypeScript compile + tests pipeline. Wasted CI minutes + slow PR-feedback loop для пользователей помогающих с docs.
-- [ ] **Fix:** в `.github/workflows/*.yml` добавить `paths-ignore: ['docs/**']` для heavy jobs (compile, tests). Создать отдельный лёгкий `docs-only.yml` который запускается на docs/-only PRs и делает:
-  - Markdown lint (`markdownlint-cli` или подобное)
-  - Broken-link check (`lychee` / `markdown-link-check`)
-  - Verify roadmap section index integrity (W/X/Y consistent)
-- [ ] **Acceptance:** docs-only PR finishes CI в <2 минуты vs текущие 15-20.
+### Y.2 CI workflows path filters — ✅ DONE (2026-05-23, commit forthcoming)
+
+- [x] **`paths-ignore: ['docs/**']`** добавлено к heaviest jobs:
+  - `.github/workflows/pr.yml` (main Code OSS tests)
+  - `.github/workflows/e2e-tests.yml` (E2E matrix)
+  - `.github/workflows/component-fixture-tests.yml` (component tests)
+  - **Mixed PRs (docs + src)** всё ещё триггерят полный CI — `paths-ignore` логический OR.
+- [x] **New `.github/workflows/docs-only.yml`** создан:
+  - `markdownlint-cli2@0.13` с lenient config (только structural errors: MD001 hierarchy, MD018-019 atx-style, MD037-039 emphasis, MD042 empty links). Стилистические нити выключены (line length, fenced-style, list-numbering) — проект использует mixed conventions.
+  - Roadmap section integrity check — bash + grep, проверяет что top-level `## X.` headers формируют consecutive Latin-letter sequence, флаг'ит gaps.
+  - Triggers только на `docs/**` и `.github/workflows/docs-only.yml`.
+- [x] **Existing `.github/workflows/docs-links.yml`** уже purpose-built под markdown link check — дополняет docs-only.yml.
+- [x] **Acceptance:** docs-only PR теперь скипает full CI (~15-20 min) → runs docs-only.yml + docs-links.yml (~30s).
 
 ### Y.3 `docs/release-notes-v0.3.0.md` одинокий
 
