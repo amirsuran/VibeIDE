@@ -20,7 +20,7 @@
 
 **Контекст:** Cursor и Claude Code могут автоматически добавлять co-author trailers в коммиты.
 
-**Суть:** глобальный hook `C:\Users\borod\.git-hooks\prepare-commit-msg` (путь прописан в глобальном git config: `core.hookspath`). Зачищает:
+**Суть:** глобальный hook `%USERPROFILE%\.git-hooks\prepare-commit-msg` (путь прописан в глобальном git config: `core.hookspath`). Зачищает:
 ```bash
 #!/bin/sh
 COMMIT_MSG_FILE="$1"
@@ -39,9 +39,9 @@ sed -i '/^Co-authored-by: Claude/Id' "$COMMIT_MSG_FILE"
 **Контекст:** пользователь не хочет, чтобы AI инструменты фигурировали как контрибьюторы в истории коммитов.
 
 **Суть:**
-- Глобальный git hook: `C:\Users\borod\.git-hooks\prepare-commit-msg`
+- Глобальный git hook: `%USERPROFILE%\.git-hooks\prepare-commit-msg`
 - Зачищает: `Co-authored-by: Cursor <cursoragent@cursor.com>`, `Made-with: Cursor`, `Co-authored-by: Claude*` (регистронезависимо)
-- Подключён через `git config --global core.hooksPath C:\Users\borod\.git-hooks`
+- Подключён через `git config --global core.hooksPath %USERPROFILE%\.git-hooks`
 - В Claude Code settings: `"includeCoAuthoredBy": false` — Claude не добавляет co-author trailer автоматически
 
 **Применение:** при добавлении нового AI-инструмента — добавить строку в `prepare-commit-msg`; при коммитах не добавлять co-author вручную.
