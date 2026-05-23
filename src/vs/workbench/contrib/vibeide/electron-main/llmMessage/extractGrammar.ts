@@ -205,8 +205,19 @@ const resolveInvokeParamName = (rawParamName: string, canonicalToolName: string)
 const normalizeAlternativeToolSyntax = (text: string): string => {
 	// Fast path: no alternative-syntax markers present at all.
 	// Cheap substring sniffs first — if any plausibly-namespaced or invoke
-	// pattern is present, fall through to the regex pipeline.
-	if (!text.includes('<invoke') && !text.includes('<tool_code') && !text.includes('<function_calls') && !text.includes('<tool_use') && !text.includes(':tool_call') && !text.includes(':tool_use') && !text.includes(':function_call') && !text.includes(':invoke')) {
+	// pattern is present, fall through to the regex pipeline. `/>` covers the
+	// self-closing form added in v0.13.10 (deepseek-v4-pro and similar).
+	if (
+		!text.includes('<invoke')
+		&& !text.includes('<tool_code')
+		&& !text.includes('<function_calls')
+		&& !text.includes('<tool_use')
+		&& !text.includes(':tool_call')
+		&& !text.includes(':tool_use')
+		&& !text.includes(':function_call')
+		&& !text.includes(':invoke')
+		&& !text.includes('/>')
+	) {
 		return text
 	}
 	let result = text.replace(STRIP_WRAPPERS_RE, '')
@@ -224,6 +235,31 @@ const normalizeAlternativeToolSyntax = (text: string): string => {
 			return `<${canonical}>${transformedBody}</${canonical}>`
 		}
 	)
+	// Self-closing tool-call form (v0.13.10 fix): `<tool_name attr="v1" attr2="v2" />`.
+	// Observed from deepseek-v4-pro on 2026-05-23: model emits compact inline XML
+	// instead of `<tool><param>v</param></tool>` blocks. Pre-fix, the canonical
+	// parser ignored these (toolOpenTags has `<read_file>`, not `<read_file `) and
+	// the safety net regex required matching close-tags, so the raw XML leaked
+	// into chat (see screenshots / release v0.13.9 incident).
+	// Restricted to canonical builtin tool names to avoid matching arbitrary HTML
+	// self-closing tags (`<br />`, `<img />`) which models do produce in markdown.
+	if (result.includes('/>')) {
+		const builtinAlt = builtinToolNames.join('|')
+		const selfClosingToolRe = new RegExp(`<(${builtinAlt})\\s+([^>]*?)\\s*\\/>`, 'gi')
+		result = result.replace(selfClosingToolRe, (_match: string, rawTool: string, attrsStr: string) => {
+			const canonical = resolveInvokeToolName(rawTool)
+			const attrRe = /([a-zA-Z_][\w-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')/g
+			let attrMatch: RegExpExecArray | null
+			const parts: string[] = []
+			while ((attrMatch = attrRe.exec(attrsStr)) !== null) {
+				const name = attrMatch[1]
+				const value = attrMatch[2] ?? attrMatch[3] ?? ''
+				const canonicalParam = resolveInvokeParamName(name, canonical)
+				parts.push(`<${canonicalParam}>${value}</${canonicalParam}>`)
+			}
+			return `<${canonical}>${parts.join('')}</${canonical}>`
+		})
+	}
 	return result
 }
 
@@ -455,6 +491,14 @@ const stripUnclaimedToolTags = (text: string): string => {
 		const re = new RegExp(`<${toolName}>[\\s\\S]*?<\\/${toolName}>`, 'g')
 		if (re.test(out)) {
 			out = out.replace(re, UNCLAIMED_TOOL_TAG_PLACEHOLDER)
+		}
+		// v0.13.10 fallback: self-closing form `<read_file path="..." />` should have
+		// been normalized by `normalizeAlternativeToolSyntax` before reaching here, but
+		// if the normalizer missed it (e.g., alias not in builtinToolNames, attribute
+		// without quotes), this catches the raw XML before it hits the UI.
+		const selfRe = new RegExp(`<${toolName}\\s+[^>]*\\/>`, 'g')
+		if (selfRe.test(out)) {
+			out = out.replace(selfRe, UNCLAIMED_TOOL_TAG_PLACEHOLDER)
 		}
 	}
 	return out
