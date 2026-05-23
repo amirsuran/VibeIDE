@@ -34,6 +34,8 @@
 | [doc-structure.md](architecture/doc-structure.md) | Структура документации проекта |
 | [two-patches-folders.md](architecture/two-patches-folders.md) | `patches-node-modules/` vs `patches-vscode-source/` |
 | [model-quirks.md](architecture/model-quirks.md) | Catalog-driven per-model quirks (temperature/topP/topK/reasoning/tool-format) — `resources/model-quirks.json` + CDN refresh |
+| [xml-tool-normalization.md](architecture/xml-tool-normalization.md) | XML tool-call pipeline (Layer 1 normalize / Layer 2 parser / Layer 3 safety net), DSML/self-closing/malformed-close coverage |
+| [xml-tool-format-matrix.md](architecture/xml-tool-format-matrix.md) | Living matrix: vendor × provider × format × coverage layer × test fixture |
 
 ### [ui/](ui/) — CSS, темы, view-инфраструктура
 
@@ -101,6 +103,8 @@
 | [path-and-uri.md](runtime-quirks/path-and-uri.md) | `validateURI` на Windows, UTF-8 BOM в settings |
 | [language-server-esm.md](runtime-quirks/language-server-esm.md) | HTML/CSS LS — ESM-клиент и CJS-бандл |
 | [idle-memory.md](runtime-quirks/idle-memory.md) | Ночной OOM / блок других Electron-приложений / Idle Watchdog инструмент диагностики |
+| [watchdog-commands.md](runtime-quirks/watchdog-commands.md) | Idle Watchdog: Command Palette entries, всех 18 settings keys, on-disk artefact layout, .jsonl schema v=1 |
+| [xml-tool-format-incidents.md](runtime-quirks/xml-tool-format-incidents.md) | Chronological catalog of observed XML tool-call format incidents (model / format / fix commit / regression test) |
 
 ### [assets/](assets/) — лого, иконки, онбординг
 
@@ -124,6 +128,7 @@
 | [workflow.md](agent-collaboration/workflow.md) | Меньше mid-task confirmations, batch autonomous execution на explicit-разрешение, логирование model stalls |
 | [release-protocol.md](agent-collaboration/release-protocol.md) | `release-windows.ps1 -Version` для минор/мажор, post-release sync README + pre-clean archive, About-диалог, gh account routing, donation phrase choice |
 | [permissions-and-hooks.md](agent-collaboration/permissions-and-hooks.md) | Marker-gated permissions для write-tools / destructive Bash, не flat global allow |
+| [xml-normalize-audit-checklist.md](agent-collaboration/xml-normalize-audit-checklist.md) | Pre-merge gate для XML normalize transform'ов (8 пунктов: escape / idempotency / null guard / structural assertions / symmetric defense / streaming partial / verbatim fixture) |
 
 ---
 

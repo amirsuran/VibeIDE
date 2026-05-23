@@ -48,6 +48,7 @@ import { RawMCPToolCall } from '../common/mcpServiceTypes.js';
 import { preprocessImagesForQA } from './imageQAIntegration.js';
 import { ITaskAwareModelRouter, TaskContext, TaskType, RoutingDecision } from '../common/modelRouter.js';
 import { chatLatencyAudit } from '../common/chatLatencyAudit.js';
+import { suggestAlternateTool as suggestAlternateToolPure } from '../common/toolSchemaSuggest.js';
 import { IEditRiskScoringService, EditContext, EditRiskScore } from '../common/editRiskScoringService.js';
 import { IModelService } from '../../../../editor/common/services/model.js';
 import { TextEdit } from '../../../../editor/common/core/edits/textEdit.js';
@@ -167,37 +168,19 @@ const classifyParams = (canonicalToolName: string): { required: string[]; option
  * one-field bugs in the same tool, not cross-tool confusion.
  */
 const suggestAlternateTool = (calledTool: string, rawParamKeys: readonly string[]): string | null => {
-	if (rawParamKeys.length === 0) return null
 	const calledClassified = classifyParams(calledTool)
 	if (!calledClassified) return null
-	const calledScore = scoreToolMatch(calledClassified.required, rawParamKeys)
-	let best: { tool: string; score: number } | null = null
+	const candidates: { name: string; params: { required: string[] } }[] = []
 	for (const candidate of Object.keys(builtinTools)) {
-		if (candidate === calledTool) continue
 		const classified = classifyParams(candidate)
-		if (!classified || classified.required.length === 0) continue
-		const score = scoreToolMatch(classified.required, rawParamKeys)
-		if (score < 0.6) continue
-		if (score <= calledScore) continue   // not strictly better than called tool
-		if (!best || score > best.score) best = { tool: candidate, score }
+		if (!classified) continue
+		candidates.push({ name: candidate, params: { required: classified.required } })
 	}
-	return best?.tool ?? null
-}
-
-/**
- * Score a candidate tool: fraction of its required params present in rawKeys.
- * Case-insensitive; also runs each rawKey through canonical aliasing for the
- * candidate tool so `{filePath: ...}` matches read_file's `{uri}` requirement
- * (filePath → uri via PARAM_ALIASES_BY_TOOL).
- */
-const scoreToolMatch = (requiredParams: readonly string[], rawKeys: readonly string[]): number => {
-	if (requiredParams.length === 0) return 0
-	const rawSet = new Set(rawKeys.map(k => k.toLowerCase()))
-	let hits = 0
-	for (const required of requiredParams) {
-		if (rawSet.has(required.toLowerCase())) hits += 1
-	}
-	return hits / requiredParams.length
+	return suggestAlternateToolPure(
+		{ name: calledTool, params: { required: calledClassified.required } },
+		candidates,
+		rawParamKeys,
+	)
 }
 
 const buildToolSchemaHint = (canonicalToolName: string, rawParamKeys: readonly string[] = []): string => {

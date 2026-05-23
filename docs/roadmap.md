@@ -2088,7 +2088,8 @@ vibeide.subagent.*, vibeide.mcp.*, vibeide.commands.audit*, …
 
 ### W.16 CI lint: disposable / timer audit
 
-- [x] **`scripts/vibe-disposable-audit.mjs`** — ✅ this session: walks `src/vs/workbench/contrib/vibeide/`, для каждого `setInterval(` / `setTimeout(` проверяет ±50 строк на наличие `clearInterval` / `clearTimeout` / `dispose` / `disposableTimeout` / `MutableDisposable` / `this._register`. Exit 1 при находках с file:line:snippet. Запускается as `node scripts/vibe-disposable-audit.mjs` — integrate in PR CI как soft gate.
+- [x] **`scripts/vibe-disposable-audit.mjs`** — ✅ walks `src/vs/workbench/contrib/vibeide/`, для каждого `setInterval(` / `setTimeout(` проверяет ±50 строк на наличие `clearInterval` / `clearTimeout` / `dispose` / `disposableTimeout` / `MutableDisposable` / `this._register`. Exit 1 при находках с file:line:snippet.
+- [x] **`.github/workflows/disposable-audit.yml`** — ✅ wired как CI soft gate (`continue-on-error: true`) на PR'ах меняющих `src/vs/workbench/contrib/vibeide/**` или сам скрипт. Findings видны в PR checks без блокировки merge'а. Promote до hard gate когда existing findings будут triage'нуты.
 
 ### W.17 Renderer DevTools auto-open on pre-OOM (opt-in)
 
@@ -2315,20 +2316,18 @@ vibeide.subagent.*, vibeide.mcp.*, vibeide.commands.audit*, …
 
 > Self-audit немедленно после refactor + tests commit. 8 находок, все non-blocking — v0.13.10 ушёл в релиз.
 
-- [ ] **X.0.1 Regex-escape для tool names в dynamic regex.** `SELF_CLOSING_TOOL_RE` / `SELF_CLOSING_PARTIAL_RE` строятся через `names.join('|')` без escape. Если завтра добавят tool `foo.bar` или `tool+v2` — regex metachars (`.`, `+`) сломают pattern. Сейчас все names — `[a-z_]+`, **не trigger'ится в production**, но fragile. **Fix:** `names.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')`. **Effort:** 2 строки.
+- [x] **X.0.1 Regex-escape для tool names в dynamic regex** — ✅ closed (parallel-fixed в X.15.1/X.16.3 + initial implementation). `SELF_CLOSING_TOOL_RE`, `SELF_CLOSING_PARTIAL_RE`, `STRIP_PATTERNS` все используют `escapeRegexLiteral(name)` при building. Verified `xmlToolNormalize.ts:181, 198, 306`.
 - [ ] **X.0.2 Attribute value с `>` внутри.** `<read_file path="d:\foo>bar" />` — regex `[^>]*?` stop'нется на первом `>` внутри quotes. Реалистично не встречается (пути без `>`), но technically wrong. **Fix:** proper attribute parser, поддерживающий quoted values с `>`. Effort: 10 строк + расширить test'ы.
 - [ ] **X.0.3 Aliases в self-closing matcher — asymmetry с safety net.** `stripUnclaimedToolTags` использует **только** `builtinToolNames` (исключает aliases как `<read>` — common English word в paired form). `SELF_CLOSING_TOOL_RE` ВКЛЮЧАЕТ aliases. Defensible asymmetry (self-closing в прозе rare), но **inconsistency**. **Fix:** документировать rationale в комментарии модуля. ИЛИ переключить safety net тоже на aliases (но тогда `<read>4KB</read>` в коде объяснении станет placeholder'ом — хуже).
-- [ ] **X.0.4 `UNCLAIMED_TOOL_TAG_PLACEHOLDER` без локализации.** Hardcoded English `[tool call — formatted incorrectly by model, hidden]`. Common-layer файл — можно use `nls.localize()`. **Fix:** wrap в localize call + перевод RU. Effort: 5 строк.
+- [x] **X.0.4 `UNCLAIMED_TOOL_TAG_PLACEHOLDER` локализация** — ✅ closed via X.15.2 (commit `da2194e6`). `nls.localize()` lazy на вызов.
 - [ ] **X.0.5 Mid-DSML streaming flicker.** `<｜｜DSML｜｜inv` в chunk #1 без закрывающего `｜｜` → `DSML_MARKER_STRIP_RE` не match'ит (требует pair'у) → leak'нет на 50-300ms. Финальный текст clean. **Fix:** добавить partial regex `/<[｜|]+[^>]*$/` в ALT_PARTIAL_REGEXES. Effort: 3 строки. Trade-off: ловит все строки, оканчивающиеся на `<｜...` без `>` — почти всегда DSML, минимум false-positive.
-- [ ] **X.0.6 `stripUnclaimedToolTags` re-build regex'ов в loop'е.** На каждый вызов 2 × N regex objects. N ≈ 20-30. Аллокация на каждом streaming tick — обозримый перф debt. **Fix:** pre-compile в module init. Effort: 20 строк.
+- [x] **X.0.6 `stripUnclaimedToolTags` re-build regex'ов в loop'е** — ✅ closed via X.15.3 (commit `da2194e6`). `STRIP_PATTERNS` precomputed at module init.
 - [ ] **X.0.7 Param name attribute regex только ASCII.** `([a-zA-Z_][\w-]*)` не покрывает Unicode-имена (теоретически `<read_file путь="..." />`). **Real risk: zero**, но technically restricted. **Fix:** заменить `[a-zA-Z_]` на `[\p{L}_]` с `u` flag. Effort: regex tweak.
-- [ ] **X.0.8 Idempotency не покрыт unit-тестом.** Manual trace показал что normalize(normalize(x)) === normalize(x), но test'а нет. **Fix:** добавить `test('idempotent')` для трёх форматов (canonical, invoke, self-closing, DSML). Effort: 4 unit-теста.
+- [x] **X.0.8 Idempotency не покрыт unit-тестом** — ✅ closed via X.13.2 (commit `2400d897`). 5 idempotency тестов: canonical / invoke / self-closing / DSML / malformed close.
 
 ### X.1 Comprehensive vendor format coverage matrix
 
-- [ ] **Идея:** систематический список наблюдённых format'ов с тестами per-format. Сейчас тесты cover known cases ad-hoc; нужна **матрица** «vendor → format → test fixture» как living document.
-- [ ] Колонки: vendor, model family, провайдер (direct vs aggregator), наблюдённая форма (canonical / invoke / self-closing / DSML / прочее), test fixture, дата observation.
-- [ ] Открыть как `docs/knowledge/architecture/xml-tool-format-matrix.md`. При появлении нового вендорного формата — добавлять строку + test fixture.
+- [x] **`docs/knowledge/architecture/xml-tool-format-matrix.md`** — ✅ closed. Living matrix: vendor × provider × format × fixture × test. Updates per new vendor observation. См. cross-link с `xml-tool-format-incidents.md` (chronological catalog).
 
 ### X.2 Knowledge doc для XML pipeline architecture — ✅ closed
 
@@ -2474,7 +2473,7 @@ vibeide.subagent.*, vibeide.mcp.*, vibeide.commands.audit*, …
 - [x] **X.14.3 Decision** — ✅ Implemented **OBA** combination:
   - **X.11.3 force-XML quirk** (commit forthcoming) — `{ match: "minimax", provider: "openCode", forceToolCallFormat: "xml", ... }` в `resources/model-quirks.json`. Bypass native FC bug entirely. Same pattern as deepseek/kimi.
   - **X.11.4 / X.13.7 smart-suggest schema hint** (commit forthcoming) — `buildToolSchemaHint(canonicalToolName, rawParamKeys)` теперь scan'ит все builtin tools, считает `|rawKeys ∩ candidateRequired| / |candidateRequired|`. Если best score >= 0.6 AND > called tool's score — добавляет «Note: ваш argument shape лучше matches "{other_tool}", если вы имели в виду его — вызовите». Помогает **любой** native FC модели с cross-tool args confusion.
-- [~] **X.14.2 Reproduction test** — не сделан. Manual test когда user следующий раз попробует minimax via openCode.
+- [x] **X.14.2 Reproduction test** — ✅ closed. Pure helper `scoreToolMatch` + `suggestAlternateTool` экстракт в `common/toolSchemaSuggest.ts` (refactor — chatThreadService теперь импортирует из common, не дублирует math). `test/common/toolSchemaSuggest.test.ts` — 18 unit-тестов покрывают: perfect match / zero overlap / partial / case-insensitive / empty required / duplicates / minimax verbatim incident («read_file({nl_input})» → suggests «run_nl_command») / minScore floor / explicit minScore / best of multiple candidates.
 
 ### X.15 De-hardcode audit pass post-v0.13.11 (commit da2194e6, 2026-05-23)
 
@@ -2511,16 +2510,7 @@ vibeide.subagent.*, vibeide.mcp.*, vibeide.commands.audit*, …
 
 ### X.18 Pre-merge audit checklist (как living document)
 
-- [ ] Создать `docs/knowledge/architecture/xml-normalize-audit-checklist.md` — single page с pre-commit вопросами для каждой новой XML transform:
-  1. Применил `escapeRegexLiteral` к динамическим именам в regex?
-  2. Есть idempotency test (normalize × 2 = normalize)?
-  3. Есть null/empty input guard?
-  4. Тест assertion структурный, не verbatim локализуемый текст?
-  5. Pattern добавлен в FAST_PATH_SNIFFS если новый wrapper?
-  6. Symmetric defense — где ещё нужна та же transform?
-  7. Streaming edge — что если только partial префикс?
-  8. Verbatim fixture от реального model output (если есть incident)?
-- Покрывает recurring patterns из X.17. Будет читать перед каждой modification xmlToolNormalize.ts.
+- [x] **`docs/knowledge/agent-collaboration/xml-normalize-audit-checklist.md`** — ✅ closed. 8-point pre-merge gate: escapeRegexLiteral / idempotency / null guard / structural assertions / FAST_PATH_SNIFFS / symmetric defense / streaming partial / verbatim fixture. Cross-links на architecture + incidents.
 
 ### X.19 Round-5 audit pass (commit a9ee1ffe, 2026-05-23)
 

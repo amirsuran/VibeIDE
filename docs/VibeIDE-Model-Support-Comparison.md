@@ -1,4 +1,4 @@
-# VibeIDE Model Support & Code Editing Capabilities Comparison
+# VibeIDE Model Support Comparison
 
 > ⚠️ **Snapshot disclaimer:** Factual snapshot на момент последнего git-commit'а этого файла. Model support и provider integrations меняются каждые недели — этот документ может отставать. Source-of-truth для current model coverage: `resources/model-quirks.json` + actual provider implementations в `src/vs/workbench/contrib/vibeide/electron-main/`.
 

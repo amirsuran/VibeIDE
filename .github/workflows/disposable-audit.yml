@@ -1,0 +1,38 @@
+name: Disposable / Timer Audit (W.16)
+
+on:
+  pull_request:
+    branches:
+      - main
+      - 'release/*'
+    paths:
+      - 'src/vs/workbench/contrib/vibeide/**'
+      - 'scripts/vibe-disposable-audit.mjs'
+      - '.github/workflows/disposable-audit.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: setInterval / setTimeout leak audit
+    runs-on: ubuntu-22.04
+    # Soft gate — surfaces findings in PR checks without blocking merge.
+    # Promote to hard gate once existing findings are triaged.
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+
+      - name: Run audit
+        run: node scripts/vibe-disposable-audit.mjs
