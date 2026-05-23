@@ -227,6 +227,62 @@ suite('XML tool normalization (v0.13.10)', () => {
 			assert.doesNotMatch(out, /<tool_calls/);
 			assert.doesNotMatch(out, /<\/tool_calls/);
 		});
+
+		test('whitespace between `</invoke` and next tag is tolerated', () => {
+			// Edge: model emits closing without `>` but with leading whitespace
+			// before next tag: `</invoke   <other_tool>`. Lookahead should skip
+			// whitespace and accept the `<` of the next tag as a valid boundary.
+			const input = '<invoke name="read_file"><parameter name="path">x</parameter></invoke   <other>';
+			const out = normalizeAlternativeToolSyntax(input);
+			assert.match(out, /<read_file>/);
+			assert.doesNotMatch(out, /<invoke/);
+		});
+
+		test('multiple malformed invokes in a row (chain)', () => {
+			// Model emits two tool calls back-to-back, both with malformed closes.
+			const input = '<invoke name="read_file"><parameter name="path">a</parameter></invoke<invoke name="read_file"><parameter name="path">b</parameter></invoke';
+			const out = normalizeAlternativeToolSyntax(input);
+			const reads = out.match(/<read_file>/g);
+			assert.ok(reads && reads.length === 2, `expected 2 invoke matches, got: ${out}`);
+		});
+	});
+
+	suite('idempotency', () => {
+
+		test('normalize(normalize(x)) === normalize(x) — canonical', () => {
+			const input = '<read_file><path>/foo</path></read_file>';
+			const once = normalizeAlternativeToolSyntax(input);
+			const twice = normalizeAlternativeToolSyntax(once);
+			assert.strictEqual(once, twice);
+		});
+
+		test('normalize(normalize(x)) === normalize(x) — invoke form', () => {
+			const input = '<invoke name="read_file"><parameter name="path">/foo</parameter></invoke>';
+			const once = normalizeAlternativeToolSyntax(input);
+			const twice = normalizeAlternativeToolSyntax(once);
+			assert.strictEqual(once, twice);
+		});
+
+		test('normalize(normalize(x)) === normalize(x) — self-closing', () => {
+			const input = '<read_file path="/foo" />';
+			const once = normalizeAlternativeToolSyntax(input);
+			const twice = normalizeAlternativeToolSyntax(once);
+			assert.strictEqual(once, twice);
+		});
+
+		test('normalize(normalize(x)) === normalize(x) — DSML', () => {
+			const input = '<｜｜DSML｜｜invoke name="read_file"><｜｜DSML｜｜parameter name="path">/foo</｜｜DSML｜｜parameter></｜｜DSML｜｜invoke>';
+			const once = normalizeAlternativeToolSyntax(input);
+			const twice = normalizeAlternativeToolSyntax(once);
+			assert.strictEqual(once, twice);
+		});
+
+		test('normalize(normalize(x)) === normalize(x) — malformed close', () => {
+			const input = '<tool_calls<invoke name="read_file"><parameter name="path">x</parameter></invoke</tool_calls';
+			const once = normalizeAlternativeToolSyntax(input);
+			const twice = normalizeAlternativeToolSyntax(once);
+			assert.strictEqual(once, twice);
+		});
 	});
 
 	suite('stripUnclaimedToolTags — safety net', () => {

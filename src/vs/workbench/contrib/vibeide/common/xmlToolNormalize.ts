@@ -234,7 +234,11 @@ export const stripUnclaimedToolTags = (text: string): string => {
 		if (re.test(out)) {
 			out = out.replace(re, UNCLAIMED_TOOL_TAG_PLACEHOLDER)
 		}
-		const selfRe = new RegExp(`<${toolName}\\s+[^>]*\\/>`, 'g')
+		// Self-closing form with tolerant close (v0.13.11): `<tag attrs />` AND
+		// `<tag attrs /` (no trailing `>`). Symmetric with the tolerant invoke/wrapper
+		// closes in `normalizeAlternativeToolSyntax`. Without the `(?=<|$)` lookahead
+		// branch, model output like `<read_file path="x" /\nNext step` would leak.
+		const selfRe = new RegExp(`<${toolName}\\s+[^>]*\\/(?:>|(?=<|$|\\s))`, 'g')
 		if (selfRe.test(out)) {
 			out = out.replace(selfRe, UNCLAIMED_TOOL_TAG_PLACEHOLDER)
 		}
