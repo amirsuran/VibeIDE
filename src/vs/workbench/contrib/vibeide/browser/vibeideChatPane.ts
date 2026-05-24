@@ -328,10 +328,31 @@ export async function openVibeChatEditor(instantiationService: IInstantiationSer
 		_hasChatGroupCtxKey.set(true);
 		setupChatGroupLockdown(newGroup, editorGroupsService);
 		console.warn('[VibeChat] post-lockdown: editors.count=', newGroup.editors.length, 'activeEditor=', newGroup.activeEditor?.constructor?.name, 'isLocked=', newGroup.isLocked);
-		// One-shot delayed check: confirm group still exists 200ms later (catches any removal that happens post-return).
+		// One-shot delayed check: confirm group still exists 200ms later + dump DOM sizes
+		// of all editor group containers + grid columns to localize «invisible group» bug.
 		setTimeout(() => {
 			const stillThere = editorGroupsService.getGroup(newGroup.id);
 			console.warn('[VibeChat] +200ms check: group exists=', !!stillThere, 'all groups=', editorGroupsService.groups.map(g => g.id));
+			try {
+				const groupEls = document.querySelectorAll<HTMLElement>('.editor-group-container');
+				console.warn('[VibeChat] DOM: .editor-group-container count=', groupEls.length);
+				groupEls.forEach((el, i) => {
+					const rect = el.getBoundingClientRect();
+					console.warn(`[VibeChat] DOM[${i}]: id=${el.id || '(none)'} w=${rect.width.toFixed(0)} h=${rect.height.toFixed(0)} display=${getComputedStyle(el).display} visibility=${getComputedStyle(el).visibility} opacity=${getComputedStyle(el).opacity}`);
+				});
+				const editorPart = document.querySelector<HTMLElement>('.part.editor');
+				if (editorPart) {
+					const r = editorPart.getBoundingClientRect();
+					console.warn(`[VibeChat] DOM .part.editor: w=${r.width.toFixed(0)} h=${r.height.toFixed(0)} display=${getComputedStyle(editorPart).display}`);
+				}
+				const splitView = document.querySelector<HTMLElement>('.part.editor .split-view-container, .part.editor .monaco-grid-view');
+				if (splitView) {
+					const r = splitView.getBoundingClientRect();
+					console.warn(`[VibeChat] DOM splitView: w=${r.width.toFixed(0)} h=${r.height.toFixed(0)}`);
+				}
+			} catch (e) {
+				console.warn('[VibeChat] DOM probe threw', e);
+			}
 		}, 200);
 	} else {
 		console.warn('[VibeChat] pane was nullish — openEditor returned no pane!');
