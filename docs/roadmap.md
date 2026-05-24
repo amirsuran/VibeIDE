@@ -1496,7 +1496,7 @@ vibeide.subagent.*, vibeide.mcp.*, vibeide.commands.audit*, …
 
 ### Унификация именования ключей (отдельный пункт)
 
-- [x] **Аудит стиля имён `vibeide.*`** — ✅ audit clean (commit forthcoming). Script `scripts/vibe-settings-naming-audit.mjs` сканирует `vibeideGlobalSettingsConfiguration.ts`, проверяет каждый segment на lowerCamelCase. На текущий момент: **0 violations**. Hypothetical mixed-style concern в roadmap не материализовался — реестр уже consistent. См. также:
+- [x] **Аудит стиля имён `vibeide.*`** — ✅ audit clean (commit `4013fda2`). Script `scripts/vibe-settings-naming-audit.mjs` сканирует `vibeideGlobalSettingsConfiguration.ts`, проверяет каждый segment на lowerCamelCase. На текущий момент: **0 violations**. Hypothetical mixed-style concern в roadmap не материализовался — реестр уже consistent. См. также:
   - **`flatCamel` после namespace:** `vibeide.safety.deadMansSwitchMinutes`, `vibeide.subagent.autoSkipOnRetryExhausted`, `vibeide.diffPreview.binaryPolicy.imageVisionPassthrough`.
   - **`dot.lowerCase`:** `vibeide.commands.toolbar.position`, `vibeide.cloud.localeSyncEnabled`, `vibeide.context.filterMaxFileLines`.
   - **Смешанный:** `vibeide.notifications.desktopApprovals.events` (dot + camel), `vibeide.mcpOAuth.expiryWarningLeadMinutes`.
@@ -1730,11 +1730,11 @@ vibeide.subagent.*, vibeide.mcp.*, vibeide.commands.audit*, …
 
 ### R.2 Recent prompts history (Up/Down arrows)
 
-- [x] **In-memory + persistent история промптов** — ✅ closed (commit forthcoming). `QuickEditChat.tsx` (both `src/` and `src2/` copies): ↑/↓ keybind navigates history via `navigateHistory` pure helper. Module-level singleton (`globalThis.__vibeQuickEditHistory`) persists across zone instances within window session; on first ↑ from present, current draft is stashed so ↓-past-newest restores it. Multi-line text suppresses navigation (textarea behaves normally). Browser smoke pending — code TS-clean.
+- [x] **In-memory + persistent история промптов** — ✅ closed (commit `25a181dd`). `QuickEditChat.tsx` (both `src/` and `src2/` copies): ↑/↓ keybind navigates history via `navigateHistory` pure helper. Module-level singleton (`globalThis.__vibeQuickEditHistory`) persists across zone instances within window session; on first ↑ from present, current draft is stashed so ↓-past-newest restores it. Multi-line text suppresses navigation (textarea behaves normally). Browser smoke pending — code TS-clean.
   - Storage: `IStorageService` APPLICATION scope, ключ `vibeide.quickEdit.recentPrompts`, JSON-массив string, **max 50**, **dedup-by-string** (если новый промпт уже в массиве — переезжает на вершину, без дубля).
   - В `QuickEditChat`: handle Up/Down keydown когда textarea **пустой ИЛИ курсор в первой/последней строке**; traverse history (Up — старее, Down — новее). Без сохранения текущего drafting buffer — если пользователь начал печатать и нажал Up, текст замещается; «hot draft» сохранять в локальный ref и восстанавливать когда история промотана до конца.
   - Сохранение в onSubmit ПОСЛЕ slash-expansion (то есть в историю попадает финальный expanded промпт, чтобы повтор Up→Enter воспроизводил поведение, а не сырую `/doc`-строку).
-- [x] Pure helper `common/quickEditPromptHistory.ts` — ✅ closed (commit forthcoming). `appendPromptToHistory(history, newPrompt, maxSize)` + `navigateHistory(history, currentIndex, direction)` + `QUICK_EDIT_HISTORY_DEFAULT_MAX = 50`. 17 unit-tests cover dedup (recent + older), max-size cap, return-to-present marker, out-of-bounds clamping, whitespace trim, non-string rejection, no-mutation guarantee. UI wire-up в `QuickEditChat.tsx` (↑/↓ keybind + storage via memento) — wave-2.
+- [x] Pure helper `common/quickEditPromptHistory.ts` — ✅ closed (commit `4013fda2`). `appendPromptToHistory(history, newPrompt, maxSize)` + `navigateHistory(history, currentIndex, direction)` + `QUICK_EDIT_HISTORY_DEFAULT_MAX = 50`. 17 unit-tests cover dedup (recent + older), max-size cap, return-to-present marker, out-of-bounds clamping, whitespace trim, non-string rejection, no-mutation guarantee. UI wire-up в `QuickEditChat.tsx` (↑/↓ keybind + storage via memento) — wave-2.
 
 ### R.3 Workspace-level prompt templates (`.vibe/quick-edit-templates.json`)
 
@@ -1833,7 +1833,7 @@ vibeide.subagent.*, vibeide.mcp.*, vibeide.commands.audit*, …
 
 ### S.3 `URI.from` vs `URI.revive` (perf debt в chatThreadService)
 
-- [x] **`chatThreadService.ts:787`** — ✅ closed (commit forthcoming). Switched `URI.from(value)` → `URI.revive(value)` в JSON revive callback. Safety justification documented inline: `$mid:1` literal guarantees properly shaped URI from `JSON.stringify(uri.toJSON())`, no re-parse needed.
+- [x] **`chatThreadService.ts:787`** — ✅ closed (commit `4013fda2`). Switched `URI.from(value)` → `URI.revive(value)` в JSON revive callback. Safety justification documented inline: `$mid:1` literal guarantees properly shaped URI from `JSON.stringify(uri.toJSON())`, no re-parse needed.
 
 ### S.4 Stale TODO cleanup
 
@@ -1868,7 +1868,7 @@ vibeide.subagent.*, vibeide.mcp.*, vibeide.commands.audit*, …
 
 ### T.6 `/commit` Slash в chat (smart commit message)
 
-- [x] **/commit slash command** — pure helpers landed (commit forthcoming):
+- [x] **/commit slash command** — pure helpers landed (commits `4013fda2` + `25a181dd`):
   - `common/conventionalCommitFormat.ts` + 25 tests — format/parse/scope/type analysis
   - `common/chatSlashCommands.ts` + 10 tests — slash interceptor parser, `--push`/`--amend` flag extraction, args passthrough
   - Catalog `CHAT_SLASH_COMMANDS` для future hint-row UI
@@ -1989,15 +1989,15 @@ vibeide.subagent.*, vibeide.mcp.*, vibeide.commands.audit*, …
 
 ### T.14 Settings Discovery Dashboard — auto-detect orphans
 
-- [x] **`scripts/vibe-settings-orphans.mjs`** — ✅ closed (commit forthcoming). Wired in `.github/workflows/vibeide-lint.yml` as soft gate.
+- [x] **`scripts/vibe-settings-orphans.mjs`** — ✅ closed (commit `4013fda2`). Wired in `.github/workflows/vibeide-lint.yml` as soft gate.
 
 ### T.15 Promise.allSettled audit + lint rule
 
-- [x] **`scripts/vibe-promise-all-audit.mjs`** — ✅ closed (commit forthcoming). Grep-based scanner with side-effect hint heuristic. Wired в `.github/workflows/vibeide-lint.yml` (soft gate; `--strict` flag для hard gate). First run found 3 review-worthy findings.
+- [x] **`scripts/vibe-promise-all-audit.mjs`** — ✅ closed (commit `4013fda2`). Grep-based scanner with side-effect hint heuristic. Wired в `.github/workflows/vibeide-lint.yml` (soft gate; `--strict` flag для hard gate). First run found 3 review-worthy findings.
 
 ### T.16 Test placeholder linter (`no-placeholder-assert`)
 
-- [x] **`scripts/vibe-test-placeholders.mjs`** — ✅ closed (commit forthcoming). Hard CI gate in `.github/workflows/vibeide-lint.yml`. Current run: 0 placeholder-only test files.
+- [x] **`scripts/vibe-test-placeholders.mjs`** — ✅ closed (commit `4013fda2`). Hard CI gate in `.github/workflows/vibeide-lint.yml`. Current run: 0 placeholder-only test files.
 
 ---
 
@@ -2162,8 +2162,8 @@ vibeide.subagent.*, vibeide.mcp.*, vibeide.commands.audit*, …
 
 > Найдено `grep setInterval(` по `src/vs/workbench/contrib/vibeide` (21 файл). Все проверенные имеют корректный `dispose` через `this._register({dispose})`. Smoking gun по ночному OOM не найден — нужны данные расширенного watchdog'а (W.1) для дальнейшей локализации.
 
-- [x] **`vibeideStatusBar.ts:72`** — ✅ closed (commit forthcoming). Early-return из callback когда `chatThreadService.streamState[currentThreadId].isRunning` falsy. `modelEntry` / `privacyEntry` уже kept fresh через `onDidChangeStreamState` + `onDidChangeState` events — polling нужен только для `latencyEntry` clock during active requests. Result: 0 update-allocations during idle.
-- [x] **`chatLatencyAudit.ts:387`** — ✅ closed (commit forthcoming). Found real bug while investigating: `completeRequest` was gated на `auditEnabled` boolean, but `startRequest` ran unconditionally. With audit disabled, contexts grew unbounded и render-monitoring interval never stopped. Plus: model fallback chain started a new request without closing the previous one. **Fix:** `completeRequest` теперь runs unconditionally (cheap delete + interval stop); only `logMetrics` остался behind `auditEnabled`. Fallback chain drains previous context before `startRequest(newId)`. **Note:** error-path leak (throw mid-stream before `completeRequest`) — отдельный pass, требует try-finally вокруг stream loop.
+- [x] **`vibeideStatusBar.ts:72`** — ✅ closed (commit `3a80dae2`). Early-return из callback когда `chatThreadService.streamState[currentThreadId].isRunning` falsy. `modelEntry` / `privacyEntry` уже kept fresh через `onDidChangeStreamState` + `onDidChangeState` events — polling нужен только для `latencyEntry` clock during active requests. Result: 0 update-allocations during idle.
+- [x] **`chatLatencyAudit.ts:387`** — ✅ closed (commit `3a80dae2`). Found real bug while investigating: `completeRequest` was gated на `auditEnabled` boolean, but `startRequest` ran unconditionally. With audit disabled, contexts grew unbounded и render-monitoring interval never stopped. Plus: model fallback chain started a new request without closing the previous one. **Fix:** `completeRequest` теперь runs unconditionally (cheap delete + interval stop); only `logMetrics` остался behind `auditEnabled`. Fallback chain drains previous context before `startRequest(newId)`. **Note:** error-path leak (throw mid-stream before `completeRequest`) — отдельный pass, требует try-finally вокруг stream loop.
 
 ### W.21 Renderer-side push back from main (объединён в W.5 wiring)
 
@@ -2342,7 +2342,7 @@ vibeide.subagent.*, vibeide.mcp.*, vibeide.commands.audit*, …
 > Self-audit немедленно после refactor + tests commit. 8 находок, все non-blocking — v0.13.10 ушёл в релиз.
 
 - [x] **X.0.1 Regex-escape для tool names в dynamic regex** — ✅ closed (parallel-fixed в X.15.1/X.16.3 + initial implementation). `SELF_CLOSING_TOOL_RE`, `SELF_CLOSING_PARTIAL_RE`, `STRIP_PATTERNS` все используют `escapeRegexLiteral(name)` при building. Verified `xmlToolNormalize.ts:181, 198, 306`.
-- [~] **X.0.2 Attribute value с `>` внутри** — **deferred** (commit forthcoming). Escaped-quote handling closed in X.15.8 — significantly reduces practical exposure (model has to emit literal `>` inside attr value, which won't normally happen). True fix requires non-regex attribute parser. **Unblock:** observed incident with `>` inside attribute value.
+- [~] **X.0.2 Attribute value с `>` внутри** — **deferred.** Escaped-quote handling closed in X.15.8 (commit `3a80dae2`) — significantly reduces practical exposure (model has to emit literal `>` inside attr value, which won't normally happen). True fix requires non-regex attribute parser. **Unblock:** observed incident with `>` inside attribute value.
 - [x] **X.0.3 Aliases в self-closing matcher — asymmetry с safety net** — ✅ closed (decision: keep asymmetry, documented). The rationale is recorded in `xmlToolNormalize.ts` module header comments + [docs/knowledge/architecture/xml-tool-normalization.md](knowledge/architecture/xml-tool-normalization.md). Switching safety net to aliases would mangle prose like «`<read>4KB</read>` of memory» — strict-canonical safety net + alias-tolerant transform is the correct trade-off.
 - [x] **X.0.4 `UNCLAIMED_TOOL_TAG_PLACEHOLDER` локализация** — ✅ closed via X.15.2 (commit `da2194e6`). `nls.localize()` lazy на вызов.
 - [x] **X.0.5 Mid-DSML streaming flicker** — ✅ closed via X.6 (commit `3a80dae2`). 2 partial regexes added to `ALT_PARTIAL_REGEXES` in `extractGrammar.ts` covering DSML wrapper start + partial mid-marker. Uses `\p{L}` for Unicode identifiers.
@@ -2435,7 +2435,7 @@ vibeide.subagent.*, vibeide.mcp.*, vibeide.commands.audit*, …
 - [x] **X.11.1 Investigate** — ✅ closed (covered by X.14.1, ref `chatThreadService.ts:3509-3552`). Native FC pipeline does NOT auto-downgrade per-tool-call; only conversation-level health tracker (model-quirks) toggles channel. Minimax's «invalid → just wait» behaviour comes from model itself не emit'ящего retry tokens after invalid_params reply.
 - [x] **X.11.2 Native FC validator** — ✅ closed (post-flight equivalent via smart-suggest). True pre-flight check before executor требует rewiring aiSdkAdapter; current post-flight feedback loop (invalid_params message with `buildToolSchemaHint` + `suggestAlternateTool` + CROSS_TOOL_ARG_HINTS) gives model actionable hint in the same turn. Functionally equivalent в model UX terms.
 - [x] **X.11.3 Add minimax to force-XML quirk** — ✅ closed (X.14.3 commit). `{ match: "minimax", provider: "openCode", forceToolCallFormat: "xml" }` в `resources/model-quirks.json`.
-- [x] **X.11.4 Cross-tool args alias map** — ✅ closed (commit forthcoming). `CROSS_TOOL_ARG_HINTS` table в `common/toolSchemaSuggest.ts` — direct-hint short-circuit перед shape-match scoring. Currently maps: nl_input/natural_language_input → run_nl_command,nl_shell; shell_command/bash/terminal → terminal_command. 7 unit-тестов покрывают hint path. Extensible — add entries as new cross-tool confusions observed.
+- [x] **X.11.4 Cross-tool args alias map** — ✅ closed (commit `4013fda2`). `CROSS_TOOL_ARG_HINTS` table в `common/toolSchemaSuggest.ts` — direct-hint short-circuit перед shape-match scoring. Currently maps: nl_input/natural_language_input → run_nl_command,nl_shell; shell_command/bash/terminal → terminal_command. 7 unit-тестов покрывают hint path. Extensible — add entries as new cross-tool confusions observed.
 - [~] **X.11.5 Auto-downgrade extension to native FC errors** — **deferred.** Static `forceToolCallFormat` quirks via `model-quirks.json` уже cover known-broken models (deepseek/kimi/qwen/minimax). Dynamic per-session switching adds complexity (state tracking, mid-stream channel swap, conversation history compatibility) с unclear benefit — models не fluctuating reliability mid-stream. **Unblock:** observed incident with a model that works fine sometimes and breaks others (currently не наблюдалось).
 - [~] **Acceptance for minimax recovery** — **wait-for-reproduction.** Force-XML quirk + smart-suggest schema hint landed in v0.13.11. Whether they recover within 10s vs 120s stall — depends on minimax's response behavior к explicit schema hint в the same turn. Cannot verify without running minimax through the Dokku scenario. **Unblock:** user runs scenario + reports timing.
 
@@ -2448,7 +2448,7 @@ vibeide.subagent.*, vibeide.mcp.*, vibeide.commands.audit*, …
 
 ### X.12 `@xterm/addon-ligatures` missing in installer artifacts
 
-- [~] **Investigation + speculative fix** — commit forthcoming. `build/.moduleignore` had rules for legacy `@xterm/xterm-addon-*` naming but NOT for new flat `@xterm/addon-*` packages (post-rename in xterm.js project). Added mirror rules so dev artifacts (`src/`, `fixtures/`, `out/`, `out-test/`) are stripped but `lib/` (prod entry) is kept. **Verification pending** next build — runtime ERR_FILE_NOT_FOUND should resolve. If not, deeper gulp copy step investigation needed (esbuild bundle / dependency walk).
+- [~] **Investigation + speculative fix** — commit `4013fda2`. `build/.moduleignore` had rules for legacy `@xterm/xterm-addon-*` naming but NOT for new flat `@xterm/addon-*` packages (post-rename in xterm.js project). Added mirror rules so dev artifacts (`src/`, `fixtures/`, `out/`, `out-test/`) are stripped but `lib/` (prod entry) is kept. **Verification pending** next build — runtime ERR_FILE_NOT_FOUND should resolve. If not, deeper gulp copy step investigation needed (esbuild bundle / dependency walk).
 
 ### X.13 Malformed-close audit-pass (post-v0.13.11 commit 629c0625, 2026-05-23)
 
@@ -2458,7 +2458,7 @@ vibeide.subagent.*, vibeide.mcp.*, vibeide.commands.audit*, …
 - [x] **X.13.2 Idempotency unit-тесты** — ✅ added 5 tests: canonical / invoke / self-closing / DSML / malformed close. `normalize(normalize(x)) === normalize(x)` для каждого формата.
 - [x] **X.13.3 Whitespace + chained-invoke tests** — ✅ test для `</invoke   <other>` (whitespace перед next tag) + chained `</invoke<invoke...` (back-to-back malformed).
 - [~] **X.13.4 Streaming tick non-idempotency for canonical close + prose** — **deferred (wait-and-observe).** Trade-off: more-tolerant close gobbles prose, less-tolerant misses some edge cases. Current `(?=<|$)` lookahead works for all observed incidents; the «prose-between-close-and-next-tag» scenario не наблюдалось в production. **Unblock:** observed incident OR fuzz test (X.3) finds reproducible case.
-- [x] **X.13.5 Self-closing invoke `<invoke name="X" param="v" />`** — ✅ closed (commit forthcoming). Regex `/<invoke\s+name=["']([^"']+)["']([^>]*?)\/>/gi` в `normalizeAlternativeToolSyntax` unpacks attribute params into canonical block form. `name="X"` attribute excluded from params (it's the tool-name marker, not a parameter). Alias resolution via `resolveInvokeToolName`. 4 unit-тестов + idempotency test.
+- [x] **X.13.5 Self-closing invoke `<invoke name="X" param="v" />`** — ✅ closed (commit `3a80dae2`). Regex `/<invoke\s+name=["']([^"']+)["']([^>]*?)\/>/gi` в `normalizeAlternativeToolSyntax` unpacks attribute params into canonical block form. `name="X"` attribute excluded from params (it's the tool-name marker, not a parameter). Alias resolution via `resolveInvokeToolName`. 4 unit-тестов + idempotency test.
 - [~] **X.13.6 Paired form with attribute on open + body** — **deferred (not observed).** Mixing attributes on open with paired body is unusual XML; models tend to either pure-attribute (self-closing, X.13.5) or pure-paired (canonical). **Unblock:** observed model emitting this combined form.
 - [x] **X.13.7 Diagnostic schema-hint smart-suggest** — ✅ closed (combination of X.14.3 + X.11.4 commits). `suggestAlternateTool` в `common/toolSchemaSuggest.ts` runs from `buildToolSchemaHint` при invalid_params dispatch. Hybrid algorithm: (1) direct `CROSS_TOOL_ARG_HINTS` lookup → (2) shape-match scoring `|rawKeys ∩ candidateRequired| / |candidateRequired| >= 0.6`. 18 unit-tests cover both paths.
 - [x] **X.13.8 Knowledge doc — XML format incident catalog** — ✅ closed. `docs/knowledge/runtime-quirks/xml-tool-format-incidents.md` создан с 4 initial entries (self-closing, DSML fullwidth-pipe, malformed close, minimax-m2.7 cross-tool args). Living document — формат таблицы для append'а новых incident'ов с datestamp / model / fix commit / regression test ссылкой.
@@ -2467,8 +2467,8 @@ vibeide.subagent.*, vibeide.mcp.*, vibeide.commands.audit*, …
 
 - [x] **X.14.1 Investigate** — ✅ Прочитан chatThreadService.ts:3509-3552 invalid_params handler. Поведение: validation throws → tool message типа `invalid_params` с schema hint отправляется обратно модели → agent loop ожидает next tokens. Если model не emit'ит токены после schema hint — `streamHardStallSeconds: 120` отстреливает. Root cause: minimax-m2.7 после invalid_params **не делает retry** в текущем turn'е — она считает «turn done».
 - [x] **X.14.3 Decision** — ✅ Implemented **OBA** combination:
-  - **X.11.3 force-XML quirk** (commit forthcoming) — `{ match: "minimax", provider: "openCode", forceToolCallFormat: "xml", ... }` в `resources/model-quirks.json`. Bypass native FC bug entirely. Same pattern as deepseek/kimi.
-  - **X.11.4 / X.13.7 smart-suggest schema hint** (commit forthcoming) — `buildToolSchemaHint(canonicalToolName, rawParamKeys)` теперь scan'ит все builtin tools, считает `|rawKeys ∩ candidateRequired| / |candidateRequired|`. Если best score >= 0.6 AND > called tool's score — добавляет «Note: ваш argument shape лучше matches "{other_tool}", если вы имели в виду его — вызовите». Помогает **любой** native FC модели с cross-tool args confusion.
+  - **X.11.3 force-XML quirk** (commit `62c54f76`) — `{ match: "minimax", provider: "openCode", forceToolCallFormat: "xml", ... }` в `resources/model-quirks.json`. Bypass native FC bug entirely. Same pattern as deepseek/kimi.
+  - **X.11.4 / X.13.7 smart-suggest schema hint** (commit `62c54f76`) — `buildToolSchemaHint(canonicalToolName, rawParamKeys)` теперь scan'ит все builtin tools, считает `|rawKeys ∩ candidateRequired| / |candidateRequired|`. Если best score >= 0.6 AND > called tool's score — добавляет «Note: ваш argument shape лучше matches "{other_tool}", если вы имели в виду его — вызовите». Помогает **любой** native FC модели с cross-tool args confusion.
 - [x] **X.14.2 Reproduction test** — ✅ closed. Pure helper `scoreToolMatch` + `suggestAlternateTool` экстракт в `common/toolSchemaSuggest.ts` (refactor — chatThreadService теперь импортирует из common, не дублирует math). `test/common/toolSchemaSuggest.test.ts` — 18 unit-тестов покрывают: perfect match / zero overlap / partial / case-insensitive / empty required / duplicates / minimax verbatim incident («read_file({nl_input})» → suggests «run_nl_command») / minScore floor / explicit minScore / best of multiple candidates.
 
 ### X.15 De-hardcode audit pass post-v0.13.11 (commit da2194e6, 2026-05-23)
@@ -2479,10 +2479,10 @@ vibeide.subagent.*, vibeide.mcp.*, vibeide.commands.audit*, …
 - [x] **X.15.2 UNCLAIMED_TOOL_TAG_PLACEHOLDER hardcoded English** — ✅ через `localize()`, lazy на вызов, cached в call.
 - [x] **X.15.3 stripUnclaimedToolTags 2×N RegExp allocs per call** — ✅ STRIP_PATTERNS precomputed at module init.
 - [x] **X.15.4 Fast-path sniffs auto-extend** — ✅ через FAST_PATH_SNIFFS derived array. Add new wrapper в const → fast-path picks it up автоматически.
-- [x] **X.15.5 Param name regex `[a-zA-Z_]` ASCII-only** — ✅ closed (commit forthcoming). `[\p{L}_][\p{L}\p{N}_-]*` с `u` flag в attribute parser of self-closing transform AND self-closing invoke combo. Tests cover Cyrillic (`путь`) + Chinese (`路径`) param names.
-- [x] **X.15.6 DSML_MARKER_STRIP_RE требует ASCII identifier** — ✅ closed (commit forthcoming). `DSML_MARKER_STRIP_RE = /[｜|]{1,4}[\p{L}][\p{L}\p{N}_-]*[｜|]{1,4}/gu`. Test для `<｜｜中文｜｜>` passing.
+- [x] **X.15.5 Param name regex `[a-zA-Z_]` ASCII-only** — ✅ closed (commit `3a80dae2`). `[\p{L}_][\p{L}\p{N}_-]*` с `u` flag в attribute parser of self-closing transform AND self-closing invoke combo. Tests cover Cyrillic (`путь`) + Chinese (`路径`) param names.
+- [x] **X.15.6 DSML_MARKER_STRIP_RE требует ASCII identifier** — ✅ closed (commit `3a80dae2`). `DSML_MARKER_STRIP_RE = /[｜|]{1,4}[\p{L}][\p{L}\p{N}_-]*[｜|]{1,4}/gu`. Test для `<｜｜中文｜｜>` passing.
 - [x] **X.15.7 ALT_PARTIAL_REGEXES в extractGrammar.ts hardcoded patterns** — ✅ commit a9ee1ffe. Экспортнул VENDOR_WRAPPER_NAMES + VENDOR_NAMESPACED_SUFFIXES из common/xmlToolNormalize.ts, derived 5 partial-regexes из этих arrays через IIFE. Add wrapper в array → partial detection extends в lockstep.
-- [x] **X.15.8 Attribute value parsing не handles escaped quotes** — ✅ closed (commit forthcoming). `"((?:[^"\\]|\\.)*)"` pattern в attribute parsers. Tests cover `\"escaped\"` inside attribute value.
+- [x] **X.15.8 Attribute value parsing не handles escaped quotes** — ✅ closed (commit `3a80dae2`). `"((?:[^"\\]|\\.)*)"` pattern в attribute parsers. Tests cover `\"escaped\"` inside attribute value.
 - [x] **X.15.9 No fuzz test** — ✅ closed via X.3. См. `test/common/xmlToolNormalizeFuzz.test.ts` — 200-iteration property tests.
 
 ### X.16 Round-4 self-audit pass post-da2194e6 (commit 2321cbd1, 2026-05-23)
@@ -2561,7 +2561,7 @@ vibeide.subagent.*, vibeide.mcp.*, vibeide.commands.audit*, …
   - Strategic flexibility from hiding doc — illusion: competitors infer plans из PR patterns / commits anyway.
 - [x] **Y.1.1 — disclaimer на CortexIDE comparison files** — ✅ closed. Добавлен snapshot disclaimer + «Why CortexIDE name» (historical from upstream fork pre-rebrand) в оба файла. Источник truth для current model coverage указан как `resources/model-quirks.json`.
 
-### Y.2 CI workflows path filters — ✅ DONE (2026-05-23, commit forthcoming)
+### Y.2 CI workflows path filters — ✅ DONE (2026-05-23, commit `e9052533`)
 
 - [x] **`paths-ignore: ['docs/**']`** добавлено к heaviest jobs:
   - `.github/workflows/pr.yml` (main Code OSS tests)
@@ -2590,13 +2590,13 @@ vibeide.subagent.*, vibeide.mcp.*, vibeide.commands.audit*, …
 
 ### Y.6 Knowledge graph generator
 
-- [x] **`scripts/vibe-docs-graph.mjs`** — ✅ closed (commit forthcoming). Сканирует `docs/knowledge/**/*.md` по relative markdown links (`[text](path.md)`). Modes: default `mermaid` (graph LR diagram), `--orphans` (files без in/out links), `--dead-links` (target path missing), `--check` (exit 1 если any issues). Skips `_template-*.md` placeholder paths. README.md exempted from orphan check (intended entry points). First run found 1 dead link + 1 orphan, both fixed inline (`settings-registration-sweep.md` ref to non-existent `configuration-registry.md` → repointed to `settings-namespaces.md`; `roadmap/runs.md` added to knowledge README index).
+- [x] **`scripts/vibe-docs-graph.mjs`** — ✅ closed (commit `4013fda2`). Сканирует `docs/knowledge/**/*.md` по relative markdown links (`[text](path.md)`). Modes: default `mermaid` (graph LR diagram), `--orphans` (files без in/out links), `--dead-links` (target path missing), `--check` (exit 1 если any issues). Skips `_template-*.md` placeholder paths. README.md exempted from orphan check (intended entry points). First run found 1 dead link + 1 orphan, both fixed inline (`settings-registration-sweep.md` ref to non-existent `configuration-registry.md` → repointed to `settings-namespaces.md`; `roadmap/runs.md` added to knowledge README index).
 
 ### Y.7 `docs/CONTRIBUTING.md` — ✅ closed
 
 - [x] `docs/CONTRIBUTING.md` создан. Покрывает: repo structure, PR workflow (code / doc-only / knowledge entry / roadmap update), CI ожидания, knowledge entry quality bar (8-point checklist), tone & format conventions, locale rules, license, контакты.
 
-### Y.9 Round-6 post-rebrand audit pass (commit 55680099 → forthcoming, 2026-05-23)
+### Y.9 Round-6 post-rebrand audit pass (commits `55680099` + `87aac653`, 2026-05-23)
 
 > Аудит сразу после commit'а с rebrand + 7 closures. 4 findings, все fix'нуты inline.
 
@@ -2644,7 +2644,7 @@ vibeide.subagent.*, vibeide.mcp.*, vibeide.commands.audit*, …
 
 > **Контекст:** на work-машине (`roman.troshkov`) пользователь получил toast с упоминанием Roaming-пути для каталога моделей. Toast был некорректно проигнорирован (часто закрываются «не глядя»), и в нём показывалась информация противоречащая нашей политике «положи файл рядом с exe». Решили: важная информация должна быть модалом, а не toast'ом. И — раз у нас есть кастомные команды и menu, давайте сделаем кастомный модал-фреймворк, темизированный через VS Code tokens чтобы любая тема работала.
 
-### Z.0 B — VibeModal framework (commit `3c944a55` + audit `forthcoming`)
+### Z.0 B — VibeModal framework (commits `3c944a55` + audit `23416ac0`)
 
 - [x] **Common types** (`common/vibeModalTypes.ts`): `VibeModalButton` с ролью (`primary`/`secondary`/`danger`), `VibeModalInputSpec` с валидатором, `VibeModalOptions` с size/loading/icon/dismissible, `VibeModalResult` с типизированным `buttonId` + `__dismiss__` сентинелом.
 - [x] **Service** (`common/vibeModalService.ts` + `browser/vibeModalServiceImpl.ts`): `showModal<T>` Promise-API + FIFO очередь + `onDidChangeQueue` event. Audit-fix: `dispose()` resolve'ит pending modals с `__dismiss__` (был leak ожидающих promise'ов).
@@ -2654,7 +2654,7 @@ vibeide.subagent.*, vibeide.mcp.*, vibeide.commands.audit*, …
 - [x] **Build pipeline**: добавлено `./src2/modal-tsx/index.tsx` в `tsup.config.js`. `npm run buildreact` создаёт `react/out/modal-tsx/index.js` (gitignored — регенерируется на каждом билде).
 - [x] **Tests** (`test/common/vibeModalService.test.ts`): 21 unit-тест — push/resolve/result, dismiss (включая `dismissible: false`), FIFO ordering, change events, loading toggle, confirmModal helper (primary/cancel/dismiss/danger/custom labels), dispose pending resolution.
 
-### Z.1 A — models.dev: reorder + переход на VibeModal (commit `3c944a55` + audit `forthcoming`)
+### Z.1 A — models.dev: reorder + переход на VibeModal (commits `3c944a55` + audit `23416ac0`)
 
 - [x] **Priority reorder** в `localSnapshotCandidates()`: `exeDir → resourcesPath (bundled) → userData (Roaming)`. Соответствует policy «положи рядом с exe» — user-curated файл больше не игнорируется в пользу stale Roaming-копии.
 - [x] **`source: 'exeDir'|'bundled'|'userData'` discriminator** в `ModelsDevCatalogStatus` IPC контракте (common + main + browser синхронизированы).
@@ -2662,7 +2662,7 @@ vibeide.subagent.*, vibeide.mcp.*, vibeide.commands.audit*, …
 - [x] **Toast → VibeModal** для `loaded_from_local` и `failed` — важная информация больше не закрывается случайно. Семантический лейбл источника («снимок, который вы положили рядом с VibeIDE.exe» / «встроенный снимок» / «кэшированный снимок из пользовательских данных») вместо raw-пути.
 - [x] **`MODELS_DEV_URL` + `LOCAL_SNAPSHOT_FILENAME`** — single source of truth в `common/modelsDevCatalogConstants.ts` (был duplicate в main + browser).
 
-### Z.2 Feature wave-1 (commit `forthcoming`)
+### Z.2 Feature wave-1 (commit `23416ac0`)
 
 - [x] **`size: 'small' | 'medium' | 'large'`** option — CSS class modifier `size-*`. Default `medium`. `small` для confirmation, `large` для diff/preview.
 - [x] **`loading: boolean`** state + spinner overlay — buttons + input disabled, ESC/backdrop тоже блокируются. Service method `updateHeadLoading(bool)` для async toggle во время работы.
@@ -2683,7 +2683,7 @@ vibeide.subagent.*, vibeide.mcp.*, vibeide.commands.audit*, …
 - [~] **Resize handle на углу** для multi-line input'а (commit messages, prompts library editor). **Unblock:** wave-2 UI cycle для /commit.
 - [~] **«Recheck on file-watcher event»** — `fs.watch` на trio путей (exeDir/bundled/userData) → auto-recheck при появлении/изменении файла. Не нужно даже Command Palette нажимать. **Unblock:** evidence что пользователи кладут файл и забывают вызвать recheck.
 
-### Z.4 Audit round 2 (commit forthcoming)
+### Z.4 Audit round 2 (commit `c45854ea`)
 
 > Второй self-audit pass после Z.0-Z.3 ship. 6 inline-фиксов + 4 фичи. Никаких production-breaking багов, но накопились legacy patterns и hardcodes которые лучше срезать сразу.
 
@@ -2694,7 +2694,7 @@ vibeide.subagent.*, vibeide.mcp.*, vibeide.commands.audit*, …
 - [x] **`_refreshCatalogForTests` consolidated в `recheckCatalog`** — раньше две функции делали идентичное, две точки именования сбивали с толку. Теперь один `recheckCatalog()` для production + tests.
 - [x] **Hardcoded Russian strings обёрнуты в `localize()`** — `modelsDevCatalogStatusContribution.ts` + `modelsDevCatalogRecheckAction.ts` (~20 callsite'ов). Готово к future language pack overrides per AGENTS.md policy.
 
-### Z.5 Feature wave-2 (commit forthcoming)
+### Z.5 Feature wave-2 (commit `c45854ea`)
 
 - [x] **`autoDismissAfterMs: number`** опция — таймер автозакрытия после N миллисекунд. Pause при `loading`, pause при hover/focus внутри модала (active reading should not be timed out). Resolves с `__dismiss__` если пользователь сам не нажал кнопку. Используется в recheck-action для success-модала «Каталог обновлён» (4s).
 - [x] **`hotkey?: string`** на кнопках — bind одной буквы (case-insensitive) → нажатие активирует кнопку без focus'а. Игнорируется когда input в фокусе или modifier-клавиши (Ctrl/Alt/Meta) удерживаются. Label рендерится с подчёркнутой буквой hotkey'я (если есть в label) ИЛИ с suffix-hint`(K)` если буквы нет.
@@ -2712,7 +2712,7 @@ vibeide.subagent.*, vibeide.mcp.*, vibeide.commands.audit*, …
 - [~] **Modal stacking** вместо FIFO queue — nested modals для confirmation внутри form-modal'а. Сейчас они queue'ются — UX-confusing. **Unblock:** flow требующий nested confirmation (например `/commit` modal с «Discard unsaved?» внутри).
 - [~] **Vibe Neon branded overrides** для `editorWidget.*` keys в `vibe-neon-color-theme.json` — neon glow на borders. **Unblock:** дизайн-выбор glow-цвета/интенсивности.
 
-### Z.7 Audit round 3 (commit forthcoming)
+### Z.7 Audit round 3 (commit `6b0e142f`)
 
 > Третий self-audit pass после Z.4/Z.5 ship. Найдено 6 inline-issues + 4 фичи добавлены.
 
@@ -2723,7 +2723,7 @@ vibeide.subagent.*, vibeide.mcp.*, vibeide.commands.audit*, …
 - [x] **Magic numbers** — `4000`, `50` literals → named constants (`SUCCESS_AUTO_DISMISS_MS`, `MIN_REMAINING_MS_AFTER_PAUSE`, `VIBE_MODAL_MIN_AUTO_DISMISS_MS`).
 - [x] **`onDidChangeStatus` event** на `IModelsDevCatalogStatusService` — после `recheck()` fire'ит с новым статусом. Renderer-local Emitter (main не push'ит). Subscribers могут реактивно обновлять UI (status-bar widget, badge и т.п.) без polling. Чистое разделение: IPC contract в `IModelsDevCatalogStatusServiceIPC` (only methods crossing process boundary), event добавлен в `IModelsDevCatalogStatusService extends ...IPC`.
 
-#### Z.7.1 — Features wave-3 (commit forthcoming)
+#### Z.7.1 — Features wave-3 (commit `6b0e142f`)
 
 - [x] **`updateHeadOptions(partial): boolean`** — generic update для любого поля head modal'а вместо специал-кейса `updateHeadLoading`. Use case: progress-messages в async-flow (`updateHeadOptions({ body: 'Step 5/10...' })`), in-flight validation tweaks. No-op detection (skip event если изменений нет). `updateHeadLoading(bool)` оставлен как convenience-роутер.
 - [x] **`progress?: { current, total, label? }`** — progress bar в UI. `total === 0` → indeterminate animated stripe (animated через CSS keyframes). `total > 0` → определённый процент через `width: ${pct}%`. Стилизация через `--vscode-progressBar-background`. Use case: chunked downloads, multi-step pipelines.
@@ -2737,7 +2737,7 @@ vibeide.subagent.*, vibeide.mcp.*, vibeide.commands.audit*, …
 - [~] **Animated state-icons** — pulsing для `warning` icon, rotating для `sync`. Сейчас static codicons (VS Code's `codicon-modifier-spin` доступен но не используется автоматически). **Unblock:** дизайн-выбор интенсивности анимации.
 - [~] **JSDOM integration tests** — для runtime behaviour: hotkey activation, autoDismiss timer firing, aria-live announce. Сейчас только service-state-machine покрыт. **Unblock:** JSDOM setup в `test/browser/` (other VibeIDE tests тоже unit-only currently).
 
-### Z.9 Audit round 4 (commit forthcoming)
+### Z.9 Audit round 4 (commit `fcd4eb89`)
 
 > **4-й self-audit pass подряд** на VibeModal/models.dev. Diminishing returns в полной мере: 4 настоящих fix + 2 honest-value features. Все дальнейшие audits на этой поверхности должны идти **только по триггеру** (см. Z.10).
 
