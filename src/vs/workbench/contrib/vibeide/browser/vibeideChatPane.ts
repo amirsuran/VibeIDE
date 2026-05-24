@@ -317,15 +317,24 @@ export async function openVibeChatEditor(instantiationService: IInstantiationSer
 		if (!chatId) { chatId = chatThreadService.forceCreateNewThread(); }
 		input = new VibeChatEditorInput(chatId);
 	}
-	console.warn('[VibeChat] openVibeChatEditor: await openEditor() — start');
+	console.warn('[VibeChat] openVibeChatEditor: await openEditor() — start, groups.count=', editorGroupsService.groups.length, 'ids=', editorGroupsService.groups.map(g => g.id));
 	const pane = await editorService.openEditor(input, { pinned: true }, SIDE_GROUP);
-	console.warn('[VibeChat] openVibeChatEditor: await openEditor() — done, pane=', !!pane);
+	console.warn('[VibeChat] openVibeChatEditor: await openEditor() — done, pane=', !!pane, 'groups.count=', editorGroupsService.groups.length, 'ids=', editorGroupsService.groups.map(g => g.id));
 	const newGroup = pane?.group;
 	if (newGroup) {
+		console.warn('[VibeChat] new group id=', newGroup.id, 'editors.count=', newGroup.editors.length, 'activeEditor=', newGroup.activeEditor?.constructor?.name);
 		_chatEditorGroupId = newGroup.id;
 		storageService.store(CHAT_GROUP_STORAGE_KEY, newGroup.id, StorageScope.WORKSPACE, StorageTarget.MACHINE);
 		_hasChatGroupCtxKey.set(true);
 		setupChatGroupLockdown(newGroup, editorGroupsService);
+		console.warn('[VibeChat] post-lockdown: editors.count=', newGroup.editors.length, 'activeEditor=', newGroup.activeEditor?.constructor?.name, 'isLocked=', newGroup.isLocked);
+		// One-shot delayed check: confirm group still exists 200ms later (catches any removal that happens post-return).
+		setTimeout(() => {
+			const stillThere = editorGroupsService.getGroup(newGroup.id);
+			console.warn('[VibeChat] +200ms check: group exists=', !!stillThere, 'all groups=', editorGroupsService.groups.map(g => g.id));
+		}, 200);
+	} else {
+		console.warn('[VibeChat] pane was nullish — openEditor returned no pane!');
 	}
 }
 
