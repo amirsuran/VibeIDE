@@ -5,7 +5,11 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAccessor } from '../util/services.js';
-import { VibeModalButton, VibeModalQueueEntry } from '../../../../common/vibeModalTypes.js';
+import { VIBE_MODAL_MIN_AUTO_DISMISS_MS, VibeModalButton, VibeModalQueueEntry } from '../../../../common/vibeModalTypes.js';
+
+/** Lower bound for the post-pause `remaining` clamp — avoids zero/negative
+ *  timer values after rapid hover-in/out cycles. */
+const MIN_REMAINING_MS_AFTER_PAUSE = 50;
 
 /**
  * Renders the button label with the hotkey character underlined (first
@@ -44,7 +48,10 @@ const renderButtonLabel = (label: string, hotkey?: string): React.ReactNode => {
  *    input is single-line; multiline textareas keep Enter for newlines)
  *  - Focus returns to previously-focused element on close (handled by container)
  */
-export const VibeModal: React.FC<{ entry: VibeModalQueueEntry; isActive: boolean }> = ({ entry, isActive }) => {
+// The component is only rendered when there's a head modal, so `isActive`
+// would always be `true`. Effect deps that previously gated on `isActive`
+// are kept (`true` literal) — they re-fire when the entry changes.
+export const VibeModal: React.FC<{ entry: VibeModalQueueEntry }> = ({ entry }) => {
 	const accessor = useAccessor();
 	const modalService = accessor.get('IVibeModalService');
 	const { options } = entry;
@@ -71,19 +78,17 @@ export const VibeModal: React.FC<{ entry: VibeModalQueueEntry; isActive: boolean
 	// Initial focus: input → first primary button → ANY first button (audit
 	// fallback for modals with only secondary/danger buttons and no input).
 	useEffect(() => {
-		if (!isActive) return;
 		if (options.loading) return; // don't grab focus while loading; buttons are disabled
 		if (inputRef.current) { inputRef.current.focus(); return; }
 		if (firstFocusableRef.current) { firstFocusableRef.current.focus(); return; }
 		// Fallback — focus the first interactive element we can find inside modal.
 		const firstBtn = modalRef.current?.querySelector<HTMLButtonElement>('button:not(:disabled)');
 		firstBtn?.focus();
-	}, [isActive, entry.id, options.loading]);
+	}, [entry.id, options.loading]);
 
 	// ESC + hotkey handler. ESC honors dismissible + loading + onBeforeDismiss.
 	// Hotkeys (per-button single-char shortcut) activate buttons without click.
 	useEffect(() => {
-		if (!isActive) return;
 		const hotkeyMap = new Map<string, VibeModalButton>();
 		for (const btn of options.buttons) {
 			if (btn.hotkey && btn.hotkey.length > 0) {
@@ -109,16 +114,18 @@ export const VibeModal: React.FC<{ entry: VibeModalQueueEntry; isActive: boolean
 		};
 		window.addEventListener('keydown', onKey);
 		return () => window.removeEventListener('keydown', onKey);
-	}, [isActive, options.dismissible, options.loading, options.buttons, options.input, validationError, inputValue, modalService]);
+	}, [options.dismissible, options.loading, options.buttons, options.input, validationError, inputValue, modalService]);
 
 	// autoDismissAfterMs — timer that fires dismiss after the given duration.
 	// Paused while loading (no auto-close during async work). Also paused on
 	// hover/focus inside the modal — active reading should not be timed out.
 	useEffect(() => {
-		const ms = options.autoDismissAfterMs;
-		if (!isActive || !ms || ms <= 0) return;
+		const rawMs = options.autoDismissAfterMs;
+		if (!rawMs || rawMs <= 0) return;
 		if (options.loading) return; // paused during async
 		if (options.dismissible === false) return; // can't dismiss anyway
+		// Clamp to a sensible minimum — anything shorter is a visual flash.
+		const ms = Math.max(VIBE_MODAL_MIN_AUTO_DISMISS_MS, rawMs);
 		let cancelled = false;
 		let pausedByHover = false;
 		let remaining = ms;
@@ -136,7 +143,7 @@ export const VibeModal: React.FC<{ entry: VibeModalQueueEntry; isActive: boolean
 			clearTimeout(timerId);
 			timerId = null;
 			remaining -= Date.now() - startedAt;
-			if (remaining < 50) remaining = 50;
+			if (remaining < MIN_REMAINING_MS_AFTER_PAUSE) remaining = MIN_REMAINING_MS_AFTER_PAUSE;
 		};
 		const onEnter = () => { pausedByHover = true; pause(); };
 		const onLeave = () => { if (pausedByHover) { pausedByHover = false; start(); } };
@@ -154,7 +161,7 @@ export const VibeModal: React.FC<{ entry: VibeModalQueueEntry; isActive: boolean
 			el?.removeEventListener('focusin', onEnter);
 			el?.removeEventListener('focusout', onLeave);
 		};
-	}, [isActive, options.autoDismissAfterMs, options.loading, options.dismissible, entry.id, modalService]);
+	}, [options.autoDismissAfterMs, options.loading, options.dismissible, entry.id, modalService]);
 
 	const onButtonClick = useCallback((btn: VibeModalButton) => {
 		if (btn.disabled) return;
@@ -204,6 +211,7 @@ export const VibeModal: React.FC<{ entry: VibeModalQueueEntry; isActive: boolean
 	const titleId = `vibeide-modal-title-${entry.id}`;
 	const bodyId = `vibeide-modal-body-${entry.id}`;
 	const sizeClass = `size-${options.size ?? 'medium'}`;
+	const hintParts = buildKeyboardHint(options);
 	let assignedPrimary = false;
 
 	return (
@@ -284,6 +292,41 @@ export const VibeModal: React.FC<{ entry: VibeModalQueueEntry; isActive: boolean
 					})}
 				</div>
 
+				{options.progress && (
+					<div className="vibeide-modal-progress">
+						{options.progress.label && (
+							<div className="vibeide-modal-progress-label">{options.progress.label}</div>
+						)}
+						<div className="vibeide-modal-progress-track">
+							{options.progress.total === 0 ? (
+								<div className="vibeide-modal-progress-bar is-indeterminate" />
+							) : (
+								<div
+									className="vibeide-modal-progress-bar"
+									style={{ width: `${Math.max(0, Math.min(100, (options.progress.current / options.progress.total) * 100))}%` }}
+								/>
+							)}
+						</div>
+					</div>
+				)}
+
+				{options.showKeyboardHint !== false && hintParts.length > 0 && (
+					<div className="vibeide-modal-keyboard-hint" aria-hidden="true">
+						{hintParts.map((part, idx) => (
+							<React.Fragment key={idx}>
+								{idx > 0 && <span>{' · '}</span>}
+								<span><kbd>{part.key}</kbd>{' '}{part.action}</span>
+							</React.Fragment>
+						))}
+					</div>
+				)}
+
+				{options.announceLabel && (
+					<div className="vibeide-modal-sr-only" role="status" aria-live="polite">
+						{options.announceLabel}
+					</div>
+				)}
+
 				{options.loading && (
 					<div className="vibeide-modal-loading-overlay" aria-hidden="true">
 						<div className="vibeide-modal-loading-spinner" />
@@ -292,4 +335,26 @@ export const VibeModal: React.FC<{ entry: VibeModalQueueEntry; isActive: boolean
 			</div>
 		</>
 	);
+};
+
+/**
+ * Build the keyboard-hint footer parts from button hotkeys + dismissibility.
+ * Returns ordered list `[{key, action}, ...]` rendered by `<kbd>` chips.
+ * Empty array → footer hidden entirely.
+ */
+const buildKeyboardHint = (options: VibeModalQueueEntry['options']): Array<{ key: string; action: string }> => {
+	const parts: Array<{ key: string; action: string }> = [];
+	if (options.dismissible !== false && !options.loading) {
+		parts.push({ key: 'Esc', action: 'закрыть' });
+	}
+	const primary = options.buttons.find(b => b.role === 'primary');
+	if (primary && !primary.disabled && !options.loading) {
+		parts.push({ key: 'Enter', action: primary.label.toLowerCase() });
+	}
+	const hotkeyButtons = options.buttons.filter(b => b.hotkey && !b.disabled);
+	if (hotkeyButtons.length > 0 && !options.loading) {
+		const hotkeyList = hotkeyButtons.map(b => b.hotkey!.toUpperCase()).join('/');
+		parts.push({ key: hotkeyList, action: 'hotkeys' });
+	}
+	return parts;
 };

@@ -13,6 +13,10 @@ import { IModelsDevCatalogStatusService, ModelsDevCatalogStatus } from '../commo
 import { labelOfSource, MODELS_DEV_URL } from '../common/modelsDevCatalogConstants.js';
 import { IVibeModalService } from '../common/vibeModalService.js';
 
+/** Auto-dismiss timeout for the "Catalog updated" success modal — 4 seconds
+ *  is enough to read the one-line message but doesn't interrupt workflow. */
+const SUCCESS_AUTO_DISMISS_MS = 4000;
+
 /**
  * Command Palette entry «VibeIDE: Перепроверить каталог models.dev».
  *
@@ -83,7 +87,7 @@ class ModelsDevCatalogRecheckAction extends Action2 {
 				body: localize('vibeide.modelsDev.recheck.network.body', 'Загружена свежая версия с сети. Aggregator-провайдеры используют актуальные данные.'),
 				icon: 'check',
 				size: 'small',
-				autoDismissAfterMs: 4000,
+				autoDismissAfterMs: SUCCESS_AUTO_DISMISS_MS,
 				buttons: [{ id: 'ok', label: localize('vibeide.modal.great', 'Отлично'), role: 'primary' }],
 			});
 			return;

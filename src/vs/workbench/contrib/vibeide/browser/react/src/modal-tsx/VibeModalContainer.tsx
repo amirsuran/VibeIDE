@@ -88,7 +88,7 @@ export const VibeModalContainer: React.FC = () => {
 
 	return (
 		<div className={`vibeide-modal-root${head ? ' is-active' : ''}`} aria-hidden={head ? undefined : true}>
-			{head && <VibeModal entry={head} isActive={true} />}
+			{head && <VibeModal entry={head} />}
 		</div>
 	);
 };

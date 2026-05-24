@@ -418,4 +418,100 @@ suite('VibeModalService', () => {
 			assert.strictEqual(buttons[1].hotkey, 'N');
 		});
 	});
+
+	suite('updateHeadOptions (generic)', () => {
+
+		test('updates arbitrary fields + fires change event', () => {
+			const svc = new VibeModalService();
+			let fired = 0;
+			svc.onDidChangeQueue(() => { fired += 1; });
+			void svc.showModal({ title: 'Save', body: 'A', buttons: [{ id: 'ok', label: 'OK' }] });
+			assert.strictEqual(fired, 1);
+
+			const ok1 = svc.updateHeadOptions({ body: 'B' });
+			assert.strictEqual(ok1, true);
+			assert.strictEqual(svc.getQueue()[0].options.body, 'B');
+			assert.strictEqual(fired, 2);
+
+			const ok2 = svc.updateHeadOptions({ loading: true, body: 'C' });
+			assert.strictEqual(ok2, true);
+			assert.strictEqual(svc.getQueue()[0].options.loading, true);
+			assert.strictEqual(svc.getQueue()[0].options.body, 'C');
+			assert.strictEqual(fired, 3);
+		});
+
+		test('no-op update returns false and does not fire', () => {
+			const svc = new VibeModalService();
+			let fired = 0;
+			svc.onDidChangeQueue(() => { fired += 1; });
+			void svc.showModal({ title: 'T', body: 'X', buttons: [{ id: 'ok', label: 'OK' }] });
+			assert.strictEqual(fired, 1);
+
+			const ok = svc.updateHeadOptions({ body: 'X' });
+			assert.strictEqual(ok, false);
+			assert.strictEqual(fired, 1);
+		});
+
+		test('no-op on empty queue', () => {
+			const svc = new VibeModalService();
+			const ok = svc.updateHeadOptions({ body: 'x' });
+			assert.strictEqual(ok, false);
+		});
+
+		test('updateHeadLoading routes through updateHeadOptions', () => {
+			const svc = new VibeModalService();
+			void svc.showModal({ title: 'T', buttons: [{ id: 'ok', label: 'OK' }] });
+			svc.updateHeadLoading(true);
+			assert.strictEqual(svc.getQueue()[0].options.loading, true);
+			svc.updateHeadLoading(false);
+			assert.strictEqual(svc.getQueue()[0].options.loading, false);
+		});
+
+		test('progress field can be updated for stepped async', () => {
+			const svc = new VibeModalService();
+			void svc.showModal({
+				title: 'Download',
+				body: 'Fetching catalog...',
+				loading: true,
+				buttons: [{ id: 'cancel', label: 'Cancel', role: 'secondary' }],
+				progress: { current: 0, total: 10 },
+			});
+			for (let i = 1; i <= 10; i += 1) {
+				svc.updateHeadOptions({ progress: { current: i, total: 10 } });
+			}
+			assert.strictEqual(svc.getQueue()[0].options.progress?.current, 10);
+		});
+	});
+
+	suite('dismissHeadWithVeto timeout (audit fix)', () => {
+
+		test('hung callback auto-allows dismiss after timeout', async () => {
+			const svc = new VibeModalService();
+			const p = svc.showModal({
+				title: 'T',
+				buttons: [{ id: 'ok', label: 'OK' }],
+				// Callback never resolves — would trap user without timeout.
+				onBeforeDismiss: () => new Promise<boolean>(() => { /* hang */ }),
+				onBeforeDismissTimeoutMs: 50,
+			});
+			const ok = await svc.dismissHeadWithVeto();
+			assert.strictEqual(ok, true, 'timeout should auto-allow');
+			const r = await p;
+			assert.strictEqual(r.buttonId, VIBE_MODAL_DISMISS_ID);
+		});
+
+		test('timeout=0 disables timeout (caller responsibility)', async () => {
+			const svc = new VibeModalService();
+			void svc.showModal({
+				title: 'T',
+				buttons: [{ id: 'ok', label: 'OK' }],
+				onBeforeDismiss: async () => { await new Promise(r => setTimeout(r, 20)); return false; },
+				onBeforeDismissTimeoutMs: 0,
+			});
+			// Should respect the false return, not timeout-allow.
+			const ok = await svc.dismissHeadWithVeto();
+			assert.strictEqual(ok, false);
+			assert.strictEqual(svc.getQueue().length, 1);
+		});
+	});
 });

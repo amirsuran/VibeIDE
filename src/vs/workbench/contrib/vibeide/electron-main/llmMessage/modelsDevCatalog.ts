@@ -222,22 +222,39 @@ const tryReadLocalSnapshot = async (): Promise<{ catalog: CatalogIndex; from: st
 // start. Now exeDir/bundled win unconditionally during fast-path.
 const tryReadFastPathSnapshot = async (): Promise<{ catalog: CatalogIndex; from: string; source: 'exeDir' | 'bundled' | 'userData'; ageMs?: number } | null> => {
 	for (const { path: p, source } of localSnapshotCandidates()) {
+		// Distinguish "file missing" (silent skip — expected) from "file present
+		// but unparseable" (warn — actionable). Missing surfaces as `ENOENT` in
+		// the readFile catch; everything else is a real problem the user should
+		// see in DevTools console.
+		let raw: string;
 		try {
 			if (source === 'userData') {
-				// TTL gate only applies to auto-written userData.
 				const stat = await fs.promises.stat(p);
 				const ageMs = Date.now() - stat.mtimeMs;
 				if (ageMs > resolveDiskCacheTtlMs()) return null;
-				const raw = await fs.promises.readFile(p, 'utf-8');
+				raw = await fs.promises.readFile(p, 'utf-8');
 				const indexed = indexJson(JSON.parse(raw));
-				if (!indexed) return null;
+				if (!indexed) {
+					console.warn(`[modelsDevCatalog] fast-path: userData snapshot at ${p} parsed but lacks indexable providers; skipping`);
+					return null;
+				}
 				return { catalog: indexed, from: p, source, ageMs };
 			}
-			// exeDir / bundled — served unconditionally if readable.
-			const raw = await fs.promises.readFile(p, 'utf-8');
+			raw = await fs.promises.readFile(p, 'utf-8');
+		} catch (e: unknown) {
+			// ENOENT = candidate doesn't exist — silent skip is correct.
+			if ((e as NodeJS.ErrnoException)?.code !== 'ENOENT') {
+				console.warn(`[modelsDevCatalog] fast-path: read error at ${p} (${source})`, e);
+			}
+			continue;
+		}
+		try {
 			const indexed = indexJson(JSON.parse(raw));
 			if (indexed) return { catalog: indexed, from: p, source };
-		} catch { /* missing / invalid — try next candidate */ }
+			console.warn(`[modelsDevCatalog] fast-path: snapshot at ${p} (${source}) parsed but lacks indexable providers; trying next candidate`);
+		} catch (e) {
+			console.warn(`[modelsDevCatalog] fast-path: invalid JSON at ${p} (${source}) — fix or delete the file; trying next candidate`, e);
+		}
 	}
 	return null;
 };

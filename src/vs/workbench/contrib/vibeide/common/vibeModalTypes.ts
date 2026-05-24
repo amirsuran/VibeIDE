@@ -80,6 +80,32 @@ export interface VibeModalOptions<TButtonId extends string = string> {
 	 */
 	readonly loading?: boolean;
 	/**
+	 * Optional progress indicator rendered inside the loading overlay (or
+	 * standalone if `loading` is false). Use when the async operation knows
+	 * its step count (chunked download, multi-step pipeline). `total === 0`
+	 * renders as an indeterminate bar. `label` shown above the bar.
+	 *
+	 * Use `updateHeadOptions({ progress: { current, total } })` to advance.
+	 */
+	readonly progress?: {
+		readonly current: number;
+		readonly total: number;
+		readonly label?: string;
+	};
+	/**
+	 * Hide the bottom keyboard-shortcut hint footer. The footer auto-generates
+	 * from button hotkeys + dismissibility (e.g. «ESC закрыть · Enter применить
+	 * · Y/N»). Default `true` (show). Set `false` for ultra-compact modals.
+	 */
+	readonly showKeyboardHint?: boolean;
+	/**
+	 * Explicit aria-live announcement when the modal mounts. Use when the
+	 * title is generic but the body has unique info that screen readers
+	 * should hear (e.g. error messages with dynamic detail). If omitted,
+	 * screen readers rely on the title + body via aria-labelledby/-describedby.
+	 */
+	readonly announceLabel?: string;
+	/**
 	 * If set, the modal auto-dismisses after the given duration (milliseconds).
 	 * Resolves with `__dismiss__` unless the user clicked a button first.
 	 * Implementation pauses the timer while the modal is `loading` (auto-close
@@ -101,7 +127,24 @@ export interface VibeModalOptions<TButtonId extends string = string> {
 	 * `closeHead()` — those are deliberate caller intent.
 	 */
 	readonly onBeforeDismiss?: () => boolean | Promise<boolean>;
+	/**
+	 * Safety net for `onBeforeDismiss` callbacks that hang. If the callback
+	 * doesn't resolve within this duration, the veto is auto-allowed and a
+	 * console warning is emitted — without this, a buggy hung callback
+	 * would trap the user with no way to close the modal (ESC + backdrop
+	 * both go through veto).
+	 *
+	 * Default 30_000 (30s). Set to 0 to disable timeout (caller takes
+	 * responsibility for the callback completing).
+	 */
+	readonly onBeforeDismissTimeoutMs?: number;
 }
+
+/** Lower bound for `autoDismissAfterMs` — anything shorter is a visual flash. */
+export const VIBE_MODAL_MIN_AUTO_DISMISS_MS = 500;
+
+/** Default timeout for `onBeforeDismiss` callbacks (30 seconds). */
+export const VIBE_MODAL_DEFAULT_VETO_TIMEOUT_MS = 30_000;
 
 /**
  * Result of a modal interaction.

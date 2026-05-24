@@ -7,7 +7,14 @@ import { Emitter, Event } from '../../../../base/common/event.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
 import { IVibeModalService } from '../common/vibeModalService.js';
-import { VIBE_MODAL_DISMISS_ID, VibeModalOptions, VibeModalQueueEntry, VibeModalResult, VibeModalSize } from '../common/vibeModalTypes.js';
+import {
+	VIBE_MODAL_DEFAULT_VETO_TIMEOUT_MS,
+	VIBE_MODAL_DISMISS_ID,
+	VibeModalOptions,
+	VibeModalQueueEntry,
+	VibeModalResult,
+	VibeModalSize,
+} from '../common/vibeModalTypes.js';
 
 interface InternalQueueEntry<TButtonId extends string> {
 	readonly id: number;
@@ -82,12 +89,36 @@ export class VibeModalService extends Disposable implements IVibeModalService {
 		if (head.options.dismissible === false) return false;
 		const veto = head.options.onBeforeDismiss;
 		if (veto) {
-			try {
-				const allow = await veto();
-				if (!allow) return false;
-			} catch (e) {
-				// Defensive — a throwing callback BLOCKS dismiss (user-state preservation).
-				console.warn('[VibeModalService] onBeforeDismiss threw; blocking dismiss', e);
+			// Wrap with a timeout so a hung callback can't trap the user.
+			// `0` disables the timeout entirely (caller responsibility).
+			const timeoutMs = head.options.onBeforeDismissTimeoutMs ?? VIBE_MODAL_DEFAULT_VETO_TIMEOUT_MS;
+			let timedOut = false;
+			const timeoutSentinel = Symbol('vibeModalVetoTimeout');
+			const vetoCall = (async () => {
+				try {
+					return await veto();
+				} catch (e) {
+					// Defensive — a throwing callback BLOCKS dismiss (user-state preservation).
+					console.warn('[VibeModalService] onBeforeDismiss threw; blocking dismiss', e);
+					return false;
+				}
+			})();
+			let raceResult: boolean | typeof timeoutSentinel;
+			if (timeoutMs > 0) {
+				let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+				const timeoutPromise = new Promise<typeof timeoutSentinel>(resolve => {
+					timeoutHandle = setTimeout(() => { timedOut = true; resolve(timeoutSentinel); }, timeoutMs);
+				});
+				raceResult = await Promise.race([vetoCall, timeoutPromise]);
+				if (timeoutHandle !== null) clearTimeout(timeoutHandle);
+			} else {
+				raceResult = await vetoCall;
+			}
+			if (raceResult === timeoutSentinel) {
+				// Timeout reached — auto-allow dismiss with a warning. Better to
+				// release a stuck modal than strand the user inside it.
+				console.warn(`[VibeModalService] onBeforeDismiss did not resolve within ${timeoutMs}ms; auto-allowing dismiss`);
+			} else if (!raceResult && !timedOut) {
 				return false;
 			}
 			// Head might have been resolved during the async callback wait.
@@ -111,11 +142,27 @@ export class VibeModalService extends Disposable implements IVibeModalService {
 	}
 
 	updateHeadLoading(loading: boolean): void {
+		this.updateHeadOptions({ loading });
+	}
+
+	updateHeadOptions(partial: Partial<VibeModalOptions>): boolean {
 		const head = this._queue[0];
-		if (!head) return;
-		if (!!head.options.loading === !!loading) return;
-		head.options = { ...head.options, loading };
+		if (!head) return false;
+		// Cheap no-op detection — if every key in `partial` matches existing,
+		// skip the change-event to avoid spurious React re-renders.
+		let changed = false;
+		for (const key of Object.keys(partial) as (keyof VibeModalOptions)[]) {
+			const existing = (head.options as unknown as Record<string, unknown>)[key as string];
+			const incoming = (partial as unknown as Record<string, unknown>)[key as string];
+			if (existing !== incoming) {
+				changed = true;
+				break;
+			}
+		}
+		if (!changed) return false;
+		head.options = { ...head.options, ...partial };
 		this._onDidChangeQueue.fire();
+		return true;
 	}
 
 	confirmModal(args: {

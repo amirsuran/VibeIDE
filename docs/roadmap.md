@@ -2712,6 +2712,31 @@ vibeide.subagent.*, vibeide.mcp.*, vibeide.commands.audit*, …
 - [~] **Modal stacking** вместо FIFO queue — nested modals для confirmation внутри form-modal'а. Сейчас они queue'ются — UX-confusing. **Unblock:** flow требующий nested confirmation (например `/commit` modal с «Discard unsaved?» внутри).
 - [~] **Vibe Neon branded overrides** для `editorWidget.*` keys в `vibe-neon-color-theme.json` — neon glow на borders. **Unblock:** дизайн-выбор glow-цвета/интенсивности.
 
+### Z.7 Audit round 3 (commit forthcoming)
+
+> Третий self-audit pass после Z.4/Z.5 ship. Найдено 6 inline-issues + 4 фичи добавлены.
+
+- [x] **`onBeforeDismiss` hung-callback trap** — без таймаута buggy veto-callback мог trap'нуть пользователя без возможности закрыть модал (ESC + backdrop оба идут через veto). ✅ closed: добавлена опция `onBeforeDismissTimeoutMs?: number` (default 30 000ms; `0` отключает таймаут — caller responsibility). По истечении — auto-allow + `console.warn` для диагностики.
+- [x] **`autoDismissAfterMs` без min-clamp** — `1ms` был бы visible flash. ✅ closed: клемп `Math.max(VIBE_MODAL_MIN_AUTO_DISMISS_MS, rawMs)` (500ms лоwer bound).
+- [x] **Dead `isActive: boolean` prop** в `<VibeModal>` — контейнер всегда передавал `true` (компонент рендерится только когда head есть). ✅ closed: удалён prop, упрощены effect deps, useless `if (!isActive) return;` guards убраны.
+- [x] **`tryReadFastPathSnapshot` silent JSON errors** — broken `models.dev.json` файл просто skip'ался без логов; пользователь не знал что нужно чинить. ✅ closed: distinct `console.warn` для (a) read error не-ENOENT (b) JSON parse failure (c) parsed-but-empty providers. ENOENT остался silent.
+- [x] **Magic numbers** — `4000`, `50` literals → named constants (`SUCCESS_AUTO_DISMISS_MS`, `MIN_REMAINING_MS_AFTER_PAUSE`, `VIBE_MODAL_MIN_AUTO_DISMISS_MS`).
+- [x] **`onDidChangeStatus` event** на `IModelsDevCatalogStatusService` — после `recheck()` fire'ит с новым статусом. Renderer-local Emitter (main не push'ит). Subscribers могут реактивно обновлять UI (status-bar widget, badge и т.п.) без polling. Чистое разделение: IPC contract в `IModelsDevCatalogStatusServiceIPC` (only methods crossing process boundary), event добавлен в `IModelsDevCatalogStatusService extends ...IPC`.
+
+#### Z.7.1 — Features wave-3 (commit forthcoming)
+
+- [x] **`updateHeadOptions(partial): boolean`** — generic update для любого поля head modal'а вместо специал-кейса `updateHeadLoading`. Use case: progress-messages в async-flow (`updateHeadOptions({ body: 'Step 5/10...' })`), in-flight validation tweaks. No-op detection (skip event если изменений нет). `updateHeadLoading(bool)` оставлен как convenience-роутер.
+- [x] **`progress?: { current, total, label? }`** — progress bar в UI. `total === 0` → indeterminate animated stripe (animated через CSS keyframes). `total > 0` → определённый процент через `width: ${pct}%`. Стилизация через `--vscode-progressBar-background`. Use case: chunked downloads, multi-step pipelines.
+- [x] **Keyboard hint footer** — auto-generated cues из option shape: «ESC закрыть · Enter применить · Y/N hotkeys». Render как `<kbd>` chip'ы в muted-style под кнопками. Toggle через `showKeyboardHint?: boolean` (default `true`). Скрывается при loading.
+- [x] **`announceLabel?: string`** + `aria-live="polite"` — explicit screen-reader announcement при mount модала. Use case: dynamic error messages где title generic а body unique. Реализован через visually-hidden `.vibeide-modal-sr-only` div с `role="status"`.
+
+### Z.8 Wave-4 deferred (audit round 3 → roadmap)
+
+- [~] **`secondaryAction` в body** — clickable inline-link triggering callback. Use case: в `loaded_from_local` модале inline-link «Показать диагностику» открывает sub-action. **Unblock:** конкретный flow требующий sub-action из body modal'а.
+- [~] **Veto-with-reason rich return** — `onBeforeDismiss` возвращает `{ allow: false, reason: string }` → reason рендерится inline под кнопками. Текущий `boolean` достаточен для большинства кейсов. **Unblock:** observed UX confusion когда veto fires но пользователь не знает why.
+- [~] **Animated state-icons** — pulsing для `warning` icon, rotating для `sync`. Сейчас static codicons (VS Code's `codicon-modifier-spin` доступен но не используется автоматически). **Unblock:** дизайн-выбор интенсивности анимации.
+- [~] **JSDOM integration tests** — для runtime behaviour: hotkey activation, autoDismiss timer firing, aria-live announce. Сейчас только service-state-machine покрыт. **Unblock:** JSDOM setup в `test/browser/` (other VibeIDE tests тоже unit-only currently).
+
 ---
 
 ## Ссылки

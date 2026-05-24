@@ -7,6 +7,7 @@ import { createDecorator } from '../../../../platform/instantiation/common/insta
 import { ProxyChannel } from '../../../../base/parts/ipc/common/ipc.js';
 import { registerSingleton, InstantiationType } from '../../../../platform/instantiation/common/extensions.js';
 import { IMainProcessService } from '../../../../platform/ipc/common/mainProcessService.js';
+import { Emitter, Event } from '../../../../base/common/event.js';
 
 // Mirrors electron-main/llmMessage/modelsDevCatalog.ts. Duplicated here (not imported)
 // because workbench-layer code can't reach into electron-main packages directly.
@@ -24,17 +25,29 @@ export type ModelsDevCatalogStatus =
 	| { state: 'loaded_from_local'; path: string; source: 'exeDir' | 'bundled' | 'userData' }
 	| { state: 'failed'; candidatePaths: string[]; catalogUrl: string };
 
-export interface IModelsDevCatalogStatusService {
-	readonly _serviceBrand: undefined;
+/**
+ * IPC-shaped interface — only methods that cross main↔renderer boundary.
+ * `Event` properties intentionally excluded; ProxyChannel auto-wires `on*:
+ * Event<>` fields, but the event is a RENDERER-LOCAL Emitter here (fires
+ * after `recheck()` returns, not pushed from main).
+ */
+interface IModelsDevCatalogStatusServiceIPC {
 	getStatus(): Promise<ModelsDevCatalogStatus>;
 	setDiskCacheTtlHours(hours: number): Promise<void>;
-	/**
-	 * Force a fresh catalog probe — drops in-memory cache and re-runs the
-	 * candidate priority chain. Returns the new status. Used by the «Recheck»
-	 * Command Palette entry so users can test a freshly-placed snapshot
-	 * without restarting the IDE.
-	 */
 	recheck(): Promise<ModelsDevCatalogStatus>;
+}
+
+export interface IModelsDevCatalogStatusService extends IModelsDevCatalogStatusServiceIPC {
+	readonly _serviceBrand: undefined;
+	/**
+	 * Fires whenever the in-memory status changes — currently only via
+	 * `recheck()`. Renderer-side subscribers (status-bar widget, future
+	 * indicators) react to source changes without polling. Note: this
+	 * event is NOT pushed from main-process — it fires locally when
+	 * `recheck()` returns. For richer change streams (e.g. background
+	 * TTL-driven refreshes) main-process would need to push via channel.
+	 */
+	readonly onDidChangeStatus: Event<ModelsDevCatalogStatus>;
 }
 
 export const IModelsDevCatalogStatusService =
@@ -42,10 +55,12 @@ export const IModelsDevCatalogStatusService =
 
 export class ModelsDevCatalogStatusService implements IModelsDevCatalogStatusService {
 	readonly _serviceBrand: undefined;
-	private readonly proxy: IModelsDevCatalogStatusService;
+	private readonly proxy: IModelsDevCatalogStatusServiceIPC;
+	private readonly _onDidChangeStatus = new Emitter<ModelsDevCatalogStatus>();
+	readonly onDidChangeStatus: Event<ModelsDevCatalogStatus> = this._onDidChangeStatus.event;
 
 	constructor(@IMainProcessService mainProcessService: IMainProcessService) {
-		this.proxy = ProxyChannel.toService<IModelsDevCatalogStatusService>(
+		this.proxy = ProxyChannel.toService<IModelsDevCatalogStatusServiceIPC>(
 			mainProcessService.getChannel('vibeide-channel-modelsDevCatalogStatus'),
 		);
 	}
@@ -58,8 +73,10 @@ export class ModelsDevCatalogStatusService implements IModelsDevCatalogStatusSer
 		return this.proxy.setDiskCacheTtlHours(hours);
 	}
 
-	recheck(): Promise<ModelsDevCatalogStatus> {
-		return this.proxy.recheck();
+	async recheck(): Promise<ModelsDevCatalogStatus> {
+		const next = await this.proxy.recheck();
+		this._onDidChangeStatus.fire(next);
+		return next;
 	}
 }
 

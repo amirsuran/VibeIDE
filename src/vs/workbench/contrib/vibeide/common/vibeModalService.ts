@@ -96,18 +96,31 @@ export interface IVibeModalService {
 	closeHead(buttonId?: string, inputValue?: string): void;
 
 	/**
-	 * Toggle the head modal's `loading` flag. Used by async callers that need
-	 * to show a spinner inside the modal while a background operation (save,
-	 * git commit, network fetch) runs. No-op if no modal is active.
-	 *
-	 * Example:
-	 *   const p = svc.showModal({...});
-	 *   // user clicked "Save" — switch to loading
-	 *   svc.updateHeadLoading(true);
-	 *   await doAsyncWork();
-	 *   svc.resolveHead('saved');
+	 * Toggle the head modal's `loading` flag. Equivalent to
+	 * `updateHeadOptions({ loading })`. Kept as a separate method for the
+	 * common case (loading is by far the most-toggled field).
 	 */
 	updateHeadLoading(loading: boolean): void;
+
+	/**
+	 * Generic update for the head modal's options. Merges `partial` into the
+	 * current options shape and fires `onDidChangeQueue`. Use for: progress
+	 * messages (body), button state changes (disabled), in-flight validation
+	 * tweaks, etc. The IMMUTABLE fields are: `title`, `input`, `dismissible`,
+	 * `onBeforeDismiss` — they may technically be updated but doing so
+	 * mid-flight is confusing for users, prefer to leave those alone.
+	 *
+	 * Returns `true` if the update was applied, `false` if no head modal.
+	 *
+	 * Example progress flow:
+	 *   const p = svc.showModal({ ..., loading: true });
+	 *   for (let i = 1; i <= 10; i++) {
+	 *     await tick();
+	 *     svc.updateHeadOptions({ body: `Step ${i}/10 — processing...` });
+	 *   }
+	 *   svc.closeHead();
+	 */
+	updateHeadOptions(partial: Partial<import('./vibeModalTypes.js').VibeModalOptions>): boolean;
 
 	/**
 	 * Shorthand for the common confirm pattern. Returns `true` on the primary
