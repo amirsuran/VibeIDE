@@ -47,6 +47,20 @@
 	pointer-events: auto;
 }
 
+/* Non-blocking modal: workbench under the modal stays interactive. Backdrop
+   is hidden (no dim layer), root passes pointer-events through to siblings,
+   only the modal card itself captures clicks. Use for «attention-grabbing
+   info» that the user can ignore without dismissing.*/
+.vibeide-modal-root.is-active.non-blocking {
+	pointer-events: none;
+}
+.vibeide-modal-root.is-active.non-blocking .vibeide-modal {
+	pointer-events: auto;
+}
+.vibeide-modal-root.is-active.non-blocking .vibeide-modal-backdrop {
+	display: none;
+}
+
 .vibeide-modal-backdrop {
 	position: absolute;
 	inset: 0;

@@ -68,6 +68,22 @@ export interface VibeModalOptions<TButtonId extends string = string> {
 	readonly input?: VibeModalInputSpec;
 	/** Default true. When false, ESC + backdrop click do nothing. */
 	readonly dismissible?: boolean;
+	/**
+	 * Default `true` — modal applies `inert` + `aria-hidden` to workbench
+	 * siblings and renders a dimming backdrop, fully blocking interaction
+	 * with anything beneath it (canonical modal UX).
+	 *
+	 * Set to `false` for an **attention-grabbing-but-non-blocking** flavour:
+	 * modal renders centred but workbench stays interactive (no inert, no
+	 * backdrop dim, just a floating card). Use for informational notices
+	 * that deserve more weight than a toast but don't require the user to
+	 * stop what they're doing (e.g. «catalog offline — info only»).
+	 *
+	 * **Trade-off:** non-blocking modals don't enforce attention via inert,
+	 * so user CAN ignore them (similar to a toast). The advantage over toast
+	 * is central placement + larger surface for actions/body text.
+	 */
+	readonly blocking?: boolean;
 	/** Optional codicon name (e.g. `info`, `warning`, `error`). */
 	readonly icon?: string;
 	/** Default `medium`. Controls modal max-width via CSS class. */

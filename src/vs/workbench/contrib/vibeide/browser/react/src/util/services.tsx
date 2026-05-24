@@ -99,40 +99,22 @@ const mcpListeners: Set<() => void> = new Set()
 
 
 // must call this before you can use any of the hooks below
-// SAFE to call multiple times: subsequent calls early-return without
-// re-subscribing to global emitters. The accessor singleton is refreshed
-// each call (cheap), but state listeners are wired exactly once per session.
+// this is called ONCE PER BUNDLE — each tsup entry (sidebar-tsx, modal-tsx,
+// quick-edit-tsx, ...) has its own module-scoped state vars (chatThreadsState,
+// settingsState, etc) that must each be initialized. Multiple invocations
+// across bundles are EXPECTED and CORRECT — they're not «duplicate
+// subscriptions», they're per-bundle setup.
 //
-// Pre-Z.12 this was documented «only call ONCE!» but in practice multiple
-// mountFn invocations (sidebar + quick-edit + modal portal + settings panel)
-// all called it, accumulating duplicate listeners on every global emitter.
-// Each chat-state change fired all duplicates, multiplying React re-renders
-// and starving the renderer thread (root cause of the v0.13.14 freeze).
-//
-// CRITICAL: tsup bundles each entry separately, so a module-scoped `let` would
-// give each React bundle its own copy of the guard (sidebar-tsx, modal-tsx,
-// quick-edit-tsx etc all have independent copies). Empirical test of the
-// per-module approach showed 3 startup mounts each registering disposables=9
-// (== first call in their bundle). To make the guard work CROSS-BUNDLE, it
-// lives on `globalThis` — a shared object across all bundles in the same
-// JavaScript context.
-const VIBE_REGISTER_GUARD_KEY = '__vibeRegisterServicesCalledOnce__';
-const _g = globalThis as Record<string, unknown>;
-
+// (Earlier audit Z.12.2 tried to guard this idempotently — that was wrong:
+// the guard blocked bundle 2+ state-var init, so `useSettingsState()` returned
+// undefined and `<VibeOnboarding>` crashed reading `state.globalSettings`.
+// Reverted to the pre-Z.12.2 behavior. The Z.12.2 hypothesis about subscription
+// leak was a misdiagnosis — bundle-local subscriptions are correct.)
 export const _registerServices = (accessor: ServicesAccessor) => {
 
 	const disposables: IDisposable[] = []
 
 	_registerAccessor(accessor)
-
-	// Idempotency guard — Z.12.2 root-cause fix. After the first call, all the
-	// global state vars + onDidChange wiring below have already been done.
-	// Subsequent calls just need to refresh the accessor (above) so React
-	// components mounted later use the current ServicesAccessor.
-	if (_g[VIBE_REGISTER_GUARD_KEY] === true) {
-		return disposables;
-	}
-	_g[VIBE_REGISTER_GUARD_KEY] = true;
 
 	const stateServices = {
 		chatThreadsStateService: accessor.get(IChatThreadService),

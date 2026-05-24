@@ -151,6 +151,15 @@ export interface IVibeModalService {
 		readonly okLabel?: string;
 		readonly size?: import('./vibeModalTypes.js').VibeModalSize;
 		readonly autoDismissAfterMs?: number;
+		/** When false, modal floats centered without blocking workbench. Default true. */
+		readonly blocking?: boolean;
+		/**
+		 * Optional secondary button shown to the LEFT of the OK button.
+		 * Use for «info modal with a quick action» — e.g. "Скопировать URL"
+		 * next to "Понятно". `id === 'ok'` is reserved for the primary
+		 * acknowledgement.
+		 */
+		readonly secondaryAction?: { readonly id: string; readonly label: string; readonly onClick: () => void | Promise<void> };
 	}): Promise<void>;
 
 	/**

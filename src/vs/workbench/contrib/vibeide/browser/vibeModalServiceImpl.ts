@@ -214,15 +214,28 @@ export class VibeModalService extends Disposable implements IVibeModalService {
 		readonly okLabel?: string;
 		readonly size?: VibeModalSize;
 		readonly autoDismissAfterMs?: number;
+		readonly blocking?: boolean;
+		readonly secondaryAction?: { readonly id: string; readonly label: string; readonly onClick: () => void | Promise<void> };
 	}): Promise<void> {
-		return this.showModal<'ok'>({
+		const buttons: Array<{ id: string; label: string; role: 'primary' | 'secondary' }> = [];
+		if (args.secondaryAction) {
+			buttons.push({ id: args.secondaryAction.id, label: args.secondaryAction.label, role: 'secondary' });
+		}
+		buttons.push({ id: 'ok', label: args.okLabel ?? 'Понятно', role: 'primary' });
+		return this.showModal<string>({
 			title: args.title,
 			body: args.body,
 			icon: args.icon ?? 'info',
 			size: args.size ?? 'small',
 			autoDismissAfterMs: args.autoDismissAfterMs,
-			buttons: [{ id: 'ok', label: args.okLabel ?? 'Понятно', role: 'primary' }],
-		}).then(() => undefined);
+			blocking: args.blocking,
+			buttons,
+		}).then(async result => {
+			if (args.secondaryAction && result.buttonId === args.secondaryAction.id) {
+				try { await args.secondaryAction.onClick(); }
+				catch (e) { console.warn('[showImportantInfoModal] secondaryAction.onClick threw', e); }
+			}
+		});
 	}
 
 	successModal(args: { readonly title: string; readonly body: string; readonly autoDismissAfterMs?: number; readonly size?: VibeModalSize }): Promise<void> {

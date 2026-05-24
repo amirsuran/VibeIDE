@@ -9,7 +9,7 @@ import { IOpenerService } from '../../../../platform/opener/common/opener.js';
 import { URI } from '../../../../base/common/uri.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { IClipboardService } from '../../../../platform/clipboard/common/clipboardService.js';
-import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
+import { INotificationService } from '../../../../platform/notification/common/notification.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { IModelsDevCatalogStatusService, ModelsDevCatalogStatus } from '../common/modelsDevCatalogStatusService.js';
 import { labelOfSource, MODELS_DEV_URL } from '../common/modelsDevCatalogConstants.js';
@@ -86,39 +86,32 @@ export class ModelsDevCatalogStatusContribution extends Disposable implements IW
 		if (status.state === 'loaded_from_network' || status.state === 'unloaded') return;
 
 		if (status.state === 'loaded_from_local') {
-			// Z.12 revert: was a modal, now a toast — modals applied `inert` to the
-			// entire workbench at startup, freezing menu/sidebar/buttons on offline
-			// machines (corporate work setups always hit loaded_from_local). Toast
-			// is non-blocking; user can ignore or click "Перепроверить" / "URL".
+			// Z.12.4: non-blocking modal — centred for visibility, doesn't apply
+			// inert to workbench (corporate machines previously got menu/sidebar
+			// frozen at startup). Replaces the brief Z.12.1 toast revert; user
+			// wanted modal-style attention without the blocking side-effect.
 			const sourceLabel = labelOfSource(status.source);
-			notificationService.notify({
-				severity: Severity.Info,
-				message: localize(
-					'vibeide.modelsDev.offlineMode.toast',
-					'VibeIDE: каталог моделей models.dev offline — {0}. Aggregator-провайдеры работают; для обновления используйте «Перепроверить каталог models.dev» (Command Palette) после восстановления сети.',
+			void modalService.showImportantInfoModal({
+				title: localize('vibeide.modelsDev.offlineMode.title', 'Каталог моделей: офлайн режим'),
+				body: localize(
+					'vibeide.modelsDev.offlineMode.body',
+					'Загружен {0}.\n\nAggregator-провайдеры (openCode, openCodeZen) продолжают работать.\n\nЧтобы обновить каталог — скачайте {1} при наличии сети и положите рядом с VibeIDE.exe (файл с именем models.dev.json), либо вызовите «Перепроверить каталог models.dev» в Command Palette.',
 					sourceLabel,
+					MODELS_DEV_URL,
 				),
-				actions: {
-					primary: [
-						{
-							id: 'vibeide.modelsDev.notif.copyUrl',
-							label: localize('vibeide.modal.copyUrl', 'Скопировать URL'),
-							tooltip: MODELS_DEV_URL,
-							class: undefined,
-							enabled: true,
-							run: async () => { await clipboardService.writeText(MODELS_DEV_URL); },
-						},
-						{
-							id: 'vibeide.modelsDev.notif.recheck',
-							label: localize('vibeide.modelsDev.notif.recheck', 'Перепроверить'),
-							tooltip: localize('vibeide.modelsDev.notif.recheck.tip', 'Force re-probe the candidate chain without restarting VibeIDE.'),
-							class: undefined,
-							enabled: true,
-							run: async () => { await commandService.executeCommand('vibeide.modelsDevCatalog.recheck'); },
-						},
-					],
+				icon: 'info',
+				size: 'medium',
+				blocking: false,
+				okLabel: localize('vibeide.modal.gotIt', 'Понятно'),
+				secondaryAction: {
+					id: 'copyUrl',
+					label: localize('vibeide.modal.copyUrl', 'Скопировать URL'),
+					onClick: async () => { await clipboardService.writeText(MODELS_DEV_URL); },
 				},
 			});
+			// commandService unused in this branch but retained for failed-state path
+			void commandService;
+			void notificationService;
 			return;
 		}
 

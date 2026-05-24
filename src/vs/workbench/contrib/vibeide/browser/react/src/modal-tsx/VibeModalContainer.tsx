@@ -63,6 +63,14 @@ export const VibeModalContainer: React.FC = () => {
 	// state once the modal closes.
 	useEffect(() => {
 		if (!head) return; // Effect only meaningful while a modal is active.
+		// `blocking: false` modals don't take over workbench — skip inert apply
+		// entirely. Centred floating card without backdrop, workbench stays
+		// fully interactive (the trade-off: easier to ignore than a blocking
+		// modal, but still more prominent than a toast).
+		if (head.options.blocking === false) {
+			console.warn(`[VibeModalContainer] non-blocking modal id=${head.id} — skipping inert apply`);
+			return;
+		}
 		const portal = document.getElementById('vibeide-modal-portal');
 		const workbench = portal?.parentElement ?? document.body;
 		if (!workbench) return;
@@ -105,8 +113,11 @@ export const VibeModalContainer: React.FC = () => {
 		};
 	}, [head]);
 
+	const nonBlocking = head?.options.blocking === false;
+	const rootClassName = `vibeide-modal-root${head ? ' is-active' : ''}${nonBlocking ? ' non-blocking' : ''}`;
+
 	return (
-		<div className={`vibeide-modal-root${head ? ' is-active' : ''}`} aria-hidden={head ? undefined : true}>
+		<div className={rootClassName} aria-hidden={head ? undefined : true}>
 			{head && <VibeModal entry={head} />}
 		</div>
 	);
