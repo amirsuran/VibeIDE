@@ -49,6 +49,30 @@ suite('Secret Detection', () => {
 			assert.ok(result.matches.some(m => m.pattern.name === 'AWS Access Key'));
 		});
 
+		test('should detect a high-entropy AWS secret key', () => {
+			// 40-char mixed-class base64 (upper + lower + digit), high entropy.
+			const text = 'secret = wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEYab';
+			const result = detectSecrets(text);
+			assert.ok(result.matches.some(m => m.pattern.name === 'AWS Secret Key'),
+				'real 40-char high-entropy key must still be redacted');
+		});
+
+		test('should NOT flag a 40-char identifier as an AWS secret key', () => {
+			// Regression: bare {40} rule used to redact long CamelCase class names.
+			const text = 'class EvnMorfoHistologicProtoNewbornServiceAbc {}';
+			const result = detectSecrets(text);
+			assert.ok(!result.matches.some(m => m.pattern.name === 'AWS Secret Key'),
+				'no-digit CamelCase identifier must not be treated as a secret');
+		});
+
+		test('should NOT flag a 40-char lowercase hex hash as an AWS secret key', () => {
+			// SHA-1-style hex (digits + lowercase, no uppercase) is not a secret.
+			const text = 'commit da39a3ee5e6b4b0d3255bfef95601890afd80709';
+			const result = detectSecrets(text);
+			assert.ok(!result.matches.some(m => m.pattern.name === 'AWS Secret Key'),
+				'lowercase hex hash must not be treated as a secret');
+		});
+
 		test('should detect passwords in config format', () => {
 			const text = 'password=mySecretPassword123!';
 			const result = detectSecrets(text);

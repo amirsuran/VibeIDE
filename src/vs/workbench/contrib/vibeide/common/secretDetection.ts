@@ -19,6 +19,39 @@ export interface SecretPattern {
 	enabled: boolean;
 	/** Priority (higher = checked first) */
 	priority: number;
+	/**
+	 * Optional post-match guard. The regex pre-filters by shape; `validate`
+	 * rejects shape-matching-but-not-actually-a-secret candidates (e.g. a 40-char
+	 * CamelCase class name matching the bare AWS-key length rule). Receives the
+	 * matched text; return false to discard the match. No `validate` = accept all
+	 * regex matches (previous behavior).
+	 */
+	validate?: (candidate: string) => boolean;
+}
+
+/** Shannon entropy in bits/char — low for words/identifiers, high for random keys. */
+function shannonEntropy(s: string): number {
+	if (!s) return 0;
+	const freq = new Map<string, number>();
+	for (const ch of s) { freq.set(ch, (freq.get(ch) ?? 0) + 1); }
+	let h = 0;
+	for (const count of freq.values()) {
+		const p = count / s.length;
+		h -= p * Math.log2(p);
+	}
+	return h;
+}
+
+/**
+ * AWS secret access keys are 40-char base64 with high entropy and mixed
+ * character classes. The bare `{40}` length rule also matches long CamelCase
+ * identifiers (class/namespace names) and 40-char hex hashes, falsely redacting
+ * innocent code (observed: PHP controller names rendered as [[REDACTED:AWS
+ * Secret Key]]). Require all three character classes AND high entropy: kills
+ * no-digit identifiers and lowercase-hex hashes while keeping real keys.
+ */
+function looksLikeAwsSecret(s: string): boolean {
+	return /[0-9]/.test(s) && /[a-z]/.test(s) && /[A-Z]/.test(s) && shannonEntropy(s) >= 3.5;
 }
 
 export interface SecretMatch {
@@ -104,6 +137,7 @@ export const DEFAULT_SECRET_PATTERNS: SecretPattern[] = [
 		pattern: /\b([a-zA-Z0-9+=]{40})\b/g,
 		enabled: true,
 		priority: 85,
+		validate: looksLikeAwsSecret,
 	},
 	// GitHub tokens
 	{
@@ -261,12 +295,19 @@ export function detectSecrets(
 			const start = match.index;
 			const end = start + matchedText.length;
 
+			// Post-match guard: discard shape-matching-but-not-a-secret candidates
+			// (e.g. a 40-char identifier hitting the bare AWS-key length rule). Done
+			// before overlap handling so a rejected candidate neither lands nor evicts
+			// a legitimately-matched lower-priority secret. The zero-length-bump below
+			// still runs because we only skip the push, not the loop iteration.
+			const accepted = !pattern.validate || pattern.validate(matchedText);
+
 			// Check for overlaps with existing matches (prefer higher priority)
 			const overlaps = matches.some(
 				(m) => !(end <= m.start || start >= m.end) && m.pattern.priority >= pattern.priority
 			);
 
-			if (!overlaps) {
+			if (accepted && !overlaps) {
 				// Remove overlapping lower-priority matches
 				for (let i = matches.length - 1; i >= 0; i--) {
 					const existing = matches[i];

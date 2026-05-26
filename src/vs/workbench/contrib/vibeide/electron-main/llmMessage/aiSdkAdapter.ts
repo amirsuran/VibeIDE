@@ -24,7 +24,7 @@ import type { JSONSchema7 } from '@ai-sdk/provider';
 import { createHash } from 'crypto';
 import { generateUuid } from '../../../../../base/common/uuid.js';
 import { availableTools, InternalToolInfo } from '../../common/prompt/prompts.js';
-import { TOOL_NAME_ALIASES } from '../../common/prompt/toolAliases.js';
+import { TOOL_NAME_ALIASES, applyParamAliases } from '../../common/prompt/toolAliases.js';
 import { getModelSdkNpm } from './modelsDevCatalog.js';
 import { getModelCapabilities } from '../../common/modelCapabilities.js';
 import { buildContextOverflowError, buildEmptyResponseError, isContextOverflow, LLMChatMessage, LLMTokenUsage, RawToolCallObj, RawToolParamsObj } from '../../common/sendLLMMessageTypes.js';
@@ -563,6 +563,35 @@ const convertMessagesToModelMessages = (messages: LLMChatMessage[], modelName: s
 // chatThreadService keeps a parallel short-circuit for non-AI-SDK channels.
 export const INVALID_TOOL_NAME = 'invalid' as const;
 
+/**
+ * Repair native-FC tool-call ARG NAMES via the shared param-alias map.
+ *
+ * The AI SDK validates native function-call args against our registered
+ * jsonSchema BEFORE the dispatcher's `applyParamAliases` ever runs, so a model
+ * that emits `{path: "x"}` for a tool whose param is `uri` fails schema
+ * validation and lands in `experimental_repairToolCall`. We normalize the param
+ * names here (path/filePath/file → uri, cmd → command, …) — the same recovery
+ * the XML-fallback path already gets. `input` arrives as a JSON string.
+ *
+ * Returns `changed: false` when no alias matched (e.g. cross-tool arg confusion
+ * where the args belong to a different tool entirely) — the caller then routes
+ * to the `invalid` pseudo-tool so the model gets a clean error instead of a
+ * silently-re-submitted call that fails identically.
+ */
+function repairToolArgsViaAliases(canonicalToolName: string, rawInput: unknown): { input: unknown; changed: boolean } {
+	if (typeof rawInput !== 'string') { return { input: rawInput, changed: false }; }
+	let parsed: unknown;
+	try { parsed = JSON.parse(rawInput); }
+	catch { return { input: rawInput, changed: false }; }
+	if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) { return { input: rawInput, changed: false }; }
+	const aliased = applyParamAliases(canonicalToolName, parsed as { [k: string]: unknown });
+	// Detect a real rename by comparing key sets (ignores value/order noise).
+	const before = Object.keys(parsed as object).sort().join(',');
+	const after = Object.keys(aliased).sort().join(',');
+	if (before === after) { return { input: rawInput, changed: false }; }
+	return { input: JSON.stringify(aliased), changed: true };
+}
+
 // InternalToolInfo map -> AI SDK ToolSet. Real tools have no `execute`: the
 // model's tool_call is surfaced via the stream and dispatched manually by
 // chatThreadService. The `invalid` pseudo-tool is the one exception — it
@@ -938,7 +967,7 @@ export const sendViaAISdk = async (params: SendChatParams_Internal): Promise<voi
 			// giving the upstream window time to reset. Doesn't affect non-throttled
 			// cases — successful first attempt skips backoff entirely.
 			maxRetries: 5,
-			// Four-stage repair for tool-call name mismatches:
+			// Five-stage repair for tool-call mismatches (name AND args):
 			//   1. Lowercase normalisation (Read_File → read_file, BASH → bash).
 			//   2. Cross-ecosystem alias (read → read_file, edit → edit_file,
 			//      apply_patch → edit_file, fetch → browse_url) via shared
@@ -950,32 +979,53 @@ export const sendViaAISdk = async (params: SendChatParams_Internal): Promise<voi
 			//      an index instead of the name. Map back: name[N] resolves to
 			//      the N-th registered tool. The model's mental model exactly
 			//      matches our array order because it reads our request body.
-			//   4. Anything still unmatched routes to the `invalid` pseudo-tool.
-			// Without stages 1+2+3 the SDK would throw NoSuchToolError for
-			// recoverable names. Pattern from Kilo Code (extended with stage 3).
+			//   4. **Arg-name repair.** Once the NAME resolves, normalise PARAM
+			//      names via the same alias map (path/filePath/file → uri, cmd →
+			//      command). The SDK validates native-FC args against our schema
+			//      BEFORE the dispatcher's applyParamAliases runs, so `{path:…}`
+			//      for a `uri`-param tool fails here — recover it on the native
+			//      channel too (XML fallback already gets this). See
+			//      repairToolArgsViaAliases. Idea ported from crush/fantasy +
+			//      opencode (arg-level recovery, not just names).
+			//   5. Anything still unmatched routes to the `invalid` pseudo-tool.
+			// Without stages 1-4 the SDK would throw NoSuchTool/InvalidToolArguments
+			// for recoverable calls. Pattern from Kilo Code (extended 3 + 4).
 			experimental_repairToolCall: async ({ toolCall, tools: registeredTools, error }) => {
 				if (!registeredTools) return null;
+				const has = (n: string) => Object.prototype.hasOwnProperty.call(registeredTools, n);
 				const raw = (toolCall as { toolName?: string }).toolName ?? '';
 				const lowered = raw.toLowerCase();
-				// Stage 1: lowercase exact match.
-				if (raw && lowered !== raw && Object.prototype.hasOwnProperty.call(registeredTools, lowered)) {
-					return { ...toolCall, toolName: lowered } as typeof toolCall;
-				}
-				// Stage 2: cross-ecosystem alias lookup.
-				const aliasTarget = TOOL_NAME_ALIASES[lowered];
-				if (aliasTarget && Object.prototype.hasOwnProperty.call(registeredTools, aliasTarget)) {
-					return { ...toolCall, toolName: aliasTarget } as typeof toolCall;
-				}
-				// Stage 3: positional fallback for numeric tool names.
-				const numericMatch = /^(\d+)$/.exec(raw);
-				if (numericMatch) {
-					const idx = parseInt(numericMatch[1], 10);
-					const toolNames = Object.keys(registeredTools).filter(k => k !== INVALID_TOOL_NAME);
-					if (idx >= 0 && idx < toolNames.length) {
-						return { ...toolCall, toolName: toolNames[idx] } as typeof toolCall;
+
+				// Stages 1-3: resolve the canonical tool NAME.
+				let resolved: string | null = null;
+				if (raw && has(raw)) {
+					resolved = raw; // name already valid → the failure is the ARGS (stage 4)
+				} else if (raw && lowered !== raw && has(lowered)) {
+					resolved = lowered; // stage 1: lowercase
+				} else if (TOOL_NAME_ALIASES[lowered] && has(TOOL_NAME_ALIASES[lowered])) {
+					resolved = TOOL_NAME_ALIASES[lowered]; // stage 2: cross-ecosystem alias
+				} else {
+					const numericMatch = /^(\d+)$/.exec(raw); // stage 3: positional
+					if (numericMatch) {
+						const idx = parseInt(numericMatch[1], 10);
+						const toolNames = Object.keys(registeredTools).filter(k => k !== INVALID_TOOL_NAME);
+						if (idx >= 0 && idx < toolNames.length) { resolved = toolNames[idx]; }
 					}
 				}
-				// Stage 4: route to `invalid` pseudo-tool.
+
+				// Stage 4: with a resolved name, also repair ARG names. Return when
+				// the name changed (a fix worth retrying) OR an arg-alias applied. If
+				// the name was already valid and no alias helped (cross-tool arg
+				// confusion / fundamentally wrong args), fall through to `invalid` so
+				// the model gets a clean error rather than an identically-failing retry.
+				if (resolved && resolved !== INVALID_TOOL_NAME) {
+					const { input: repairedInput, changed } = repairToolArgsViaAliases(resolved, (toolCall as { input?: unknown }).input);
+					if (resolved !== raw || changed) {
+						return { ...toolCall, toolName: resolved, input: repairedInput } as typeof toolCall;
+					}
+				}
+
+				// Stage 5: route to `invalid` pseudo-tool.
 				const errMsg = (error as { message?: string } | undefined)?.message ?? 'Unknown tool name';
 				return {
 					...toolCall,

@@ -1679,6 +1679,36 @@ vibeide.subagent.*, vibeide.mcp.*, vibeide.commands.audit*, …
 
 ---
 
+## O.16 — deepseek/minimax через openCode: утечка тегов + остановка (2026-05-26, батч 0.13.18)
+
+Контекст: на 0.13.17 deepseek-v4-pro **каждый ход** вываливает в чат `<file_read file=.../>` / `<file_search pattern=... directory=.../>` (тулы не выполняются), minimax-m2.7 **останавливается** после одного `read_file`. Оба форсированы в XML (`model-quirks.json:25-29` — их native FC сломан на openCode: путает имена тулов с чужими аргументами).
+
+- [x] **Bug B — утечка тегов deepseek (готово, компилируется).** Корень: `TOOL_NAME_ALIASES` не знал свап-имена. Добавлены `file_read/file_write/file_edit/file_create/file_delete` + `file_search → search_pathnames_only`. `SELF_CLOSING_TOOL_RE` + `resolveInvokeToolName` строятся из alias-набора → теги теперь нормализуются, **извлекаются и выполняются**, а не текут. `directory` у search_pathnames_only молча игнорится `validateParams`. — ✅
+- [x] **Bug C — ложный `[[REDACTED:AWS Secret Key]]` (готово, логика проверена node).** Паттерн `[a-zA-Z0-9+=]{40}` ловил 40-символьные CamelCase-идентификаторы и hex-хеши. Добавлен optional `validate` в `SecretPattern` + `looksLikeAwsSecret` (требует upper+lower+digit И Shannon-энтропию ≥3.5). Реальный ключ ловится; идентификатор (нет цифры) и lowercase-hex (нет upper) — отсекаются. +3 регресс-теста. — ✅
+- [~] **Bug A — остановка minimax (направление подтверждено 5/5 референсов).** opencode/kilo/continue/roo/**crush** единогласно: чинить надо **reasoning-continuity**, не форсить continuation. Проверено: `aiSdkAdapter` зеркалит `reasoning_content` по **семейству** (`needsInterleavedMirror`+`forceEmptyReasoningSlot`), а не по native/XML → minimax (после #009) уже покрыт в XML-режиме на пост-тульном ходу; результат тула кладётся `role:'tool'` (не user, не рвёт контекст). **#009 пользователь получил только в 0.13.17** → возможно уже вылечено. Остаётся 1 проверка: **захват** reasoning в XML-стриминге (есть ли что зеркалить) — требует либо трассировки producer-пути, либо DevTools-захвата 2-го вызова. Crush: loop-detection — против ЗАЦикливания (обратное), пустые reasoning-only ходы выбрасывает из истории (`agent.go:708-711`).
+- [x] **Референс crush-repo.** Создан скилл `.claude/skills/crush-repo/` (charmbracelet/crush — Go, тоже через OpenCode Zen; единственный не-TS эталон). Закрослинкован во все 4 соседних скилла, счётчик «из пяти». — ✅
+
+**Backlog (предложения):**
+- [ ] **Более общий self-closing recovery** — вместо whack-a-mole алиасов распознавать `<snake_name attr="...">` с tool-сигнатурными атрибутами (file=/path=/pattern=/command=) и резолвить fuzzy. Осторожно: не матчить прозу/HTML.
+- [ ] **Bug A шаг 2** (если #009 не вылечил): дозеркалить reasoning-захват в XML-пути + опц. выброс пустых ходов из истории (по образцу crush).
+
+---
+
+## O.17 — native-FC arg-repair (2026-05-26, батч 0.13.18)
+
+Контекст (разведка crush/fantasy): crush обходится **без XML-fallback**, потому что bet целиком на native FC через движок `charm.land/fantasy` (Go-аналог Vercel AI SDK + `jsonrepair`). Наш `experimental_repairToolCall` чинил **только имя** тула (4 стадии), а сбой deepseek/minimax через openCode — это **путаница аргументов** (имя `read_file` верное, args от другого тула). Имя ок → repair молчал → `invalid_params`. Поэтому форсили XML, где `PARAM_ALIASES` чинят args.
+
+- [x] **Arg-repair в `experimental_repairToolCall` (готово, компилируется, логика проверена node).** Добавлена стадия 4: после резолва имени прогоняем args через `applyParamAliases` (`repairToolArgsViaAliases`, `aiSdkAdapter.ts`). SDK валидирует native-FC args против схемы ДО dispatcher'ного applyParamAliases — теперь `{path:…}`→`{uri:…}` чинится и на native-канале. Возврат только если имя изменилось ИЛИ alias применился; иначе (cross-tool args типа `{nl_input}`) → `invalid` (чистая ошибка модели, не бесконечный ретрай). Идея портирована из crush/fantasy + opencode (arg-level recovery, не только имена). — ✅
+- [~] **Gated: снять `forceToolCallFormat:"xml"` с deepseek/minimax (openCode).** ТОЛЬКО после теста, что native FC + arg-repair стабильны на этих моделях. Если да — весь класс XML-утечек (Bug B / O.16) исчезает в корне (whack-a-mole алиасы станут не нужны). НЕ флипать вслепую — XML сейчас рабочий escape-hatch.
+
+**Что НЕ берём из fantasy:** саму библиотеку (Go; у нас уже её TS-эквивалент — Vercel AI SDK, миграция в `ai-sdk-migration-wip`). Берём только идею recovery.
+
+**Backlog:**
+- [ ] **Cross-tool arg re-routing** — если args принадлежат другому тулу целиком (`{nl_input}` → это `run_nl_command`), детектить по shape и переименовывать тул. Рискованно (мис-роутинг) — отдельно, с тестами.
+- [ ] **`jsonrepair`-подобный фикс битого JSON** в args (по образцу fantasy/jsonrepair) до парсинга в `repairToolArgsViaAliases`.
+
+---
+
 ## Tool-call resilience — Data-driven SDK routing через models.dev (2026-05-16, фаза P)
 
 > Продолжение фазы O. Открытие: для aggregator-провайдеров типа opencode-go/zen один URL выставляет ДВА протокола (OpenAI chat-completions + Anthropic Messages), per-model. Если послать модель в неправильный SDK — деградация на уровне tool-calls (numeric names, empty params), даже на корректно работающих моделях типа minimax-m2.7. Раньше мы боролись с симптомами через auto-downgrade; настоящая причина была в выборе SDK.

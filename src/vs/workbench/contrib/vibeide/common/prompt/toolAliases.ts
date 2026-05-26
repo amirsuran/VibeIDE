@@ -78,6 +78,24 @@ export const TOOL_NAME_ALIASES: { readonly [alias: string]: string } = {
 	'fetch': 'browse_url',
 	'webfetch': 'browse_url',
 	'web_fetch': 'browse_url',
+	// Word-order-swapped variants (observed: deepseek-v4-pro emitted
+	// `<file_read file="..." />` instead of canonical `read_file`). These leak
+	// into chat as raw text because SELF_CLOSING_TOOL_RE only recognizes names
+	// in this universe; once aliased, the self-closing form is normalized,
+	// extracted, and executed. The whole `file_<verb>` class is covered to stop
+	// recurrence — none of these collide with a canonical name.
+	'file_read': 'read_file',
+	'file_write': 'rewrite_file',
+	'file_edit': 'edit_file',
+	'file_create': 'create_file_or_folder',
+	'file_delete': 'delete_file_or_folder',
+	// `file_search` (Cursor's fuzzy filename tool) — deepseek-v4-pro emitted
+	// `<file_search pattern="specification.md" directory="..." />`. Maps to our
+	// filename search (`pattern`/`filename` already alias to `query`); the extra
+	// `directory` attr has no canonical param and is ignored by validateParams
+	// (which destructures only query/search_in_folder/page_number), so the tag
+	// still executes cleanly instead of leaking.
+	'file_search': 'search_pathnames_only',
 };
 
 /**
