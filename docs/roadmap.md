@@ -1780,6 +1780,18 @@ vibeide.subagent.*, vibeide.mcp.*, vibeide.commands.audit*, …
 
 ---
 
+## O.23 — read_file читает сырьём, а не через editor-модель (2026-05-26, батч 0.13.24)
+
+**Трейс снова решил.** Лог на 0.13.23 (5 ходов): get_dir_tree(7с) → ls_dir(3с) → ls_dir(4.6с) → ls_dir(2.8с) → **read_file(3.6с) → EH unresponsive → recovery (phase=tool-running)**. Агент отлично исследовал `.vibe` (directory-fix O.22 работает!), завис **ровно на read_file**.
+
+**Корень — асимметрия:** `ls_dir`/`get_dir_tree` читают через `fileService` напрямую (быстро); `read_file` создавал **полную editor-модель** (`vibeideModelService.initializeModel` → `_textModelService.createModelReference`) — токенизация + language-detection воркер (тот самый `require is not defined`) + EH-нотификация `onDidOpenTextDocument`. На реальном файле это блокировало Extension Host >15с → crash-recovery. Эталоны (opencode/kilocode/continue) читают файлы **сырьём**, не через editor-модель — read_file у нас был аномалией.
+
+- [x] **read_file → raw fileService (готово, компилируется, node-верифицировано).** Контент берётся из УЖЕ открытой VibeIDE-модели (reuse, отражает несохранённые правки, без создания) ИНАЧЕ `fileService.readFile` (сырьё, LF-нормализация). `createModelReference` из hot-path read_file убран → EH не нагружается. Line-окно/пагинация/guard/нумерация — на строковых операциях (`allLines.slice(start-1,end).join('\n')`), эквивалентность Monaco `getValueInRange` проверена node-тестом (вкл. trailing-newline, off-by-one нет). Directory-guard (O.22) сохранён. — ✅
+
+**Связь с O.20 (EH-recovery):** теперь понятно, ПОЧЕМУ EH виснул при долгой работе — не «расширение вообще», а конкретно read_file→createModelReference. EH-дебаунс (O.20) был правильным (не спамить), но первопричина — здесь.
+
+---
+
 ## Tool-call resilience — Data-driven SDK routing через models.dev (2026-05-16, фаза P)
 
 > Продолжение фазы O. Открытие: для aggregator-провайдеров типа opencode-go/zen один URL выставляет ДВА протокола (OpenAI chat-completions + Anthropic Messages), per-model. Если послать модель в неправильный SDK — деградация на уровне tool-calls (numeric names, empty params), даже на корректно работающих моделях типа minimax-m2.7. Раньше мы боролись с симптомами через auto-downgrade; настоящая причина была в выборе SDK.

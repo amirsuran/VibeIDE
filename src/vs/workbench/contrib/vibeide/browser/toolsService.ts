@@ -674,10 +674,26 @@ export class ToolsService implements IToolsService {
 						}
 					} catch { /* stat failed — ignore, proceed with read */ }
 				}
-				await vibeideModelService.initializeModel(uri)
-				let { model } = await vibeideModelService.getModelSafe(uri)
-				if (model === null) {
-					// Fallback: try to locate the file within the workspace by basename (grep-like)
+				// Content acquisition (0.13.24): read RAW via fileService instead of
+				// creating a full editor TextModel. `vibeideModelService.initializeModel`
+				// → `createModelReference` spins up a Monaco model (tokenization +
+				// language-detection worker + Extension-Host onDidOpenTextDocument), which
+				// blocked the EH on read_file — the [VibeIDE/llmTurn] trace showed every
+				// turn fast until a read_file, then EH-unresponsive + crash-recovery while
+				// ls_dir/get_dir_tree (raw fileService reads) never hung. Matches
+				// opencode/kilocode/continue (all read raw). An already-open VibeIDE model
+				// is still reused (reflects unsaved edits, no creation cost).
+				const toLf = (s: string) => s.replace(/\r\n/g, '\n')
+				let fullText: string | null = null
+				const openModel = vibeideModelService.getModel(uri).model // existing-only; does NOT create
+				if (openModel) {
+					fullText = openModel.getValue(EndOfLinePreference.LF)
+				} else {
+					try { fullText = toLf((await fileService.readFile(uri)).value.toString()) }
+					catch { fullText = null }
+				}
+				if (fullText === null) {
+					// Fallback: locate the file within the workspace by basename (grep-like), then raw-read.
 					const requestedName = uri.fsPath.split(/[/\\]/).pop() || uri.fsPath
 					try {
 						const query = queryBuilder.file(workspaceContextService.getWorkspace().folders.map(f => f.uri), {
@@ -688,14 +704,14 @@ export class ToolsService implements IToolsService {
 						const fallback = data.results[0]?.resource
 						if (fallback) {
 							uri = fallback
-							await vibeideModelService.initializeModel(uri)
-							model = (await vibeideModelService.getModelSafe(uri)).model
+							fullText = toLf((await fileService.readFile(uri)).value.toString())
 						}
 					} catch { /* ignore and throw original error if still null */ }
-					if (model === null) { throw new Error(`No contents; File does not exist.`) }
+					if (fullText === null) { throw new Error(`No contents; File does not exist.`) }
 				}
 
-				const totalNumLines = model.getLineCount()
+				const allLines = fullText.split('\n')
+				const totalNumLines = allLines.length
 
 				// Line-based slice (Claude-Code style): start_line + line_limit drives the window.
 				// Falls back to legacy whole-file path when caller passes neither.
@@ -723,15 +739,12 @@ export class ToolsService implements IToolsService {
 
 				let contents: string
 				if (isLineRangeMode || pageNumber === 1) {
-					contents = model.getValueInRange({
-						startLineNumber: startLineReturned,
-						startColumn: 1,
-						endLineNumber: endLineReturned,
-						endColumn: Number.MAX_SAFE_INTEGER,
-					}, EndOfLinePreference.LF)
+					// Line window on the raw string (1-based inclusive) — mirrors Monaco's
+					// getValueInRange(L1C1..LnC_max, LF): the selected lines joined by \n.
+					contents = allLines.slice(startLineReturned - 1, endLineReturned).join('\n')
 				}
 				else {
-					contents = model.getValue(EndOfLinePreference.LF)
+					contents = fullText
 				}
 
 				// Byte-level paginate as a hard cap (huge minified files etc).
