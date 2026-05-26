@@ -1792,6 +1792,18 @@ vibeide.subagent.*, vibeide.mcp.*, vibeide.commands.audit*, …
 
 ---
 
+## O.24 — tool-exec трейс (2026-05-26, батч 0.13.25, trace-only)
+
+**Огромный win на 0.13.24:** агент сделал **46 ходов** реальной работы (.vibe←.cursor): get_dir_tree/ls_dir/read_file/edit_file/delete_file_or_folder/search_pathnames_only/glob. read_file (O.23) больше НЕ виснет. deepseek через openCode на native FC реально пашет многошагово — базовая болезнь вылечена.
+
+Встал на **iter 46, `phase=tool-running`** (последний tool-call — `search_pathnames_only`) → EH unresponsive >15с → recovery. **Пробел:** `[VibeIDE/llmTurn]` времит LLM-ход, а застряло в ВЫПОЛНЕНИИ тула — этого слоя в трейсе не было.
+
+- [x] **`[VibeIDE/toolExec] start/done` трейс (готово, trace-only, durable).** Вокруг `_runToolCall`: `start {tool, hint, mcp}` (hint = uri/query/pattern/command, 160ch) + `done {tool, ms, ok}` на success И error. **Зависший тул → `start` без `done`** = точное имя+вход; медленный → большой `ms`. Различает 2 гипотезы по iter 46: (A) `search_pathnames_only` реально завис (медленный поиск по большому Promed-repo) → start без done; (B) EH unresponsive по фоновым причинам (watchers на 40+ правленых файлов, RepoIndexer каждый ход), агент случайно в tool-running → start+done(быстро) = ложная тревога recovery. — ✅
+
+**Следующий шаг — по данным:** если (A) — чинить медленный/зависший тул; если (B) — отвязать recovery от builtin-tool-running (агент EH-независим, O.20).
+
+---
+
 ## Tool-call resilience — Data-driven SDK routing через models.dev (2026-05-16, фаза P)
 
 > Продолжение фазы O. Открытие: для aggregator-провайдеров типа opencode-go/zen один URL выставляет ДВА протокола (OpenAI chat-completions + Anthropic Messages), per-model. Если послать модель в неправильный SDK — деградация на уровне tool-calls (numeric names, empty params), даже на корректно работающих моделях типа minimax-m2.7. Раньше мы боролись с симптомами через auto-downgrade; настоящая причина была в выборе SDK.

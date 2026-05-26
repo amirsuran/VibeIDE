@@ -3830,6 +3830,20 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 		const toolActivityLabel = mcpServerName ? `${toolName} (${mcpServerName})` : toolName;
 		this._agentActivityLog.logStarted(toolActivityLabel);
 
+		// DURABLE tool-execution trace (kept — complements [VibeIDE/llmTurn], which only
+		// times the LLM turn, not the tool run where the agent actually stalls in
+		// phase=tool-running). A hung tool shows `start` with NO matching `done` → the
+		// exact tool + input that hung; a slow one shows a large `ms`.
+		const _toolExecStartMs = Date.now()
+		const _toolHint = (() => {
+			try {
+				const p = (toolParams ?? {}) as { [k: string]: any }
+				const v = p.uri?.fsPath ?? p.uri ?? p.query ?? p.pattern ?? p.command ?? p.search ?? ''
+				return typeof v === 'string' ? v.slice(0, 160) : ''
+			} catch { return '' }
+		})()
+		console.debug('[VibeIDE/toolExec] start', { tool: toolName, hint: _toolHint, mcp: mcpServerName ?? null })
+
 		let interrupted = false
 		let resolveInterruptor: (r: () => void) => void = () => { }
 		const interruptorPromise = new Promise<() => void>(res => { resolveInterruptor = res })
@@ -3922,7 +3936,7 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 
 			const errorMessage = getErrorMessage(error)
 			this._agentActivityLog.logError(`${toolActivityLabel}: ${errorMessage}`);
-			this._updateLatestTool(threadId, { role: 'tool', type: 'tool_error', params: toolParams, result: errorMessage, name: toolName, content: errorMessage, id: toolId, rawParams: opts.unvalidatedToolParams, mcpServerName })
+			console.debug('[VibeIDE/toolExec] done', { tool: toolName, ms: Date.now() - _toolExecStartMs, ok: false }); this._updateLatestTool(threadId, { role: 'tool', type: 'tool_error', params: toolParams, result: errorMessage, name: toolName, content: errorMessage, id: toolId, rawParams: opts.unvalidatedToolParams, mcpServerName })
 			return {}
 		}
 
@@ -3938,12 +3952,12 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 		} catch (error) {
 			const errorMessage = this.toolErrMsgs.errWhenStringifying(error)
 			this._agentActivityLog.logError(`${toolActivityLabel}: stringify ${errorMessage}`);
-			this._updateLatestTool(threadId, { role: 'tool', type: 'tool_error', params: toolParams, result: errorMessage, name: toolName, content: errorMessage, id: toolId, rawParams: opts.unvalidatedToolParams, mcpServerName })
+			console.debug('[VibeIDE/toolExec] done', { tool: toolName, ms: Date.now() - _toolExecStartMs, ok: false }); this._updateLatestTool(threadId, { role: 'tool', type: 'tool_error', params: toolParams, result: errorMessage, name: toolName, content: errorMessage, id: toolId, rawParams: opts.unvalidatedToolParams, mcpServerName })
 			return {}
 		}
 
 		// 5. add to history and keep going
-		this._updateLatestTool(threadId, { role: 'tool', type: 'success', params: toolParams, result: toolResult, name: toolName, content: toolResultStr, id: toolId, rawParams: opts.unvalidatedToolParams, mcpServerName })
+		console.debug('[VibeIDE/toolExec] done', { tool: toolName, ms: Date.now() - _toolExecStartMs, ok: true }); this._updateLatestTool(threadId, { role: 'tool', type: 'success', params: toolParams, result: toolResult, name: toolName, content: toolResultStr, id: toolId, rawParams: opts.unvalidatedToolParams, mcpServerName })
 		this._agentActivityLog.logFinished(toolActivityLabel);
 
 		// Cache read_file results to prevent duplicate reads
