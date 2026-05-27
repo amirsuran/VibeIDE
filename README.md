@@ -336,8 +336,8 @@ Pull request'ы приветствуются. Перед началом знач
 
 Если VibeIDE оказался полезным — буду рад благодарности 🙏
 
-<a href="https://raw.githubusercontent.com/borodatych/VSCodeSyncFiles/main/media/QR-Code.jpg" target="_blank" rel="noopener noreferrer">
-  <img src="https://raw.githubusercontent.com/borodatych/VSCodeSyncFiles/main/media/QR-Code.jpg" width="120" alt="QR-код для поддержки проекта" />
+<a href="https://raw.githubusercontent.com/VibeIDETeam/VibeIDE/main/media/QR-Code.jpg" target="_blank" rel="noopener noreferrer">
+  <img src="https://raw.githubusercontent.com/VibeIDETeam/VibeIDE/main/media/QR-Code.jpg" width="120" alt="QR-код для поддержки проекта" />
 </a>
 
 ---
