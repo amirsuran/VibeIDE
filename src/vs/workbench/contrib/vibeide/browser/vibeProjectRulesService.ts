@@ -30,6 +30,8 @@ import { localize } from '../../../../nls.js';
 import { Action2, registerAction2 } from '../../../../platform/actions/common/actions.js';
 import { ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
+import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
+import { VSBuffer } from '../../../../base/common/buffer.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -205,6 +207,47 @@ registerAction2(class extends Action2 {
 				combined.length
 			),
 		});
+	}
+});
+
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: 'vibeide.projectRules.addRule',
+			title: { value: localize('vibeide.projectRules.addRule', 'VibeIDE: Добавить правило проекта (.vibe/rules.md)'), original: 'VibeIDE: Add Project Rule (.vibe/rules.md)' },
+			category: { value: 'VibeIDE', original: 'VibeIDE' },
+			f1: true,
+		});
+	}
+
+	async run(accessor: ServicesAccessor): Promise<void> {
+		const quickInput = accessor.get(IQuickInputService);
+		const fileService = accessor.get(IFileService);
+		const workspace = accessor.get(IWorkspaceContextService);
+		const notifications = accessor.get(INotificationService);
+		const rulesSvc = accessor.get(IVibeProjectRulesService);
+
+		const folder = workspace.getWorkspace().folders[0];
+		if (!folder) {
+			notifications.notify({ severity: Severity.Warning, message: localize('vibeide.projectRules.addRule.noFolder', 'Откройте папку проекта, чтобы добавить правило.') });
+			return;
+		}
+
+		const text = (await quickInput.input({
+			prompt: localize('vibeide.projectRules.addRule.prompt', 'Новое правило — будет дописано в .vibe/rules.md'),
+			placeHolder: localize('vibeide.projectRules.addRule.ph', 'например: всегда отвечать на русском'),
+		}))?.trim();
+		if (!text) { return; }
+
+		const uri = joinPath(folder.uri, '.vibe', 'rules.md');
+		let existing = '';
+		try { existing = (await fileService.readFile(uri)).value.toString(); } catch { /* file does not exist yet — will be created */ }
+		const needsHeader = existing.trim().length === 0;
+		const prefix = existing.length > 0 && !existing.endsWith('\n') ? '\n' : '';
+		const block = `${needsHeader ? '# Project rules\n\n' : ''}${prefix}- ${text}\n`;
+		await fileService.writeFile(uri, VSBuffer.fromString(existing + block));
+		await rulesSvc.reloadRules();
+		notifications.notify({ severity: Severity.Info, message: localize('vibeide.projectRules.addRule.done', 'Правило добавлено в .vibe/rules.md') });
 	}
 });
 
