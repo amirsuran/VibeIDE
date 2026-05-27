@@ -18,6 +18,8 @@
 import { registerAction2, Action2 } from '../../../../platform/actions/common/actions.js';
 import { ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
+import { ITextModelService } from '../../../../editor/common/services/resolverService.js';
+import { URI } from '../../../../base/common/uri.js';
 import { localize } from '../../../../nls.js';
 import { vibeTraceTs } from '../common/helpers/vibeTraceTs.js';
 
@@ -81,7 +83,18 @@ registerAction2(class extends Action2 {
 
 	async run(accessor: ServicesAccessor): Promise<void> {
 		const editorService = accessor.get(IEditorService);
+		const modelService = accessor.get(ITextModelService);
 		const md = renderChatTraceMarkdown(getChatTrace());
-		await editorService.openEditor({ resource: undefined, contents: md, languageId: 'markdown', options: { pinned: true } });
+		// Proven pattern (mirrors vibeIdleWatchdogTimelineCommand): open an untitled .md and
+		// inject the content via the resolved text model — not { resource: undefined, contents },
+		// which compiles but does not reliably render.
+		const uri = URI.parse(`untitled:VibeIDE-Chat-Run-Timeline-${Date.now()}.md`);
+		await editorService.openEditor({ resource: uri, options: { pinned: true } });
+		const ref = await modelService.createModelReference(uri);
+		try {
+			ref.object.textEditorModel.setValue(md);
+		} finally {
+			ref.dispose();
+		}
 	}
 });
