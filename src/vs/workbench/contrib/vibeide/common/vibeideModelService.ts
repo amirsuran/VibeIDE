@@ -83,9 +83,21 @@ class VibeideModelService extends Disposable implements IVibeideModelService {
 			if (cachedExistence && (now - cachedExistence.timestamp) < VibeideModelService.FILE_EXISTENCE_CACHE_TTL_MS) {
 				exists = cachedExistence.exists;
 			} else {
-				// Check if file exists before trying to create model reference
-				// This prevents noisy error logs for expected cases (e.g., rules.md not open yet)
-				exists = await this._fileService.exists(uri);
+				// Resolve the path once and treat it as openable only when it exists AND is a file.
+				// A directory passes a plain exists() check, then createModelReference reads it as
+				// text and throws FileOperationError ("... is actually a directory") — the source of
+				// the noisy InitializeModel error spam on .vibe/.cursor folders. A missing file is an
+				// expected no-op. Both collapse to exists=false here.
+				try {
+					const stat = await this._fileService.stat(uri);
+					exists = !stat.isDirectory;
+				} catch (statErr) {
+					if (statErr instanceof FileOperationError && statErr.fileOperationResult === FileOperationResult.FILE_NOT_FOUND) {
+						exists = false;
+					} else {
+						throw statErr;
+					}
+				}
 				this._fileExistenceCache.set(fsPath, { exists, timestamp: now });
 
 				// Clean up old cache entries (keep cache size reasonable)
