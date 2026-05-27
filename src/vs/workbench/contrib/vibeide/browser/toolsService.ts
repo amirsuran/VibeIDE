@@ -3,7 +3,7 @@
  *  Licensed under the Apache License, Version 2.0. See LICENSE.txt for more information.
  *--------------------------------------------------------------------------------------------*/
 
-import { CancellationToken } from '../../../../base/common/cancellation.js'
+import { CancellationToken, CancellationTokenSource } from '../../../../base/common/cancellation.js'
 import { URI } from '../../../../base/common/uri.js'
 import { isAbsolute as pathIsAbsolute } from '../../../../base/common/path.js'
 import { joinPath } from '../../../../base/common/resources.js'
@@ -397,6 +397,16 @@ export class ToolsService implements IToolsService {
 					page_number: pageNumberUnknown,
 				} = params
 				const pattern = validateStr('pattern', patternUnknown)
+				// Reject match-everything patterns: over a large workspace they scan every line and can
+				// freeze the extension host for minutes (grep '.*' was observed at ~234s). Force a concrete query.
+				const grepNorm = pattern.trim()
+				if (grepNorm === '' || ['.', '.*', '.+', '.*?', '.+?', '^', '$', '^$', '^.*$', '^.*', '.*$', '(.*)', '(.+)', '[\\s\\S]*', '[\\s\\S]+'].includes(grepNorm)) {
+					throw new ToolValidationError({
+						code: 'grep_pattern_too_broad',
+						message: `The grep pattern ${JSON.stringify(pattern)} matches (almost) every line and would scan the entire workspace. Use a concrete substring or an anchored regex instead.`,
+						hint: 'e.g. "function foo", "TODO:", or "\\bclassName\\b". To list files by name use the glob tool.',
+					})
+				}
 				const globPat = validateOptionalStr('glob', globUnknown)
 				const fileType = validateOptionalStr('file_type', fileTypeUnknown)
 				const searchInFolder = validateOptionalReadURI(folderUnknown)
@@ -898,7 +908,16 @@ export class ToolsService implements IToolsService {
 					surroundingContext: surroundingContext || undefined,
 					maxResults: headLimit,
 				})
-				const data = await searchService.textSearch(textQuery, CancellationToken.None)
+				// Hard cap the search so a valid-but-broad pattern over a huge repo cannot hang the EH.
+				const grepCts = new CancellationTokenSource()
+				const grepTimer = setTimeout(() => grepCts.cancel(), 15_000)
+				let data: Awaited<ReturnType<typeof searchService.textSearch>>
+				try {
+					data = await searchService.textSearch(textQuery, grepCts.token)
+				} finally {
+					clearTimeout(grepTimer)
+					grepCts.dispose()
+				}
 
 				const matches: Array<{ uri: URI, line: number, column: number, preview: string }> = []
 				const files: Array<{ uri: URI, count?: number }> = []
