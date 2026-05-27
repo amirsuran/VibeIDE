@@ -270,13 +270,15 @@ const systemToolsXMLPrompt = (chatMode: ChatMode, mcpTools: InternalToolInfo[] |
 
 
 export const chat_systemMessage = ({ workspaceFolders, openedURIs, activeURI, persistentTerminalIDs, directoryStr, chatMode: mode, mcpTools, includeXMLToolDefinitions, relevantMemories, strictJsonToolArguments, modelFamily: _modelFamily }: { workspaceFolders: string[], directoryStr: string, openedURIs: string[], activeURI: string | undefined, persistentTerminalIDs: string[], chatMode: ChatMode, mcpTools: InternalToolInfo[] | undefined, includeXMLToolDefinitions: boolean, relevantMemories?: string, strictJsonToolArguments?: boolean, modelFamily?: ModelFamily }) => {
-	const header = (`You are an expert coding ${mode === 'agent' ? 'agent' : 'assistant'} whose job is \
+	const header = (`You are an expert coding ${mode === 'agent' ? 'agent' : 'assistant'} running inside VibeIDE whose job is \
 ${mode === 'agent' ? `to help the user develop, run, and make changes to their codebase.`
 			: mode === 'gather' ? `to search, understand, and reference files in the user's codebase.`
 				: mode === 'normal' ? `to assist the user with their coding tasks.`
 					: ''}
 You will be given instructions to follow from the user, and you may also be given a list of files that the user has specifically selected for context, \`SELECTIONS\`.
-Please assist the user with their query.`)
+Please assist the user with their query.${mode === 'agent' ? `
+
+This workspace runs in VibeIDE. Project rules and conventions live in \`.vibe/rules.md\` (and root \`AGENTS.md\`); Agent Skills live in \`.vibe/skills/<name>/SKILL.md\`. When the user asks to add, change, or persist a rule, instruction, or convention, write it to \`.vibe/rules.md\` (create it if missing) — do NOT create \`.cursorrules\`, \`.windsurfrules\`, \`AI_RULES.md\`, or other ad-hoc rule files.` : ''}`)
 
 
 
