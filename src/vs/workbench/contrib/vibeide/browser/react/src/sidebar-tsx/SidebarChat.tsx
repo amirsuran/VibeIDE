@@ -2088,9 +2088,11 @@ const toolNameToDesc = (toolName: BuiltinToolName, _toolParams: BuiltinToolCallP
 		},
 		'search_in_file': () => {
 			const toolParams = _toolParams as BuiltinToolCallParams['search_in_file'];
+			// File goes in the prominent slot (matches the "Searched in file" title); the query is a
+			// detail. Previously the query sat in desc1 and read like a file path (e.g. `"\.select\("`).
 			return {
-				desc1: `"${toolParams.query}"`,
-				desc1Info: getRelative(toolParams.uri, accessor),
+				desc1: getRelative(toolParams.uri, accessor),
+				desc1Info: `"${toolParams.query}"`,
 			};
 		},
 		'create_file_or_folder': () => {
@@ -2581,7 +2583,7 @@ const builtinToolNameToComponent: { [T in BuiltinToolName]: { resultWrapper: Res
 			if (toolMessage.type === 'success') {
 				const { result } = toolMessage
 				componentParams.onClick = () => { voidOpenFileFn(params.uri, accessor, range) }
-				if (result.hasNextPage && params.pageNumber === 1)  // first page
+				if (result.hasNextPage && params.pageNumber === 1 && range === undefined)  // first page of a full-file read (not a line-range slice)
 					componentParams.desc2 = `(truncated after ${Math.round(MAX_FILE_CHARS_PAGE) / 1000}k)`
 				else if (params.pageNumber > 1) // subsequent pages
 					componentParams.desc2 = `(part ${params.pageNumber})`
