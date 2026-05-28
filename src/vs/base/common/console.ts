@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { URI } from './uri.js';
+import { vibeTimestamp } from './vibeTimestamp.js';
 
 export interface IRemoteConsoleLog {
 	type: string;
@@ -129,6 +130,13 @@ export function log(entry: IRemoteConsoleLog, label: string): void {
 	if (topFrame && !isOneStringArg) {
 		consoleArgs.push(topFrame);
 	}
+
+	// VibeIDE: prefix a datetime so forwarded extension-host console output carries the
+	// same wall-clock stamp as vibeLog / ConsoleLogger lines — this was the one remaining
+	// un-timestamped log path (EH console RPC forward). The leading %c consumes the grey
+	// color; the existing %c markers keep pairing with their colors after it. Works for all
+	// branches above (consoleArgs[0] is always the format string).
+	consoleArgs = [`%c[${vibeTimestamp()}] ${consoleArgs[0]}`, color('grey'), ...consoleArgs.slice(1)];
 
 	// Log it
 	// eslint-disable-next-line local/code-no-any-casts
