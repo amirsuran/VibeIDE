@@ -265,8 +265,9 @@ export class ToolsService implements IToolsService {
 		// Time-cap a fileSearch so a best-effort "locate this file by basename" lookup on a
 		// hallucinated/missing path can't hang the Extension Host scanning a huge repo with an
 		// uncancellable search. model-stalls #013: read_file on a non-existent path froze the EH
-		// ~9.4 min via `fileSearch(..., CancellationToken.None)`. On timeout returns whatever it
-		// has so far (caller treats empty as "not found" and fails fast).
+		// ~9.4 min via `fileSearch(..., CancellationToken.None)`. On OUR timeout it returns the
+		// partial result if the backend yields one, or an empty result if the backend throws on
+		// cancellation — either way the caller treats it as "not found" and fails fast.
 		const fileSearchCapped = async (query: Parameters<typeof searchService.fileSearch>[0], timeoutMs = 10_000) => {
 			const cts = new CancellationTokenSource()
 			let timedOut = false
