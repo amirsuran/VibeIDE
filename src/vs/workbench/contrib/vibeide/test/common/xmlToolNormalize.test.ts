@@ -31,6 +31,8 @@ import {
 	getNormalizeCounters,
 	normalizeAlternativeToolSyntax,
 	resetNormalizeCounters,
+	resolveInvokeToolName,
+	resolveToolNameLoose,
 	SELF_CLOSING_PARTIAL_RE,
 	stripUnclaimedToolTags,
 } from '../../common/xmlToolNormalize.js';
@@ -586,6 +588,36 @@ assert.match(out, /\*\[.+\]\*/);
 			const input = 'The `<read_file>` tag is used to read files.';
 			const out = normalizeAlternativeToolSyntax(input);
 			assert.strictEqual(out, input);
+		});
+	});
+
+	// Direct coverage for the core normKey resolver (roadmap 1719). The higher-level
+	// normalizeAlternativeToolSyntax tests above exercise it indirectly; these lock the
+	// concept-anchor contract: ~15 concepts, never per-spelling entries, and non-tool
+	// tags MUST resolve to null so callers leave markdown (<br/>, <Input/>) untouched.
+	suite('resolveToolNameLoose — concept-anchor resolution', () => {
+
+		test('word-order / separator / case variants all collapse to read_file', () => {
+			for (const spelling of ['read_file', 'FileRead', 'ReadFile', 'fileRead', 'file_read', 'READFILE', 'File-Read', 'Read_File']) {
+				assert.strictEqual(resolveToolNameLoose(spelling), 'read_file', `${spelling} should resolve to read_file`);
+			}
+		});
+
+		test('cross-ecosystem aliases resolve (read / bash / view)', () => {
+			assert.strictEqual(resolveToolNameLoose('read'), 'read_file');
+			assert.strictEqual(resolveToolNameLoose('bash'), 'run_command');
+			assert.strictEqual(resolveToolNameLoose('view'), 'read_file');
+		});
+
+		test('non-tool tags resolve to null (callers leave them untouched)', () => {
+			for (const tag of ['br', 'Input', 'img', 'div', 'span', 'randomtag']) {
+				assert.strictEqual(resolveToolNameLoose(tag), null, `${tag} should resolve to null`);
+			}
+		});
+
+		test('resolveInvokeToolName resolves tools but lowercases unknown tags', () => {
+			assert.strictEqual(resolveInvokeToolName('FileRead'), 'read_file');
+			assert.strictEqual(resolveInvokeToolName('SomeUnknownTag'), 'someunknowntag');
 		});
 	});
 });

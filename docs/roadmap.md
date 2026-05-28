@@ -1716,7 +1716,7 @@ vibeide.subagent.*, vibeide.mcp.*, vibeide.commands.audit*, …
 - [x] **Модал: ресайз + ≤800×600.** `.vibeide-modal` → `resize: both` + `overflow:hidden` + дефолт-кап `max-width:min(800px,95vw)`/`max-height:min(600px,90vh)`, `min` 320×160; size-варианты задают дефолт-ширину; body `flex:1`+`min-height:0` (скролл при сжатии). — ✅
 
 **Backlog:**
-- [ ] **Регресс-тесты** `xmlToolNormalize`: `<FileRead/>`/`<ReadFile/>`/`<fileRead/>` → read_file; `<br/>`/`<Input/>` нетронуты (node-верифицировано, но юнит-тест в репо стоит добавить — локальный раннер на stale `out/`).
+- [x] **Регресс-тесты** `xmlToolNormalize` — ✅ (2026-05-28): добавлен прямой сьют `resolveToolNameLoose` в `test/common/xmlToolNormalize.test.ts` — `read_file/FileRead/ReadFile/fileRead/file_read/READFILE/File-Read/Read_File` → `read_file`, кросс-алиасы `read/bash/view`, не-тул-теги (`br/Input/img/div/span`) → `null`, `resolveInvokeToolName` lowercases неизвестные. (Существующий сьют покрывал только `normalizeAlternativeToolSyntax`, не сам резолвер.) Verified esbuild+Node.
 - [ ] **Paired-form спеллинги** `<FileRead>...</FileRead>` (не self-closing) — резолвятся ли через loose? Проверить extractGrammar-путь.
 
 ---
