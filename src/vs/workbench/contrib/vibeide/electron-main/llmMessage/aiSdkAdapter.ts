@@ -26,6 +26,7 @@ import { createHash } from 'crypto';
 import { generateUuid } from '../../../../../base/common/uuid.js';
 import { availableTools, InternalToolInfo } from '../../common/prompt/prompts.js';
 import { TOOL_NAME_ALIASES, applyParamAliases } from '../../common/prompt/toolAliases.js';
+import { lenientJsonParseObject } from '../../common/lenientJson.js';
 import { getModelSdkNpm } from './modelsDevCatalog.js';
 import { getModelCapabilities } from '../../common/modelCapabilities.js';
 import { buildContextOverflowError, buildEmptyResponseError, isContextOverflow, LLMChatMessage, LLMTokenUsage, RawToolCallObj, RawToolParamsObj } from '../../common/sendLLMMessageTypes.js';
@@ -401,7 +402,7 @@ const convertMessagesToModelMessages = (messages: LLMChatMessage[], modelName: s
 				for (const tc of msg.tool_calls) {
 					let input: any = {};
 					try { input = JSON.parse(tc?.function?.arguments ?? '{}'); }
-					catch { input = {}; }
+					catch { input = lenientJsonParseObject(tc?.function?.arguments) ?? {}; } // roadmap 1708: recover malformed JSON args instead of dropping them
 					parts.push({
 						type: 'tool-call',
 						toolCallId: tc?.id ?? generateUuid(),
@@ -582,14 +583,22 @@ export const INVALID_TOOL_NAME = 'invalid' as const;
 function repairToolArgsViaAliases(canonicalToolName: string, rawInput: unknown): { input: unknown; changed: boolean } {
 	if (typeof rawInput !== 'string') { return { input: rawInput, changed: false }; }
 	let parsed: unknown;
+	let usedLenient = false;
 	try { parsed = JSON.parse(rawInput); }
-	catch { return { input: rawInput, changed: false }; }
+	catch {
+		// roadmap 1708: try to recover malformed JSON before giving up.
+		parsed = lenientJsonParseObject(rawInput);
+		if (parsed === undefined) { return { input: rawInput, changed: false }; }
+		usedLenient = true;
+	}
 	if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) { return { input: rawInput, changed: false }; }
 	const aliased = applyParamAliases(canonicalToolName, parsed as { [k: string]: unknown });
 	// Detect a real rename by comparing key sets (ignores value/order noise).
 	const before = Object.keys(parsed as object).sort().join(',');
 	const after = Object.keys(aliased).sort().join(',');
-	if (before === after) { return { input: rawInput, changed: false }; }
+	// When we had to repair malformed JSON, return the re-serialized valid form even
+	// if no key was aliased — otherwise the caller would re-use the broken original.
+	if (before === after && !usedLenient) { return { input: rawInput, changed: false }; }
 	return { input: JSON.stringify(aliased), changed: true };
 }
 
@@ -915,7 +924,7 @@ export const sendViaAISdk = async (params: SendChatParams_Internal): Promise<voi
 		if (!toolName) return null;
 		let input: unknown;
 		try { input = JSON.parse(toolParamsStr || '{}'); }
-		catch { return null; }
+		catch { input = lenientJsonParseObject(toolParamsStr); } // roadmap 1708: recover malformed JSON args instead of dropping the whole call
 		if (input === null || typeof input !== 'object') return null;
 		const rawParams = input as RawToolParamsObj;
 		return {
