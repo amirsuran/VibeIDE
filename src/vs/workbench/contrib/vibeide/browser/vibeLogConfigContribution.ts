@@ -51,6 +51,7 @@ class VibeLogConfigContribution extends Disposable implements IWorkbenchContribu
 			enabled: c.getValue<boolean>('vibeide.logging.enabled'),
 			level: c.getValue<string>('vibeide.logging.level'),
 			categories: c.getValue<string[]>('vibeide.logging.categories'),
+			categoryLevels: c.getValue<{ [category: string]: string }>('vibeide.logging.categoryLevels'),
 			timestamps: c.getValue<boolean>('vibeide.logging.timestamps'),
 			bufferSize: c.getValue<number>('vibeide.logging.bufferSize'),
 			dedupe: c.getValue<boolean>('vibeide.logging.collapseRepeats'),

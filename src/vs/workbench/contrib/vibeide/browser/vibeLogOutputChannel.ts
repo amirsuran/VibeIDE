@@ -58,7 +58,7 @@ class VibeLogOutputChannelContribution extends Disposable implements IWorkbenchC
 			joinPath(environmentService.logsHome, 'vibeide.log'),
 			{ id: 'vibeideFileLog', name: 'VibeIDE', hidden: true, logLevel: LogLevel.Trace },
 		));
-		this._register(toDisposable(vibeLog.addSink(entry => {
+		const writeEntryToFile = (entry: { level: string; category: string; msg: string }) => {
 			const line = `[VibeIDE/${entry.category}] ${entry.msg}`;
 			switch (entry.level) {
 				case 'error': fileLogger.error(line); break;
@@ -67,7 +67,12 @@ class VibeLogOutputChannelContribution extends Disposable implements IWorkbenchC
 				case 'trace': fileLogger.trace(line); break;
 				default: fileLogger.info(line); break;
 			}
-		})));
+		};
+		// Flush the ring buffer to the file too: this sink is wired at AfterRestored,
+		// so without this the early-startup lines (already in the buffer, and flushed
+		// to the Output channel above) would never reach the persistent file.
+		for (const entry of vibeLog.getRecentEntries()) { writeEntryToFile(entry); }
+		this._register(toDisposable(vibeLog.addSink(writeEntryToFile)));
 	}
 }
 

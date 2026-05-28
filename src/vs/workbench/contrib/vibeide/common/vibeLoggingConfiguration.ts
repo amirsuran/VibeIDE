@@ -43,6 +43,15 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 			default: [],
 			description: localize('vibeide.logging.categories', 'Allowlist категорий (блоков). Пусто = показывать все. Иначе в консоль проходят только перечисленные категории, напр. ["Tool","llmTurn"]. Имя категории — это часть префикса `[VibeIDE/<категория>]`.'),
 		},
+		'vibeide.logging.categoryLevels': {
+			type: 'object',
+			default: {},
+			additionalProperties: {
+				type: 'string',
+				enum: ['off', 'error', 'warn', 'info', 'debug', 'trace'],
+			},
+			description: localize('vibeide.logging.categoryLevels', 'Точечный порог уровня на отдельные категории — переопределяет глобальный `level` только для перечисленных. Ключ — имя категории (часть `[VibeIDE/<категория>]`), значение — уровень. Напр. {"llmTurn":"off","Tool":"trace"} заглушит llmTurn и включит максимум для Tool, остальные категории — по глобальному уровню. Работает поверх allowlist `categories` (если он непустой, незалистенные категории всё равно не проходят).'),
+		},
 		'vibeide.logging.timestamps': {
 			type: 'boolean',
 			default: true,

@@ -3086,9 +3086,10 @@ vibeide.subagent.*, vibeide.mcp.*, vibeide.commands.audit*, …
 
 Backlog:
 - [ ] **IPC live-sync в `electron-main`**: пробросить `vibeide.logging.*` (и redactor) в main-процесс (сейчас main управляется только `VIBE_LOG*`-переменными; redactor в main не установлен).
-- [ ] **Per-category levels**: `vibeide.logging.categoryLevels` (напр. `{"llmTurn":"off","Tool":"debug"}`) — точечный порог вместо одного глобального.
+- [x] **Per-category levels** — ✅ (2026-05-28): `vibeide.logging.categoryLevels` (напр. `{"llmTurn":"off","Tool":"trace"}`) переопределяет глобальный `level` на отдельные категории. Проводка `passes()`→per-cat threshold, `configure()`/`getConfig()` снапшот, bridge + регистрация настройки (object/additionalProperties enum). Verified esbuild+Node.
 - [ ] **Взрыв категорий**: после миграции logService категорий стало ~150 (по имени файла). Сгруппировать (напр. префикс-домены `chat/`, `llm/`, `mcp/`) — иначе «Фильтр категорий» неудобен; и подсказывать известные в Settings UI.
-- [ ] **Backlog → файл**: ring-buffer flush'ится в Output-канал на старте, но не в файловый sink (ранние строки до AfterRestored в файл не попадают). Добавить `getRecentEntries()` и flush в файл.
+- [x] **Backlog → файл** — ✅ (2026-05-28): добавлен `vibeLog.getRecentEntries()` (raw-entries); файловый sink на старте флушит ring-buffer (ранние строки до AfterRestored теперь попадают и в `vibeide.log`, не только в Output-канал). Запись entry вынесена в общий `writeEntryToFile`.
+- [x] **Фикс: сырые NUL-байты в `vibeLog.ts`** — ✅ (2026-05-28): dedup-ключ `emit()` содержал ДВА литеральных NUL (`0x00`) как разделители → git/`file` считали файл бинарным (нет text-diff/blame), невалидный UTF-8. Заменены на escape `\x00` — рантайм-значение байт-в-байт идентично (проверено: dedup collapse работает), файл стал чистым UTF-8.
 
 ## AC. Логи без датавремени + рассинхрон «инструмент ↔ параметры» (сессия 2026-05-28)
 
