@@ -876,7 +876,7 @@ const prepareOpenAIOrAnthropicMessages = ({
 	//
 	// XML-tagged sections keep the model from confusing system context with user-attached content (e.g. images).
 	const sysMsgParts: string[] = []
-	if (aiInstructions) sysMsgParts.push(`<workspace_guidelines source=".vibe/rules.md, AGENTS.md">\n${aiInstructions}\n</workspace_guidelines>`)
+	if (aiInstructions) sysMsgParts.push(`<workspace_guidelines source=".vibe/rules.md, AGENTS.md, .vibe/goals.md">\n${aiInstructions}\n</workspace_guidelines>`)
 	if (systemMessage) sysMsgParts.push(`<assistant_instructions>\n${systemMessage}\n</assistant_instructions>`)
 	const combinedSystemMessage = sysMsgParts.join('\n\n')
 
@@ -1351,6 +1351,28 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 		}
 	}
 
+	// Read `.vibe/goals.md` (open-document model). Injected as PASSIVE context so the
+	// model SEES the file exists and its current content — instead of inventing a new
+	// goals file (observed: minimax created `.vibe/goals/<NAME>.md`, ignoring the
+	// playbook instruction to use the root file). Returns '' for the untouched template
+	// (heading + comments only) so empty goals add zero prompt noise.
+	private _getVibeGoalsFileContent(): string {
+		try {
+			const parts: string[] = [];
+			for (const folder of this.workspaceContextService.getWorkspace().folders) {
+				const model = this.vibeideModelService.getModel(URI.joinPath(folder.uri, '.vibe', 'goals.md')).model;
+				if (!model) { continue; }
+				const stripped = model.getValue(EndOfLinePreference.LF).replace(/<!--[\s\S]*?-->/g, '').trim();
+				const body = stripped.replace(/^#.*$/m, '').trim(); // drop heading to test for real content
+				if (body.length > 0) { parts.push(stripped); }
+			}
+			return parts.join('\n\n').trim();
+		}
+		catch (e) {
+			return ''
+		}
+	}
+
 	// Get combined AI instructions from settings, .vibe/rules.md, and AGENTS.md (via open models)
 	private _getCombinedAIInstructions(): string {
 		const globalAIInstructions = this.vibeideSettingsService.state.globalSettings.aiInstructions;
@@ -1361,6 +1383,13 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 		if (vibeRulesFileContent) ans.push(vibeRulesFileContent)
 		if (this.workspaceContextService.getWorkspace().folders.length > 0) {
 			ans.push(VIBE_DOTVIBE_AGENT_PLAYBOOK)
+		}
+		// Inject current .vibe/goals.md as passive context: the model SEES the file
+		// exists and its content, so it updates the root file instead of inventing a
+		// new goals file/subfolder. Empty/template goals.md contributes nothing.
+		const sessionGoals = this._getVibeGoalsFileContent()
+		if (sessionGoals) {
+			ans.push(`<session_goals source=".vibe/goals.md">\nТекущие цели сессии. Когда нужно записать или обновить цели — пиши ИМЕННО в корневой .vibe/goals.md (НЕ создавай подпапки .vibe/goals/… и не заводи отдельные файлы целей).\n\n${sessionGoals}\n</session_goals>`)
 		}
 		return ans.join('\n\n')
 	}

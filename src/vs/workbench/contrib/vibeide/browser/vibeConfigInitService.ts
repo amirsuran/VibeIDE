@@ -155,6 +155,9 @@ export class VibeConfigInitContribution extends Disposable implements IWorkbench
 				joinPath(vibeDir, 'goals.md'),
 				`# Цели сессии\n\n<!-- vibeVersion: ${VIBE_VERSION} -->\n<!-- Опишите цели периода. Агент может обновлять файл по вашей просьбе; чтобы запретить — deny_write для .vibe/goals.md в constraints.json. -->\n\n`
 			);
+			// Keep goals.md open so convertToLLMMessageService can read it synchronously
+			// and inject current goals into the agent context (mirrors rules.md above).
+			await this._vibeideModelService.initializeModel(joinPath(vibeDir, 'goals.md'));
 
 			// Create .vibe/prompts/ directory for Prompt Library
 			await this._fileService.createFolder(joinPath(vibeDir, 'prompts'));
