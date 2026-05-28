@@ -69,5 +69,10 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 			default: true,
 			description: localize('vibeide.logging.collapseRepeats', 'Схлопывать подряд идущие одинаковые строки лога в одну с пометкой «(повторилось ещё ×N)» — убирает спам в циклах (напр. повторные invalid_params). Выключите, чтобы видеть каждую строку.'),
 		},
+		'vibeide.debug.dumpFullPrompt': {
+			type: 'boolean',
+			default: false,
+			description: localize('vibeide.debug.dumpFullPrompt', 'Диагностика: при каждом LLM-запросе логировать ПОЛНЫЙ payload через `[VibeIDE/promptDump]` — system + по каждому сообщению role/content/reasoning/tool (секреты редактируются). Нужно для разбора зависаний reasoning-roundtrip (minimax/deepseek/kimi через openCode). По умолчанию off (иначе бьёт по объёму логов и токен-бюджету DevTools). Сводка (длины + reasoningLen на сообщение) пишется ВСЕГДА, без этого флага.'),
+		},
 	},
 });

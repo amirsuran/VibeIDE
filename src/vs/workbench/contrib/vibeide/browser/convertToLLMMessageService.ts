@@ -2161,8 +2161,36 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 				explicitSkillsTotalBodyChars: explicitSkillBodies.reduce((a, b) => a + b.body.length, 0),
 				aiInstructionsLen: aiInstructions.length,
 				messagesCount: messages.length,
-				messagesLens: messages.map(m => ({ role: m.role, len: lenOf(m) })),
+				messagesLens: messages.map(m => {
+					const mm = m as { reasoning_content?: unknown; reasoning?: unknown; name?: unknown };
+					const reasoning = typeof mm.reasoning_content === 'string' ? mm.reasoning_content : (typeof mm.reasoning === 'string' ? mm.reasoning : '');
+					return {
+						role: m.role,
+						len: lenOf(m),
+						reasoningLen: reasoning.length, // key signal for interleaved-reasoning stalls (minimax/deepseek/kimi): is reasoning carried on each assistant turn?
+						...(m.role === 'tool' && typeof mm.name === 'string' ? { tool: mm.name } : {}),
+					};
+				}),
 			});
+			// Opt-in FULL payload (per-message content + reasoning), gated by
+			// `vibeide.debug.dumpFullPrompt` to avoid bloating every request. Secrets are
+			// redacted by the vibeLog redactor. This is THE capture point for diagnosing
+			// reasoning-roundtrip stalls (minimax/openCode) — no separate proxy needed.
+			if (this.configurationService.getValue<boolean>('vibeide.debug.dumpFullPrompt')) {
+				vibeLog.debug('promptDump', 'full prompt (vibeide.debug.dumpFullPrompt)', {
+					system: sysContent,
+					messages: messages.map(m => {
+						const mm = m as { content?: unknown; reasoning_content?: unknown; reasoning?: unknown; name?: unknown };
+						const reasoning = typeof mm.reasoning_content === 'string' ? mm.reasoning_content : (typeof mm.reasoning === 'string' ? mm.reasoning : '');
+						return {
+							role: m.role,
+							tool: m.role === 'tool' && typeof mm.name === 'string' ? mm.name : undefined,
+							reasoning: reasoning || undefined,
+							content: extractText(mm.content),
+						};
+					}),
+				});
+			}
 		} catch (e) {
 			// eslint-disable-next-line no-console
 			vibeLog.warn('promptDump', 'dump failed', { err: String(e) });
