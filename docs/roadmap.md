@@ -3090,6 +3090,27 @@ Backlog:
 - [ ] **Взрыв категорий**: после миграции logService категорий стало ~150 (по имени файла). Сгруппировать (напр. префикс-домены `chat/`, `llm/`, `mcp/`) — иначе «Фильтр категорий» неудобен; и подсказывать известные в Settings UI.
 - [ ] **Backlog → файл**: ring-buffer flush'ится в Output-канал на старте, но не в файловый sink (ранние строки до AfterRestored в файл не попадают). Добавить `getRecentEntries()` и flush в файл.
 
+## AC. Логи без датавремени + рассинхрон «инструмент ↔ параметры» (сессия 2026-05-28)
+
+### Покрытие датавремени в логах — ✅ `48bca62b`
+- [x] **`base/common/vibeTimestamp.ts`** — общий zero-import форматтер `DD.MM.YYYY HH:mm:ss` (нижний слой, годен для base/platform/contrib и worker-бандлов без затягивания nls/platform).
+- [x] **Web-worker console** — обёртка `console.*` в `webWorkerBootstrap.ts` (единая точка входа всех воркеров): метка времени в отдельном realm, куда `vibeLog`/`firstRunValidation` не доходят (`languageDetectionWebWorker` и др.).
+- [x] **renderer `ConsoleLogger`** (`platform/log/common/log.ts`) — префикс датавремени на каждой `ILogService`-строке (`ERR/WARN/INFO/...`); ядро VS Code больше не льёт без метки. `ConsoleMainLogger` (main) не тронут — у него уже `[main now()]`.
+- [x] **`vibeTraceTs` → делегирует в `vibeTimestamp`** — убрана третья копия формата (single source).
+- [x] **require-warn в langdetect-worker** приглушён: `runModel`-сбой (`require is not defined`) ставит `_loadFailed` и уходит в regexp-fallback вместо warn-спама на каждый вызов.
+
+### Shape-routing + thrash-breaker (инцидент #010) — ✅ `66ec0f20` + review-фиксы сессии
+- [x] **Многоформенный shape-корректор** (`chatThreadService._runToolCall`): `{command}`→run_command, `{query,search_in_folder}` без uri→search_for_files, `{uri,…}` без command/query/pattern→read_file (только от non-uri инструментов). Матчит форму, НЕ имя модели.
+- [x] **Thrash circuit breaker**: trip при M подряд `invalid_params` любого имени/формы (`vibeide.chat.toolInvalidParamsThrashBreakerThreshold`, default 6) — старый `sameLoop` (одинаковый tool + форма) ловил не всё.
+- [x] **Фикс регрессии hijack (review-пасс 2026-05-28)**: search-ветка больше не угоняет легитимные `search_pathnames_only`/`search_symbols`/`search_in_file` (deny-list `query`-владельцев); command-ветка исключает `run_persistent_command`; `run_in_background` добавлен в форму run_command.
+- [x] **Метрика `Tool Auto-Routed By Shape`** `{fromTool,toTool,paramKeysSig}` — наблюдаемость частоты рассинхрона (зеркалит метрику брейкера; сигнал для расследования model-stalls без копания в консоли).
+
+Backlog (data-gated — не плодить спекулятивно, урок #005 в `model-stalls.md`):
+- [ ] **Pattern-shape routing**: `{pattern, search_in_folder}` неоднозначен между `grep` и `glob` — нужна эвристика (regex-метасимволы → grep, иначе glob). Отложено до реальных данных.
+- [ ] **Ratio-thrash breaker**: текущий thrash строго «подряд»; если ошибки перемежаются успехами и всё равно жгут бюджет (как в #010) — перейти на «N из последних M». Только при наблюдении такого кейса.
+- [ ] **`{uri}` file-vs-dir эвристика**: голый `{uri}` под non-uri инструментом сейчас → read_file; если путь — папка (без расширения / trailing slash), мог бы быть `ls_dir`. Низкий приоритет.
+- [ ] **Централизация tool-shape-owner наборов**: списки имён (uri-owning / query-owning / command-owning) инлайнены в корректоре; при росте числа инструментов вынести рядом со схемами (`toolsService`/`toolAliases`) как single source.
+
 | Документ | Описание |
 |---|---|
 | [`docs/v1/`](v1/README.md) | Детальная документация по всем модулям |

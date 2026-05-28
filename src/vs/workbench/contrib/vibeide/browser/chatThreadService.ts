@@ -3493,18 +3493,23 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 			const hasStr = (k: string) => typeof paramsObjForShape[k] === 'string' && (paramsObjForShape[k] as string).length > 0;
 			// Match on the param SHAPE, never the model name (no per-provider hardcode).
 			// Re-route only when the shape uniquely belongs to ONE tool whose required
-			// field is present while the requested tool's own required field is absent.
+			// field is present, AND the requested tool does NOT itself own that field
+			// (otherwise we'd HIJACK a legitimate call). `command`/`query` are shared by
+			// sibling tools, so each branch excludes its shape-owning siblings.
 			let shapeTarget: ToolName | undefined;
-			if (hasStr('command') && keys.every(k => k === 'command' || k === 'cwd' || k === 'timeout_ms')) {
-				// {command, cwd?, timeout_ms?} — unique to run_command.
-				if (requestedToolName !== 'run_command') { shapeTarget = 'run_command' as ToolName; }
+			if (hasStr('command') && keys.every(k => k === 'command' || k === 'cwd' || k === 'timeout_ms' || k === 'run_in_background')) {
+				// {command, cwd?, timeout_ms?, run_in_background?}. `command` is also the
+				// required field of run_persistent_command — exclude it as a source.
+				if (requestedToolName !== 'run_command' && requestedToolName !== 'run_persistent_command') { shapeTarget = 'run_command' as ToolName; }
 			} else if (hasStr('query') && !('uri' in paramsObjForShape) && keys.every(k => k === 'query' || k === 'search_in_folder' || k === 'is_regex' || k === 'page_number')) {
-				// {query, search_in_folder?, ...} WITHOUT uri — the file-search shape
-				// (search_in_file pairs query WITH uri, so the `!uri` guard disambiguates).
-				if (requestedToolName !== 'search_for_files') { shapeTarget = 'search_for_files' as ToolName; }
+				// {query, search_in_folder?, ...} WITHOUT uri. `query` is owned by several
+				// search tools, so never re-route FROM one of them (that would hijack a
+				// valid call) — only from a tool that takes no query at all (the real
+				// misname, e.g. read_file<-{query, search_in_folder}).
+				if (!['search_for_files', 'search_pathnames_only', 'search_symbols', 'search_in_file'].includes(requestedToolName as string)) { shapeTarget = 'search_for_files' as ToolName; }
 			} else if (hasStr('uri') && !hasStr('command') && !hasStr('query') && !('pattern' in paramsObjForShape)
 				&& keys.every(k => k === 'uri' || k === 'start_line' || k === 'end_line' || k === 'page_number' || k === 'line_limit' || k === 'with_line_numbers')
-				&& ['run_command', 'run_nl_command', 'search_for_files', 'search_pathnames_only', 'grep', 'glob'].includes(requestedToolName as string)) {
+				&& ['run_command', 'run_persistent_command', 'run_nl_command', 'search_for_files', 'search_pathnames_only', 'grep', 'glob'].includes(requestedToolName as string)) {
 				// A bare/paginated {uri} is ambiguous across uri-based tools (ls_dir,
 				// get_dir_tree, search_in_file, ...), so only re-route to read_file when
 				// the requested tool is a NON-uri tool (its required field is
@@ -3516,6 +3521,14 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 					originalTool: requestedToolName,
 					target: shapeTarget,
 					keys,
+				});
+				// Observability: how often (and from which wrong name) models misalign
+				// tool-name <-> params shape. Mirrors the breaker metric so the
+				// model-stalls investigation has aggregated signal, not just console logs.
+				this._metricsService.capture('Tool Auto-Routed By Shape', {
+					fromTool: requestedToolName,
+					toTool: shapeTarget,
+					paramKeysSig: keys.slice().sort().join(','),
 				});
 				effectiveRequestedToolName = shapeTarget;
 			}
