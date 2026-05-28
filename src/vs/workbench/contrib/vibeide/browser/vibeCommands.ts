@@ -41,6 +41,7 @@ import { IClipboardService } from '../../../../platform/clipboard/common/clipboa
 import { IProductService } from '../../../../platform/product/common/productService.js';
 import { IAuditLogService } from '../common/auditLogService.js';
 import { IVibeideSettingsService } from '../common/vibeideSettingsService.js';
+import { ProviderName } from '../common/vibeideSettingsTypes.js';
 import { isWindows, isMacintosh, isLinux } from '../../../../base/common/platform.js';
 import type { PlanMessage } from '../common/chatThreadServiceTypes.js';
 
@@ -423,6 +424,55 @@ registerAction2(class extends Action2 {
 		const skillsDir = joinPath(roots[0].uri, '.vibe', 'skills');
 		await files.createFolder(skillsDir);
 		await cmds.executeCommand('revealInExplorer', skillsDir);
+	}
+});
+
+// Reset auto-detected tool-format overrides. The agent loop auto-downgrades a
+// model to XML-fallback after repeated native-FC tool failures (roadmap O.9/O.11,
+// model-stalls #008), writing an `_autoDetected` override. That recovers
+// stability but is sticky — if the provider/model later behaves, the model stays
+// in slower XML mode. This command clears all such overrides in one click so the
+// next call retries native function-calling. Manual overrides (no `_autoDetected`)
+// are left untouched. Mirrors the per-model clear in chatThreadService O.11.
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: 'vibeide.toolFormat.resetAutoDetectedOverrides',
+			f1: true,
+			title: localize2('vibeideResetToolFormatTitle', 'VibeIDE: Reset auto-detected tool-format overrides (re-enable native tool calling)'),
+			category: localize2('vibeCategory', 'VibeIDE'),
+		});
+	}
+
+	async run(accessor: ServicesAccessor): Promise<void> {
+		const settings = accessor.get(IVibeideSettingsService);
+		const notifications = accessor.get(INotificationService);
+
+		const overridesOfModel = settings.state.overridesOfModel;
+		const toClear: { provider: ProviderName; model: string }[] = [];
+		for (const provider of Object.keys(overridesOfModel) as ProviderName[]) {
+			const models = overridesOfModel[provider];
+			if (!models) { continue; }
+			for (const model of Object.keys(models)) {
+				if (models[model]?._autoDetected) { toClear.push({ provider, model }); }
+			}
+		}
+
+		if (toClear.length === 0) {
+			notifications.info(localize('vibeideResetToolFormatNone', 'Авто-определённых tool-format оверрайдов нет — все модели уже в исходном режиме.'));
+			return;
+		}
+
+		for (const { provider, model } of toClear) {
+			await settings.setOverridesOfModel(provider, model, undefined);
+		}
+
+		notifications.info(localize(
+			'vibeideResetToolFormatDone',
+			'Сброшено авто-оверрайдов tool-format: {0}. При следующем вызове модели снова попробуют native function-calling: {1}.',
+			toClear.length,
+			toClear.map(t => `${t.provider}/${t.model}`).join(', '),
+		));
 	}
 });
 
