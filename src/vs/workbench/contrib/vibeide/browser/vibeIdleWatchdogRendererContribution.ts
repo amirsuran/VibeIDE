@@ -69,6 +69,13 @@ interface RendererGcObserver { snapshot(): RendererGcMetrics; dispose(): void }
 function attachRendererGcObserver(): RendererGcObserver | undefined {
 	const PerfObs = (globalThis as unknown as { PerformanceObserver?: typeof PerformanceObserver }).PerformanceObserver;
 	if (typeof PerfObs !== 'function') return undefined;
+	// Skip when this Chromium build doesn't expose the 'gc' performance entry type.
+	// `observe({ entryTypes: ['gc'] })` does NOT throw on an unsupported type — it
+	// silently observes nothing AND makes Chrome print a non-interceptable console
+	// warning ("The entry type 'gc' does not exist or isn't supported.") that bypasses
+	// console.* (so it can never carry our datetime prefix). Gate on supportedEntryTypes.
+	const supported = (PerfObs as unknown as { supportedEntryTypes?: readonly string[] }).supportedEntryTypes;
+	if (Array.isArray(supported) && !supported.includes('gc')) return undefined;
 	try {
 		const metrics: RendererGcMetrics = { count: 0, majorCount: 0, totalMs: 0 };
 		const obs = new PerfObs((list) => {

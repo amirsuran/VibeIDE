@@ -3099,6 +3099,9 @@ Backlog:
 - [x] **renderer `ConsoleLogger`** (`platform/log/common/log.ts`) — префикс датавремени на каждой `ILogService`-строке (`ERR/WARN/INFO/...`); ядро VS Code больше не льёт без метки. `ConsoleMainLogger` (main) не тронут — у него уже `[main now()]`.
 - [x] **`vibeTraceTs` → делегирует в `vibeTimestamp`** — убрана третья копия формата (single source).
 - [x] **require-warn в langdetect-worker** приглушён: `runModel`-сбой (`require is not defined`) ставит `_loadFailed` и уходит в regexp-fallback вместо warn-спама на каждый вызов.
+- [x] **Вывод Extension Host** (2026-05-28, после 0.13.30): форвард EH stdout/stderr логировался прямым `console.log(output.data, …)` (`localProcessExtensionHost.ts:318`) мимо ConsoleLogger → без метки (напр. Node `punycode` DEP0040). Добавлен префикс `[ts]` (через общий `vibeTimestamp`, доп. `%c` для серого цвета).
+- [x] **`gc` PerformanceObserver-warning** (2026-05-28): `obs.observe({entryTypes:['gc']})` на неподдерживающем Chromium НЕ бросал, но Chrome печатал не-перехватываемый warning «The entry type 'gc' …» мимо `console.*` (застампить нельзя в принципе). Решено в корне — guard по `supportedEntryTypes` (`vibeIdleWatchdogRendererContribution.ts`), warning больше не возникает.
+- **Предел (зафиксировать):** нативные warning'и Chromium (PerformanceObserver, Web Locks, deprecations DOM-API) пишутся в DevTools-консоль НАПРЯМУЮ, минуя `console.*` — их метку времени добавить нельзя; стратегия = стампить все НАШИ пути + глушить/избегать известный нативный шум.
 
 ### Shape-routing + thrash-breaker (инцидент #010) — ✅ `66ec0f20` + review-фиксы сессии
 - [x] **Многоформенный shape-корректор** (`chatThreadService._runToolCall`): `{command}`→run_command, `{query,search_in_folder}` без uri→search_for_files, `{uri,…}` без command/query/pattern→read_file (только от non-uri инструментов). Матчит форму, НЕ имя модели.

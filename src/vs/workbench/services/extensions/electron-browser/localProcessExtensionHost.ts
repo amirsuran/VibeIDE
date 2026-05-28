@@ -5,6 +5,7 @@
 
 import { timeout } from '../../../../base/common/async.js';
 import { encodeBase64, VSBuffer } from '../../../../base/common/buffer.js';
+import { vibeTimestamp } from '../../../../base/common/vibeTimestamp.js';
 import { CancellationError } from '../../../../base/common/errors.js';
 import { Emitter, Event } from '../../../../base/common/event.js';
 import { Disposable, toDisposable } from '../../../../base/common/lifecycle.js';
@@ -315,7 +316,12 @@ export class NativeLocalProcessExtensionHost extends Disposable implements IExte
 			} else {
 				if (!this._isExtensionDevTestFromCli) {
 					console.group('Extension Host');
-					console.log(output.data, ...output.format);
+					// Prefix a datetime so forwarded EH stdout/stderr (e.g. Node deprecation
+					// warnings) carries the same wall-clock stamp as vibeLog / ConsoleLogger
+					// lines, instead of being the one un-timestamped console path. The leading
+					// `%c` consumes the gray-color arg; output.data's own `%c` markers keep
+					// pairing with output.format after it.
+					console.log(`%c[${vibeTimestamp()}] ${output.data}`, 'color: gray', ...output.format);
 					console.groupEnd();
 				}
 			}
