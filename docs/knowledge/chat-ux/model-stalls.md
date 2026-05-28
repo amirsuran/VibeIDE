@@ -71,6 +71,28 @@
 
 <!-- Добавлять новые записи СВЕРХУ. Нумерация сквозная, инкрементная. -->
 
+### #010 — 2026-05-28 — Агент встал в петлю «имя инструмента ↔ форма параметров» (deepseek через openCode Go), выжег весь токен-бюджет
+
+- **Где:** проект BookCatalog (Dockerfile/.dockerignore), Agent-режим.
+- **Что делали:** агент исследовал проект; пользователь прислал DevTools-лог («агент опять остановился»).
+- **Симптом:** модель шлёт правильные параметры под ЧУЖИМ именем инструмента → `[VibeIDE/Tool] invalid params` → schema-hint → ретрай. Два подтверждённых случая в логе:
+  1. `run_command` ← `{uri: "...Dockerfile"}` (форма **read_file**, `command` undefined).
+  2. `read_file` ← `{query: ".dockerignore", search_in_folder: "..."}` (форма **search_for_files**, `uri` undefined).
+  Параллельно TokenBudget рос 81% → 100% → авто-reset (2 012 769 токенов), затем срез 101 старого сообщения (cap=500). Последняя строка лога — `auto-routing read_file → run_command`, т.е. старый корректор сработал лишь для ОДНОГО направления.
+- **Окружение:** модель **deepseek** через провайдера **openCode (Go-сборка)**, режим Agent, Автопилот (session-token-limit 2 000 000).
+- **Корень (подтверждён кодом):** ДВА gap'а.
+  1. **Shape-корректор односторонний** (`chatThreadService.ts` `_runToolCall`): распознавал только форму `run_command` (`{command,…}`). Формы `read_file` (`{uri}`) и `search_for_files` (`{query, search_in_folder}`) не покрывал → падали в валидацию.
+  2. **Circuit breaker слишком узкий** (`sameLoop`): требует N подряд `invalid_params` с ОДНИМ именем + ОДНОЙ сигнатурой ключей. Модель «болталась» между разными формами и перемежала их тяжёлыми reasoning-ходами → `sameLoop` никогда не истинно → бугор молчал → бюджет выжжен.
+- **Сверено по валидаторам** (`toolsService.ts`): `read_file`→`uri`, `search_for_files`→`query`+`search_in_folder`, `run_command`→`command`.
+- **Фикс (реализован 2026-05-28):**
+  1. Shape-корректор сделан **многоформенным и консервативным** — `{command}`→run_command, `{query,search_in_folder}` без uri→search_for_files, `{uri,…}` без command/query/pattern→read_file (только если запрошен был non-uri инструмент). Матчит форму, НЕ имя модели.
+  2. Добавлен **thrash-брейкер**: ≥M (default 6, настройка `vibeide.chat.toolInvalidParamsThrashBreakerThreshold`) подряд `invalid_params` любого имени/формы без успешного вызова между ними → trip. M>2, чтобы self-recovery (#006) не обрывался.
+  - Детали механики — `docs/knowledge/chat-ux/circuit-breakers.md`.
+- **Замечание (честно):** в этом инциденте `invalid_params` перемежались успешными вызовами, поэтому thrash-брейкер (строго «подряд») мог бы и не сработать — РЕАЛЬНОЕ лекарство здесь shape-корректор (убирает падения в корне). Брейкер — backstop для будущих неизвестных форм. Если появится thrash с успехами между ошибками, всё ещё выжигающий бюджет — пересмотреть на ratio-детектор (N из последних M), но не раньше, чем накопятся данные (урок #005: не плодить предохранители спекулятивно).
+- **Связано:** #006 (та же aggregator-семья, self-recovery после invalid_params — порог M подобран так, чтобы её не рубить), #008 (другой stall той же deepseek/openCode-связки — XML-залипание после auto-downgrade).
+
+---
+
 ### #009 — 2026-05-25 — «Empty response from openCode/minimax-m2.7 (reason: unknown)» — у minimax не выставлен reasoning-roundtrip quirk
 
 - **Где:** VibeIDE 0.13.16, Agent-режим, провайдер openCode, модель minimax-m2.7.

@@ -6,17 +6,32 @@
 
 Оба паттерна теперь имеют circuit breakers с одинаковой философией: «дай N попыток, потом дай user'у явное actionable указание, не молча страдай».
 
+## Shape-based auto-routing (ПЕРЕД Breaker 1)
+
+`chatThreadService.ts` `_runToolCall`, до alias-резолва. Лечит **причину**, а не симптом: aggregator-проксированные модели (deepseek/minimax/qwen/nemotron через openCode & co.) шлют правильные параметры под **чужим** именем инструмента. Корректор матчит **форму параметров** (НЕ имя модели — никакого хардкода) и перенаправляет вызов туда, куда он по форме относится:
+
+| Форма параметров | → инструмент | Условие однозначности |
+|---|---|---|
+| `{command, cwd?, timeout_ms?}` | `run_command` | `command` — непустая строка, ключи ⊆ набора |
+| `{query, search_in_folder?, is_regex?, page_number?}` **без** `uri` | `search_for_files` | `query` — строка, нет `uri` (у `search_in_file` query идёт ВМЕСТЕ с uri) |
+| `{uri, start_line?, …}` без `command`/`query`/`pattern` | `read_file` | только если запрошенный был **non-uri** инструментом (`run_command`/`grep`/`glob`/…); голый `{uri}` иначе неоднозначен с `ls_dir`/`get_dir_tree` |
+
+Лог при срабатывании: `[VibeIDE/Tool] auto-routing <from> → <to> (<to>-shape params)`. Неоднозначные формы НЕ трогаются — падают в обычную валидацию.
+
 ## Breaker 1 — Tool Invalid Params (Stage C)
 
-`chatThreadService.ts:3375-3430` (`_runToolCall`).
+`chatThreadService.ts` `_runToolCall`. **Два независимых условия trip'а:**
 
-**Trigger:** последние N tool-сообщений в thread.messages — все:
-- `role: 'tool'`
-- `type: 'invalid_params'`
+**1a. Same-shape loop** — последние N tool-сообщений в thread.messages все:
+- `role: 'tool'`, `type: 'invalid_params'`
 - `name === toolName` (текущий)
 - `Object.keys(rawParams).sort().join(',')` === current signature
 
 **N:** `vibeide.chat.toolInvalidParamsCircuitBreakerThreshold` (default 3, range 1..20).
+
+**1b. Thrash loop** — последние M tool-сообщений все `invalid_params`, но **любого** имени/формы (без единого успешного вызова между ними). Ловит «болтанку», когда модель перебирает РАЗНЫЕ неверные сочетания «инструмент↔параметры» — `sameLoop` её не ловит, а токен-бюджет выжигается (инцидент #010).
+
+**M:** `vibeide.chat.toolInvalidParamsThrashBreakerThreshold` (default 6, range 3..20; > 2, чтобы self-recovery за пару попыток не обрывался — см. #006). Сообщение/метрика помечаются `mode: 'thrash' | 'same-shape'`.
 
 **Action на trip:**
 - `_addMessageToThread` tool_error с понятным RU-сообщением «Прервано: модель N раз подряд вызвала "X" с одной и той же неверной формой...».

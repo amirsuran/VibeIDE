@@ -481,6 +481,14 @@ export class VibeideGlobalSettingsConfigurationContribution extends Disposable i
 					description: localize('vibeide.chat.toolInvalidParamsCircuitBreakerThreshold', 'Сколько раз подряд модель должна вызвать один и тот же tool с одной и той же неверной формой параметров (`invalid_params` подряд) до того, как VibeIDE прервёт чат с явной ошибкой вместо продолжения цикла schema-hint-ов. Защищает от OOM-петель когда aggregator-проксированные модели (Nemotron/qwen/minimax через openCode-zen) застревают в неверном tool-call shape. Сравнить с `emptyResponseCircuitBreakerThreshold` — оба ловят разные классы repetitive failures. По умолчанию 3.'),
 					scope: ConfigurationScope.APPLICATION,
 				},
+				'vibeide.chat.toolInvalidParamsThrashBreakerThreshold': {
+					type: 'number',
+					default: 6,
+					minimum: 3,
+					maximum: 20,
+					description: localize('vibeide.chat.toolInvalidParamsThrashBreakerThreshold', 'Сколько tool-вызовов подряд должны завершиться `invalid_params` (с ЛЮБЫМ именем инструмента и ЛЮБОЙ формой параметров, без единого успешного вызова между ними), чтобы VibeIDE прервал чат. В отличие от `toolInvalidParamsCircuitBreakerThreshold` (одинаковый tool + одинаковая форма) этот порог ловит «болтанку» (thrash), когда модель перебирает РАЗНЫЕ неверные сочетания «инструмент ↔ параметры» — типичный для aggregator-проксированных моделей рассинхрон, выжигающий весь токен-бюджет. По умолчанию 6 (> 2, чтобы модель, исправляющаяся за пару попыток, не обрывалась).'),
+					scope: ConfigurationScope.APPLICATION,
+				},
 				'vibeide.chat.maxMessagesPerThread': {
 					type: 'number',
 					default: 500,

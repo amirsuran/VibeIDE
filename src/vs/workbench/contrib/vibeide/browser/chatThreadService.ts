@@ -3477,27 +3477,47 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 			});
 			return {};
 		}
-		// Shape-based tool-name correction (BEFORE alias resolution). Some
-		// aggregator-proxied models (Nemotron via openCode/zen, qwen variants)
-		// emit the right params shape under the wrong tool name — e.g.
-		// `{command, cwd}` (the `run_command` shape) under tool name `read_file`
-		// or `grep`. Without this guard, validation rejects → schema-hint reply
-		// → model retries same wrong combo → infinite loop accumulating
-		// tool-error history (the very pattern that OOM'd long agent sessions).
-		// Only override when the shape is unambiguous: `command` is a non-empty
-		// string and all keys ⊆ {command, cwd, timeout_ms} — no other tool
-		// shares this signature.
+		// Shape-based tool-name correction (BEFORE alias resolution). Aggregator-
+		// proxied models (deepseek/minimax/qwen/nemotron via openCode & co.) often
+		// emit the RIGHT params under the WRONG tool name: `{command}` under
+		// `read_file`, `{uri}` under `run_command`, or `{query, search_in_folder}`
+		// under `read_file`. Without this guard validation rejects -> schema-hint
+		// reply -> model retries -> invalid_params loop that burns the whole token
+		// budget (historically OOM'd long sessions). Re-route to the tool the shape
+		// actually belongs to, but only when that shape is unambiguous (see below);
+		// ambiguous shapes are left untouched and fall through to normal validation.
 		const paramsObjForShape = opts.unvalidatedToolParams as Record<string, unknown> | undefined;
 		let effectiveRequestedToolName: ToolName = requestedToolName;
-		if (paramsObjForShape && typeof paramsObjForShape === 'object' && typeof paramsObjForShape.command === 'string' && paramsObjForShape.command.length > 0) {
+		if (paramsObjForShape && typeof paramsObjForShape === 'object') {
 			const keys = Object.keys(paramsObjForShape);
-			const isRunCommandShape = keys.every(k => k === 'command' || k === 'cwd' || k === 'timeout_ms');
-			if (isRunCommandShape && requestedToolName !== 'run_command' && isABuiltinToolName('run_command')) {
-				vibeLog.warn('Tool', `auto-routing ${requestedToolName} → run_command (run_command-shape params)`, {
+			const hasStr = (k: string) => typeof paramsObjForShape[k] === 'string' && (paramsObjForShape[k] as string).length > 0;
+			// Match on the param SHAPE, never the model name (no per-provider hardcode).
+			// Re-route only when the shape uniquely belongs to ONE tool whose required
+			// field is present while the requested tool's own required field is absent.
+			let shapeTarget: ToolName | undefined;
+			if (hasStr('command') && keys.every(k => k === 'command' || k === 'cwd' || k === 'timeout_ms')) {
+				// {command, cwd?, timeout_ms?} — unique to run_command.
+				if (requestedToolName !== 'run_command') { shapeTarget = 'run_command' as ToolName; }
+			} else if (hasStr('query') && !('uri' in paramsObjForShape) && keys.every(k => k === 'query' || k === 'search_in_folder' || k === 'is_regex' || k === 'page_number')) {
+				// {query, search_in_folder?, ...} WITHOUT uri — the file-search shape
+				// (search_in_file pairs query WITH uri, so the `!uri` guard disambiguates).
+				if (requestedToolName !== 'search_for_files') { shapeTarget = 'search_for_files' as ToolName; }
+			} else if (hasStr('uri') && !hasStr('command') && !hasStr('query') && !('pattern' in paramsObjForShape)
+				&& keys.every(k => k === 'uri' || k === 'start_line' || k === 'end_line' || k === 'page_number' || k === 'line_limit' || k === 'with_line_numbers')
+				&& ['run_command', 'run_nl_command', 'search_for_files', 'search_pathnames_only', 'grep', 'glob'].includes(requestedToolName as string)) {
+				// A bare/paginated {uri} is ambiguous across uri-based tools (ls_dir,
+				// get_dir_tree, search_in_file, ...), so only re-route to read_file when
+				// the requested tool is a NON-uri tool (its required field is
+				// command/query/pattern) and is therefore clearly mismatched.
+				shapeTarget = 'read_file' as ToolName;
+			}
+			if (shapeTarget && shapeTarget !== requestedToolName && isABuiltinToolName(shapeTarget)) {
+				vibeLog.warn('Tool', `auto-routing ${requestedToolName} → ${shapeTarget} (${shapeTarget}-shape params)`, {
 					originalTool: requestedToolName,
+					target: shapeTarget,
 					keys,
 				});
-				effectiveRequestedToolName = 'run_command' as ToolName;
+				effectiveRequestedToolName = shapeTarget;
 			}
 		}
 
@@ -3567,14 +3587,33 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 				? Object.keys(m.rawParams).slice().sort().join(',') === currentParamKeysSig
 				: false)
 		);
-		if (sameLoop) {
+		// Thrash breaker: `sameLoop` above only fires when the model repeats the
+		// EXACT same (tool, param-shape). Aggregator-proxied models instead thrash
+		// across DIFFERENT wrong combos (run_command<-{uri}, then read_file<-
+		// {query,...}), which never satisfies sameLoop yet still burns the whole
+		// token budget. Trip when the last M tool messages are ALL invalid_params
+		// (any tool/shape) -- no successful tool call broke the streak. M > 2 so a
+		// model that self-corrects within a couple tries (incident #006) isn't cut off.
+		const thrashBreakerLimit = Math.max(3, Math.min(20,
+			this._configurationService.getValue<number>('vibeide.chat.toolInvalidParamsThrashBreakerThreshold') ?? 6
+		));
+		const recentForThrash = (threadForBreaker?.messages ?? [])
+			.filter(m => m.role === 'tool')
+			.slice(-thrashBreakerLimit);
+		const thrashLoop = recentForThrash.length >= thrashBreakerLimit
+			&& recentForThrash.every(m => m.role === 'tool' && m.type === 'invalid_params');
+		if (sameLoop || thrashLoop) {
+			const isThrash = thrashLoop && !sameLoop;
 			const keysLabel = currentParamKeysSig || '(без параметров)';
-			const breakerMsg = `Прервано: модель ${invalidParamsBreakerLimit + 1} раз подряд вызвала "${toolName}" с одной и той же неверной формой параметров (${keysLabel}). Похоже на петлю — переключитесь на другую модель или начните новый чат.`;
-			vibeLog.warn('Tool', 'circuit breaker tripped', { toolName, keys: currentParamKeysSig });
+			const breakerMsg = isThrash
+				? `Прервано: модель ${thrashBreakerLimit + 1} раз подряд вызвала инструменты с неверными параметрами (последний — "${toolName}", ключи: ${keysLabel}). Похоже на петлю рассинхрона «инструмент ↔ параметры» — переключитесь на другую модель или начните новый чат.`
+				: `Прервано: модель ${invalidParamsBreakerLimit + 1} раз подряд вызвала "${toolName}" с одной и той же неверной формой параметров (${keysLabel}). Похоже на петлю — переключитесь на другую модель или начните новый чат.`;
+			vibeLog.warn('Tool', 'circuit breaker tripped', { toolName, keys: currentParamKeysSig, mode: isThrash ? 'thrash' : 'same-shape' });
 			this._metricsService.capture('Circuit Breaker Tripped — Tool Invalid Params', {
 				toolName,
 				paramKeysSig: currentParamKeysSig,
-				breakerLimit: invalidParamsBreakerLimit,
+				breakerLimit: isThrash ? thrashBreakerLimit : invalidParamsBreakerLimit,
+				mode: isThrash ? 'thrash' : 'same-shape',
 			});
 			this._addMessageToThread(threadId, {
 				role: 'tool',
