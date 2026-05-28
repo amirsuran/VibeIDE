@@ -2352,7 +2352,11 @@ export class ToolsService implements IToolsService {
 				}
 				// normal command
 				if (resolveReason.type === 'timeout') {
-					return `${commandInfo}${result_}\nTerminal command ran, but was automatically killed by VibeIDE after ${MAX_TERMINAL_INACTIVE_TIME}s of inactivity and did not finish successfully. To try with more time, open a persistent terminal and run the command there.`
+					const awaitingInput = looksLikeShellAwaitingInput(typeof result_ === 'string' ? result_ : '')
+					const tail = awaitingInput
+						? ' The shell was waiting for more input (a ">>" continuation prompt) — most likely an unterminated quote or here-string. Do NOT retry the same command; to write file contents use the rewrite_file or edit_file tool instead of building the file line-by-line in the shell.'
+						: ' To try with more time, open a persistent terminal and run the command there.'
+					return `${commandInfo}${result_}\nTerminal command ran, but was automatically killed by VibeIDE after ${MAX_TERMINAL_INACTIVE_TIME}s of inactivity and did not finish successfully.${tail}`
 				}
 				throw new Error(`Unexpected internal error: Terminal command did not resolve with a valid reason.`)
 			},
@@ -2366,7 +2370,11 @@ export class ToolsService implements IToolsService {
 				}
 				// bg command
 				if (resolveReason.type === 'timeout') {
-					return `${result_}\nTerminal command is running in terminal ${persistentTerminalId}. The given outputs are the results after ${MAX_TERMINAL_BG_COMMAND_TIME} seconds.`
+					const awaitingInput = looksLikeShellAwaitingInput(typeof result_ === 'string' ? result_ : '')
+					const suffix = awaitingInput
+						? ` The shell is waiting for more input (a ">>" continuation prompt) and will not proceed on its own — most likely an unterminated quote or here-string. Cancel it with kill_persistent_terminal and use rewrite_file/edit_file to write file contents instead of building the file line-by-line in the shell.`
+						: ''
+					return `${result_}\nTerminal command is running in terminal ${persistentTerminalId}. The given outputs are the results after ${MAX_TERMINAL_BG_COMMAND_TIME} seconds.${suffix}`
 				}
 				throw new Error(`Unexpected internal error: Terminal command did not resolve with a valid reason.`)
 			},
