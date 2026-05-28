@@ -29,6 +29,7 @@ import { IToolsService } from './toolsService.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { ILanguageFeaturesService } from '../../../../editor/common/services/languageFeatures.js';
 import { ChatMessage, ChatImageAttachment, ChatPDFAttachment, CheckpointEntry, CodespanLocationLink, StagingSelectionItem, ToolMessage, PlanMessage, PlanStep, StepStatus, ReviewMessage } from '../common/chatThreadServiceTypes.js';
+import { trimThreadMessages } from '../common/chatThreadTrim.js';
 import { Position } from '../../../../editor/common/core/position.js';
 import { IMetricsService } from '../common/metricsService.js';
 import { shorten } from '../../../../base/common/labels.js';
@@ -7612,37 +7613,21 @@ We only need to do it for files that were edited since `from`, ie files between 
 		)
 			? { ...message, createdAt: Date.now() } as ChatMessage
 			: message
-		// Compute new messages array, applying the hard cap if exceeded.
+		// Compute new messages array, applying the hard cap if exceeded. The trim is a
+		// pure, unit-tested helper (chatThreadTrim.ts) that bounds memory while pinning
+		// the original task so long sessions don't "forget" their goal (model-stalls #012).
 		const cap = Math.max(100, Math.min(5000,
 			this._configurationService.getValue<number>('vibeide.chat.maxMessagesPerThread') ?? 500
 		))
-		const target = Math.max(100, cap - ChatThreadService.TRIM_HEADROOM)
 		let nextMessages: ChatMessage[] = [...oldThread.messages, stampedMessage]
-		if (nextMessages.length > cap) {
-			const dropCount = nextMessages.length - target
-			// Pin the FIRST user message (the original task/goal) so it survives the trim.
-			// Without this, a long session that trims the oldest messages repeatedly scrolls
-			// the original request out of the thread entirely, and the model "forgets" what
-			// it was asked to do — greeting the user fresh as if the session were empty
-			// (model-stalls #012). Re-added at the head only when it would otherwise fall
-			// inside the dropped range (so it is never duplicated).
-			const firstUserIdx = nextMessages.findIndex(m => m.role === 'user')
-			const anchorMsg = (firstUserIdx >= 0 && firstUserIdx < dropCount) ? nextMessages[firstUserIdx] : undefined
-			const trimMarker: ChatMessage = {
-				role: 'assistant',
-				displayContent: `_(${dropCount} earlier message${dropCount === 1 ? '' : 's'} trimmed from thread to keep memory bounded. Convert pipeline still summarises older context into each LLM request.)_`,
-				reasoning: '',
-				anthropicReasoning: null,
-				createdAt: Date.now(),
-			}
-			nextMessages = anchorMsg
-				? [anchorMsg, trimMarker, ...nextMessages.slice(dropCount)]
-				: [trimMarker, ...nextMessages.slice(dropCount)]
-			vibeLog.warn('chatThread', `Trimmed ${dropCount} oldest messages from thread ${threadId} (cap=${cap}, target=${target}${anchorMsg ? ', pinned original task' : ''})`)
+		const trim = trimThreadMessages(nextMessages, cap, ChatThreadService.TRIM_HEADROOM)
+		if (trim) {
+			nextMessages = trim.trimmed
+			vibeLog.warn('chatThread', `Trimmed ${trim.dropCount} oldest messages from thread ${threadId} (cap=${cap}, target=${trim.target}${trim.pinnedAnchor ? ', pinned original task' : ''})`)
 			this._metricsService.capture('Thread Messages Trimmed', {
-				dropCount,
+				dropCount: trim.dropCount,
 				cap,
-				target,
+				target: trim.target,
 			})
 		}
 		// update state and store it

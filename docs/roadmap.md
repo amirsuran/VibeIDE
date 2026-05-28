@@ -3119,6 +3119,10 @@ Review-итерация 3 (2026-05-28, инцидент #011 — kimi-k2.6/openC
 Review-итерация 4 (2026-05-28, инцидент #012 — «модель всё забыла»):
 - [x] **Pin исходной задачи при thread-trim** — ✅: `_addMessageToThread` (`maxMessagesPerThread`=500) резал 101 самое старое сообщение → за 5 обрезок исходная задача «уезжала» из треда, модель здоровалась заново («контекст пуст»). Теперь первое `user`-сообщение закрепляется в голове при обрезке (`[anchor, trimMarker, ...tail]`, без дубля). Не overflow (контекст был 13%) — именно thread-level cap. Детали — `model-stalls.md` #012.
 
+Review-итерация 5 (2026-05-28, harden #012 + находки):
+- [x] **Вынос trim в чистую `trimThreadMessages`** (`common/chatThreadTrim.ts`) + **юнит-тест** `test/common/chatThreadTrim.test.ts` (15 кейсов: null-под-cap, обрезка до target, pin первого user-сообщения, НЕ-дубль когда оно в хвосте, no-user, orphan-tool, steady-state за 5 обрезок, clamp). Закрепил баг #012, убрал inline-сложность из `_addMessageToThread`. Проверено esbuild+Node — 15/15.
+- [ ] **Мёртвое поле `pinned` на `ChatMessage` (user)** — комментарий «survives compaction», но НИКТО не читает (grep: только tabs/`.vibe/commands.json` используют своё `pinned`). Решить: либо честно убрать поле+комментарий (осторожно — persisted-стейт треда), либо вживить (trim/compaction чтит `pinned:true`) + добавить команду «закрепить сообщение». Сейчас auto-pin первого user-сообщения (#012) покрывает основной кейс; ручной pin — кандидат в фичу.
+
 Backlog (data-gated — не плодить спекулятивно, урок #005 в `model-stalls.md`):
 - [ ] **Pattern-shape routing**: `{pattern, search_in_folder}` неоднозначен между `grep` и `glob` — нужна эвристика (regex-метасимволы → grep, иначе glob). Ждём сигнал из метрики `Tool Invalid Params` (какие `pattern`-формы реально приходят).
 - [ ] **Ratio-thrash breaker**: текущий thrash строго «подряд»; если ошибки перемежаются успехами и всё равно жгут бюджет (как в #010) — перейти на «N из последних M». Только при наблюдении такого кейса.
