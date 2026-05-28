@@ -71,6 +71,18 @@
 
 <!-- Добавлять новые записи СВЕРХУ. Нумерация сквозная, инкрементная. -->
 
+### #015 — 2026-05-28 — minimax-m2.7/openCode: PowerShell here-string hang-loop сжёг бюджет + HTTP 520 апстрима
+
+- **Где:** проект BookCatalog, Agent, minimax-m2.7 через openCode, Автопилот ∞. Установленная сборка — **0.13.31** (собрана 19:07; фиксы `search_for_files`/инжект целей в неё ещё не вошли).
+- **Симптом 1 (НАШЕ, чинится — главный пожиратель бюджета):** модель писала `backend/config/main-local.php` построчно через `powershell -NoProfile -Command "Add-Content ... -Value '...'"`, строя here-string (`@"`/`"@`). Незакрытая кавычка/here-string → PowerShell ушёл в **continuation-промпт `>>`** и завис → `run_command` вернул inactivity-timeout 10s. И так **десятки раз подряд** → три сессии сожжены до reset на **~1.32M / 1.89M / 1.78M** токенов (warning'и 80→95%). У модели был `create_file_or_folder` (создала пустой .ps1), но вместо `rewrite_file` полезла в Add-Content.
+- **Симптом 2 (провайдер, НЕ наше):** финал — `Provider unavailable (HTTP 520) for openCode/minimax-m2.7` (Cloudflare 520, host `api.minimax.io` = Error, `maxRetriesExceeded`). Тост корректный («Retry shortly or switch the model»). Тот же класс провайдерской нестабильности, что #001/#003/#014.
+- **Что отработало штатно:** валидатор `run_command` отклонял `type`/`cat` (rule `read_file_streamers`) с подсказкой read_file; guard `allowReadOutsideWorkspace:false` отклонил `rewrite_file` на `d:\temp\…`. Оба корректны.
+- **Фикс (этой сессии):** добавлены shell-hardening правила `write_file_cmdlet` + `write_file_via_shell` (`shellHardeningDefaults.ts`) — `Set-Content`/`Add-Content`/`Out-File` (в т.ч. внутри `powershell -Command`) теперь отклоняются с редиректом на `rewrite_file`/`edit_file`. Remote-`tee`-деплой и read-обёртки намеренно НЕ блокируются. Закрывает цикл в корне.
+- **Проверка гипотезы из лога (опровергнута):** `spawn …\@vscode\ripgrep\bin\rg.exe ENOENT` (из Extension Host) — это **НЕ пробел упаковки**: `rg.exe` присутствует в установленном app (5.43 МБ, 0.13.31). ENOENT при существующем бинаре = транзиент либо несуществующий `cwd` при spawn. `@xterm/addon-ligatures` поставляется как `.mjs`, а core-загрузчик терминала просит `.js` — апстрим-косметика (ligatures в sticky-scroll), не пропажа.
+- **Связано:** #001/#003/#014 (провайдерская нестабильность minimax/openCode), #011 (грайнд слабой модели — здесь анти-паттерн записи файла через шелл).
+
+---
+
 ### #014 — 2026-05-28 — minimax-m2.7/openCode: 120s stream-stall после терминальной команды (провайдерская нестабильность)
 
 - **Где:** проект BookCatalog, Agent, minimax-m2.7 через openCode, Автопилот, ∞ итер. Контекст ~18345/201523 (**9%** — не overflow).

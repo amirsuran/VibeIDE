@@ -168,6 +168,49 @@ suite('ToolHardening', () => {
 		});
 	});
 
+	suite('detectShellMisuse — file writers', () => {
+		test('flags Set-Content head-of-command', () => {
+			const m = detectShellMisuse('Set-Content -Path config.json -Value "{}"');
+			assert.ok(m);
+			assert.strictEqual(m!.kind, 'write_file');
+			assert.strictEqual(m!.suggestedTool, 'rewrite_file');
+		});
+
+		test('flags Add-Content and Out-File', () => {
+			assert.ok(detectShellMisuse('Add-Content -Path log.txt -Value "x"'));
+			assert.ok(detectShellMisuse('Out-File -FilePath out.txt -InputObject $x'));
+		});
+
+		// The real budget-burn case (model-stalls #015): minimax built a .ps1
+		// line-by-line via `powershell -Command "...Add-Content..."`, an
+		// unterminated here-string hung the terminal, repeated until timeout.
+		test('flags write cmdlet wrapped in powershell -Command', () => {
+			const m = detectShellMisuse('powershell -NoProfile -Command "Set-Content -Path d:/p/main.php -Value $c"');
+			assert.ok(m);
+			assert.strictEqual(m!.kind, 'write_file');
+			assert.ok(detectShellMisuse('pwsh -c "Add-Content file.ps1 -Value foo"'));
+		});
+
+		// Anti-false-positive: reading via a shell wrapper is NOT a write.
+		test('does NOT flag Get-Content wrapped in powershell (read, not write)', () => {
+			assert.strictEqual(detectShellMisuse('powershell -Command "Get-Content d:/p/main.php"'), null);
+		});
+
+		// Anti-false-positive: legit remote deploy (read local, pipe to remote tee)
+		// has no local write cmdlet in the tail — must pass through.
+		test('does NOT flag read-and-pipe-to-remote-tee deploy', () => {
+			assert.strictEqual(
+				detectShellMisuse(`powershell -NoProfile -Command "Get-Content 'd:/p/x.php' | ssh user@host 'sudo tee /var/www/x.php > /dev/null'"`),
+				null,
+			);
+		});
+
+		// Anti-false-positive: executing a script file is not writing one.
+		test('does NOT flag powershell -File (script execution)', () => {
+			assert.strictEqual(detectShellMisuse('powershell -NoProfile -ExecutionPolicy Bypass -File "d:/p/deploy.ps1"'), null);
+		});
+	});
+
 	suite('detectShellMisuse — passthrough', () => {
 		test('git is allowed', () => {
 			assert.strictEqual(detectShellMisuse('git status'), null);

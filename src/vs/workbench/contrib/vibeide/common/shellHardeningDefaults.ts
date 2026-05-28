@@ -92,4 +92,33 @@ export const DEFAULT_SHELL_HARDENING_RULES: readonly ShellHardeningRule[] = [
 		suggestedTool: 'edit_file',
 		hint: 'Use the edit_file tool with SEARCH/REPLACE blocks instead of "{bareName} -i". edit_file integrates with the IDE diff view and respects per-file permissions.',
 	},
+
+	// 7a. File-writing PowerShell cmdlets invoked head-of-command
+	//     (Set-Content / Add-Content / Out-File). There is no legitimate reason
+	//     for the agent to write a file through the shell when rewrite_file /
+	//     edit_file exist — and building a file line-by-line in PowerShell is a
+	//     documented hang source (model-stalls: an unterminated here-string/quote
+	//     drops the terminal into a `>>` continuation prompt that blocks until the
+	//     inactivity timeout, repeated until the token budget is exhausted).
+	{
+		id: 'write_file_cmdlet',
+		bareName: '^(set-content|add-content|out-file)$',
+		kind: 'write_file',
+		suggestedTool: 'rewrite_file',
+		hint: 'To write a file use rewrite_file (full overwrite) or edit_file (targeted SEARCH/REPLACE) — not the shell. Shell writers bypass the IDE diff view and per-file permissions, and constructing a file line-by-line in PowerShell is error-prone (an unterminated here-string/quote drops the terminal into a ">>" continuation prompt that hangs until timeout).',
+	},
+
+	// 7b. Same write cmdlets wrapped in a shell invocation: `powershell -Command
+	//     "Set-Content ..."`. Head-of-command is the shell, so 7a does not fire;
+	//     match the wrapper + a write cmdlet in the tail. Reading wrappers
+	//     (Get-Content) and remote writes (ssh ... tee) are intentionally NOT
+	//     matched — only local file-write cmdlets.
+	{
+		id: 'write_file_via_shell',
+		bareName: '^(powershell|pwsh)$',
+		requires: { tailMatches: '\\b(?:set-content|add-content|out-file)\\b' },
+		kind: 'write_file',
+		suggestedTool: 'rewrite_file',
+		hint: 'To write a file use rewrite_file (full overwrite) or edit_file (targeted SEARCH/REPLACE) — not "powershell -Command Set-Content/Add-Content/Out-File". Building a file line-by-line in PowerShell is error-prone: an unterminated here-string/quote drops the terminal into a ">>" continuation prompt that hangs until timeout.',
+	},
 ];

@@ -22,6 +22,7 @@ export type ShellMisuseKind =
 	| 'search_pathnames'
 	| 'search_content'
 	| 'edit_file'
+	| 'write_file'
 	| 'tree';
 
 export interface ShellMisuse {
