@@ -6,6 +6,7 @@
 // disable foreign import complaints
 /* eslint-disable */
 import { vibeLog } from '../../common/vibeLog.js';
+import { lenientJsonParseObject } from '../../common/lenientJson.js';
 import Anthropic from '@anthropic-ai/sdk';
 import { Ollama } from 'ollama';
 import OpenAI, { ClientOptions, AzureOpenAI } from 'openai';
@@ -525,7 +526,7 @@ const openAITools = (chatMode: ChatMode | null, mcpTools: InternalToolInfo[] | u
 const rawToolCallObjOfParamsStr = (name: string, toolParamsStr: string, id: string): RawToolCallObj | null => {
 	let input: unknown
 	try { input = JSON.parse(toolParamsStr) }
-	catch (e) { return null }
+	catch (e) { input = lenientJsonParseObject(toolParamsStr) } // roadmap 1708: recover malformed JSON args instead of dropping the whole call
 
 	if (input === null) return null
 	if (typeof input !== 'object') return null
