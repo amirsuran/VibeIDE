@@ -11,6 +11,12 @@ import { basename, dirname, join } from '../../../../base/common/path.js';
 import { Promises } from '../../../../base/node/pfs.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { IProductService } from '../../../../platform/product/common/productService.js';
+import { CodeCacheEntry, selectCodeCachesToDelete } from './codeCachePruning.js';
+
+// VibeIDE: hard cap on retained V8 code-cache folders, independent of age. Each rebuild
+// mints a fresh commit-named folder; the age window (below) never trims a week of frequent
+// local rebuilds because they are all younger than it. Keep the N newest, prune the rest.
+const KEEP_MOST_RECENT_CODE_CACHES = 10;
 
 export class CodeCacheCleaner extends Disposable {
 
@@ -50,19 +56,29 @@ export class CodeCacheCleaner extends Disposable {
 			const currentCodeCache = basename(currentCodeCachePath);
 
 			const codeCaches = await Promises.readdir(codeCacheRootPath);
+
+			// Stat every folder once, then let the pure policy decide which to delete
+			// (age OR count cap). Folders that fail to stat are skipped, not deleted.
+			const entries: CodeCacheEntry[] = [];
 			await Promise.all(codeCaches.map(async codeCache => {
-				if (codeCache === currentCodeCache) {
-					return; // not the current cache folder
+				try {
+					const stat = await promises.stat(join(codeCacheRootPath, codeCache));
+					entries.push({ name: codeCache, mtimeMs: stat.mtime.getTime(), isDirectory: stat.isDirectory() });
+				} catch (e) {
+					this.logService.trace(`[code cache cleanup]: Skipping ${codeCache} (stat failed).`);
 				}
+			}));
 
-				// Delete cache folder if old enough
-				const codeCacheEntryPath = join(codeCacheRootPath, codeCache);
-				const codeCacheEntryStat = await promises.stat(codeCacheEntryPath);
-				if (codeCacheEntryStat.isDirectory() && (now - codeCacheEntryStat.mtime.getTime()) > this.dataMaxAge) {
-					this.logService.trace(`[code cache cleanup]: Removing code cache folder ${codeCache}.`);
+			const toDelete = selectCodeCachesToDelete(entries, {
+				currentCacheName: currentCodeCache,
+				now,
+				maxAgeMs: this.dataMaxAge,
+				keepMostRecent: KEEP_MOST_RECENT_CODE_CACHES,
+			});
 
-					return Promises.rm(codeCacheEntryPath);
-				}
+			await Promise.all(toDelete.map(async name => {
+				this.logService.trace(`[code cache cleanup]: Removing code cache folder ${name}.`);
+				return Promises.rm(join(codeCacheRootPath, name));
 			}));
 		} catch (error) {
 			onUnexpectedError(error);
