@@ -48,6 +48,12 @@ export interface ContextLimitStatus {
 	percentUsed: number;
 	isWarning: boolean;   // >75% used
 	isCritical: boolean;  // >90% used
+	/** Budget-fill truncation transparency: how many most-recent messages were kept at full
+	 * fidelity on the last prompt build. `undefined` when no truncation occurred. */
+	keptMessages?: number;
+	/** Budget-fill truncation transparency: how many older messages were folded into the
+	 * <chat_summary>. `undefined` / 0 when no truncation occurred. */
+	summarizedMessages?: number;
 }
 
 export interface ContextLimitEvent {
@@ -62,6 +68,15 @@ export interface IVibeContextGuardService {
 
 	/** Update current context token usage */
 	updateUsage(currentTokens: number, maxTokens: number): void;
+
+	/**
+	 * Record budget-fill truncation stats for transparency in the UI context indicator.
+	 * Pass `(undefined, undefined)` at the start of each prompt build to clear stale stats;
+	 * pass the kept/summarized message counts when truncation actually fires. Does not emit
+	 * on its own — the stats ride along on the next `updateUsage` fire (which always follows
+	 * in the same build), so there is no extra event churn.
+	 */
+	setTruncationStats(keptMessages: number | undefined, summarizedMessages: number | undefined): void;
 
 	/**
 	 * Reset usage counters to zero (e.g. when the user switches to a different
@@ -103,6 +118,8 @@ class VibeContextGuardService extends Disposable implements IVibeContextGuardSer
 
 	private _currentTokens = 0;
 	private _maxTokens = 0;
+	private _keptMessages: number | undefined = undefined;
+	private _summarizedMessages: number | undefined = undefined;
 	private _warningFired = false;
 	private _criticalFired = false;
 	private _warningThreshold: number;
@@ -168,9 +185,16 @@ class VibeContextGuardService extends Disposable implements IVibeContextGuardSer
 		}
 	}
 
+	setTruncationStats(keptMessages: number | undefined, summarizedMessages: number | undefined): void {
+		this._keptMessages = keptMessages;
+		this._summarizedMessages = summarizedMessages;
+	}
+
 	reset(): void {
 		this._currentTokens = 0;
 		this._maxTokens = 0;
+		this._keptMessages = undefined;
+		this._summarizedMessages = undefined;
 		this._warningFired = false;
 		this._criticalFired = false;
 		this._onUsageUpdated.fire(this.getStatus());
@@ -187,6 +211,8 @@ class VibeContextGuardService extends Disposable implements IVibeContextGuardSer
 			percentUsed,
 			isWarning: percentUsed >= this._warningThreshold,
 			isCritical: percentUsed >= this._criticalThreshold,
+			keptMessages: this._keptMessages,
+			summarizedMessages: this._summarizedMessages,
 		};
 	}
 }

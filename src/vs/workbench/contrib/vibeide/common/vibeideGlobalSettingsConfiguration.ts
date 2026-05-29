@@ -196,6 +196,22 @@ export class VibeideGlobalSettingsConfigurationContribution extends Disposable i
 					description: localize('vibeide.diagnostics.idleWatchdog.growthAlertMBPerMin', 'Порог роста rss (МБ/мин) на последних 12 тиках, при котором показать proactive-уведомление о возможной утечке. Один раз на (процесс, окно, pid) за сессию.'),
 					scope: ConfigurationScope.APPLICATION,
 				},
+				// Roadmap W.x / #1632 — rapid-growth heap-snapshot trigger (defaults match
+				// vibeIdleWatchdogService DEFAULTS so registering changes nothing at runtime).
+				'vibeide.diagnostics.idleWatchdog.heapSnapshotOnRapidGrowth': {
+					type: 'boolean',
+					default: false,
+					description: localize('vibeide.diagnostics.idleWatchdog.heapSnapshotOnRapidGrowth', 'Снимать V8 heap snapshot при РЕЗКОМ росте rss (а не только при пересечении абсолютного порога `heapSnapshotOnHighRss`). Ловит спайки между тиками. Дельта роста задаётся `snapshotGrowthDeltaMB`. Off по умолчанию — снапшоты занимают 50-500 МБ.'),
+					scope: ConfigurationScope.APPLICATION,
+				},
+				'vibeide.diagnostics.idleWatchdog.snapshotGrowthDeltaMB': {
+					type: 'number',
+					default: 500,
+					minimum: 50,
+					maximum: 8000,
+					description: localize('vibeide.diagnostics.idleWatchdog.snapshotGrowthDeltaMB', 'Прирост rss (в МБ) между тиками, при котором срабатывает rapid-growth snapshot. Имеет смысл только при `heapSnapshotOnRapidGrowth=true`.'),
+					scope: ConfigurationScope.APPLICATION,
+				},
 				// Roadmap W.22 — snapshot retention + child-process filter.
 				'vibeide.diagnostics.idleWatchdog.maxSnapshotsRetained': {
 					type: 'number',
@@ -457,6 +473,20 @@ export class VibeideGlobalSettingsConfigurationContribution extends Disposable i
 					minimum: 0,
 					maximum: 50,
 					description: localize('vibeide.chat.compactToolResultsAfterTurns', 'Сжимать tool-results старше указанного числа user-turns (отсчёт от текущего сообщения). Старые tool-outputs заменяются на short summary с пометкой `[summarized: N tokens]`, что предотвращает линейный рост входного prompt при долгих агентских циклах (главная причина AI_RetryError у openCode/minimax-m2.7 на больших проектах). 0 — отключить сжатие; 3 — баланс между сохранением свежего контекста и контролем токенов.'),
+					scope: ConfigurationScope.APPLICATION,
+				},
+				'vibeide.chat.calibrateTokenBudgetFromUsage': {
+					type: 'boolean',
+					default: true,
+					description: localize('vibeide.chat.calibrateTokenBudgetFromUsage', 'Самокалибровка бюджета контекста по реальным promptTokens провайдера. Внутренняя оценка размера промпта — грубая (`длина/4`) и систематически занижает реальный счёт (tool-схемы, форматирование, токенайзер модели для кода/CJK), из-за чего промпт кажется влезающим в окно, а провайдер видит overflow. При включении VibeIDE ведёт per-(провайдер×модель) EWMA-фактор `реальные/оценка` и делит на него пороги усечения/hard-cap — резерв подгоняется под реальность. По умолчанию **on**; off — вернуться к чистой `длина/4`-оценке.'),
+					scope: ConfigurationScope.APPLICATION,
+				},
+				'vibeide.chat.antiLoopRepeatThreshold': {
+					type: 'number',
+					default: 3,
+					minimum: 0,
+					maximum: 20,
+					description: localize('vibeide.chat.antiLoopRepeatThreshold', 'Anti-loop guard: после указанного числа ИДЕНТИЧНЫХ tool-call (одно имя + одни и те же аргументы) в рамках одного запроса VibeIDE не выполняет вызов повторно, а возвращает модели подсказку «результат не изменится, используй уже полученный или двигайся дальше». Разрывает зацикливание на повторных read_file/run_command даже при усечённом контексте. По умолчанию 3; 0 — отключить guard.'),
 					scope: ConfigurationScope.APPLICATION,
 				},
 				'vibeide.chat.autoToolSynthesis': {

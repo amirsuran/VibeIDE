@@ -15,6 +15,7 @@ import { ILLMMessageService } from '../common/sendLLMMessageService.js';
 import { recordChatTrace } from './vibeChatRunTrace.js';
 import { availableTools, builtinTools, builtinToolNames, chat_userMessageContent, isABuiltinToolName } from '../common/prompt/prompts.js';
 import { TOOL_NAME_ALIASES, applyParamAliases, detectToolByParamShape } from '../common/prompt/toolAliases.js';
+import { toolCallSignature, resolveAntiLoopThreshold } from '../common/agentLoopHeuristics.js';
 import type { AutoDowngradeReason } from '../common/modelCapabilities.js';
 import { AnthropicReasoning, getErrorMessage, LLMTokenUsage, parseContextOverflowError, parseEmptyResponseError, RawToolCallObj, RawToolParamsObj } from '../common/sendLLMMessageTypes.js';
 import { ModelHealthTracker, HEALTH_FAILURE_THRESHOLD, HEALTH_WINDOW_MS } from '../common/modelHealthTracker.js';
@@ -101,6 +102,8 @@ const DEFAULT_MAX_AGENT_LOOP_ITERATIONS = 30 // Default cap; overridable via `vi
 const MAX_AGENT_LOOP_ITERATIONS_UPPER_BOUND = 200 // Hard ceiling for user-supplied values to avoid runaway loops via accidental large input.
 const MAX_CONSECUTIVE_TOOL_ERRORS = 15 // Circuit-breaker: abort agent loop after this many back-to-back tool failures. opencode CLI has no breaker — model just keeps iterating until it succeeds. 15 gives breathing room (some models recover after 5-10 attempts before finding the right tool format) while still preventing infinite loops on truly broken combos.
 const AUTO_DOWNGRADE_THRESHOLD = 6 // After this many consecutive tool failures per-(provider×model), CONSIDER an `_autoDetected` override switching the model to XML-fallback — but only for the `numeric-tool-name` quirk (see the gate at the downgrade trigger). Other reasons (missing-required-field / wrong-tool-name / other) are transient, self-correcting failures that opencode just retries through on native FC, so we no longer shove the model into XML for them (that was the root cause of capable models like deepseek-v4-pro getting stuck — see model-stalls #008). Raised 3→6: 3 was trigger-happy on transient failures. Counter resets on `success`. See roadmap O.2.
+const ANTI_LOOP_SIGNATURE_RING = 50 // Anti-loop guard: how many recent tool-call signatures to retain per request. Bounds memory while spanning enough history to catch slow re-read cycles. See roadmap F (aggregator-failures section).
+const ANTI_LOOP_MAX_BLOCKS = 8 // Anti-loop guard: after this many TOTAL short-circuited (blocked) calls in one request, the model is clearly ignoring the hint — abort the loop with a hard message instead of spinning to maxLoopIterations. Last-resort escalation; the per-signature threshold (`vibeide.chat.antiLoopRepeatThreshold`) is the first line.
 
 // Classify the last tool failure into a coarse reason code stored as
 // `_reason` on auto-detected overrides (roadmap O.7). Drives toast wording and
@@ -4232,6 +4235,17 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 		let shouldSendAnotherMessage = true
 		let isRunningWhenEnd: IsRunningType = undefined
 
+		// Anti-loop guard state (config-driven; default 3, 0 disables). Tracks signatures of
+		// tool calls already executed in THIS request so an identical call repeated past the
+		// threshold is short-circuited with a hint instead of re-run. Breaks the re-read loop
+		// even when context truncation has erased the prior result from the model's view.
+		const recentToolSignatures: string[] = []
+		let antiLoopBlocks = 0
+		const rawAntiLoop = this._configurationService.getValue<unknown>('vibeide.chat.antiLoopRepeatThreshold')
+		const antiLoopThreshold = (typeof rawAntiLoop === 'number' && Number.isFinite(rawAntiLoop) && rawAntiLoop >= 0)
+			? Math.min(20, Math.floor(rawAntiLoop))
+			: 3
+
 		// PERFORMANCE: Check for plan ONCE at start, not on every tool call
 		// Only do plan tracking if an active plan exists
 		let activePlanTracking: { planInfo: { plan: PlanMessage, planIdx: number }, currentStep: { plan: PlanMessage, planIdx: number, step: PlanStep, stepIdx: number } | undefined } | undefined
@@ -5184,6 +5198,12 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 					// estimates. `usage` is undefined on early-timeout / non-AI-SDK paths.
 					if (usage && (typeof usage.promptTokens === 'number' || typeof usage.completionTokens === 'number' || typeof usage.totalTokens === 'number')) {
 						this._setThreadState(threadId, { lastUsage: usage })
+						// Feed the real promptTokens back to the token-budget estimator so it self-calibrates
+						// per (provider×model) — closes the gap between our length/4 estimate and the
+						// provider's true count (tool schemas, formatting, tokenizer). Roadmap "provider-reported usage".
+						if (modelSelection && typeof usage.promptTokens === 'number' && usage.promptTokens > 0) {
+							this._convertToLLMMessagesService.recordActualPromptTokens(modelSelection.providerName, modelSelection.modelName, usage.promptTokens)
+						}
 					}
 
 					// Clear timeout
@@ -6055,6 +6075,71 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 						if (this._pauseRunningPlanStepForMcpAllowlist(threadId, toolCall.name, mcpSrvLoop)) {
 							this._setStreamState(threadId, { isRunning: 'idle', interrupt: 'not_needed' })
 							return
+						}
+					}
+
+					// Anti-loop guard — short-circuit a tool call repeated VERBATIM past the
+					// threshold within this request. The deterministic re-read loop (model
+					// re-issuing the same read_file/run_command because truncation erased the
+					// prior result) is broken here even if context never recovered: instead of
+					// re-running, we hand the model a tool result telling it the call is a
+					// no-op and to use the result it already has or move on.
+					if (antiLoopThreshold > 0) {
+						// Per-tool threshold (roadmap G extension): strict for run_command/run_nl_command
+						// (verbatim repeat == loop), lenient for read_file/edit_file (legit re-read/retry).
+						const effectiveThreshold = resolveAntiLoopThreshold(toolCall.name, antiLoopThreshold)
+						const toolSig = toolCallSignature(toolCall.name, toolCall.rawParams)
+						const priorSameCount = recentToolSignatures.reduce((n, s) => s === toolSig ? n + 1 : n, 0)
+						recentToolSignatures.push(toolSig)
+						if (recentToolSignatures.length > ANTI_LOOP_SIGNATURE_RING) { recentToolSignatures.shift() }
+						if (priorSameCount >= effectiveThreshold) {
+							antiLoopBlocks += 1
+							this._metricsService.capture('Anti-Loop Guard Tripped', {
+								toolName: toolCall.name,
+								repeats: priorSameCount,
+								totalBlocks: antiLoopBlocks,
+								threshold: antiLoopThreshold,
+								effectiveThreshold,
+								chatMode,
+							})
+
+							// Escalation: the model keeps re-issuing identical calls despite the hint.
+							// Abort the loop with a hard message rather than spin to maxLoopIterations.
+							if (antiLoopBlocks > ANTI_LOOP_MAX_BLOCKS) {
+								const abortMsg = `Agent loop aborted: the model repeatedly issued identical tool calls (\`${toolCall.name}\` and others) without acting on the results — ${antiLoopBlocks} blocked repetitions in this turn. This usually means the task is ambiguous or the model is stuck. Rephrase the request, narrow the scope, or switch to a different model.`
+								this._notificationService.warn(abortMsg)
+								this._addMessageToThread(threadId, {
+									role: 'tool',
+									type: 'tool_error',
+									params: {} as ToolCallParams<ToolName>,
+									rawParams: {} as RawToolParamsObj,
+									result: abortMsg,
+									name: toolCall.name,
+									content: abortMsg,
+									id: toolCall.id,
+									mcpServerName: undefined,
+								})
+								this._agentActivityLog.logError(`Anti-loop: aborting loop after ${antiLoopBlocks} blocked repetitions`)
+								this._setStreamState(threadId, { isRunning: undefined })
+								return
+							}
+
+							const hint = `Anti-loop guard: you have already called \`${toolCall.name}\` with these exact arguments ${priorSameCount} time(s) in this turn, so this call was NOT executed again — the result will not change. Use the result you already obtained, or move on to the next step / give your final answer. Do not repeat this call.`
+							this._addMessageToThread(threadId, {
+								role: 'tool',
+								type: 'tool_error',
+								params: {} as ToolCallParams<ToolName>,
+								rawParams: {} as RawToolParamsObj,
+								result: hint,
+								name: toolCall.name,
+								content: hint,
+								id: toolCall.id,
+								mcpServerName: undefined,
+							})
+							this._agentActivityLog.logError(`Anti-loop: blocked repeated ${toolCall.name} (×${priorSameCount} identical args)`)
+							shouldSendAnotherMessage = true
+							this._setStreamState(threadId, { isRunning: 'idle', interrupt: 'not_needed' })
+							continue
 						}
 					}
 

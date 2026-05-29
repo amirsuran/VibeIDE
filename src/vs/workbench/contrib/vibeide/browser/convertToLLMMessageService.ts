@@ -58,6 +58,12 @@ function uint8ArrayToBase64(data: Uint8Array): string {
 import { getIsReasoningEnabledState, getReservedOutputTokenSpace, getModelCapabilities } from '../common/modelCapabilities.js';
 import { reParsedToolXMLString, chat_systemMessage, chat_systemMessage_local } from '../common/prompt/prompts.js';
 import { detectModelFamily } from '../common/prompt/modelFamily.js';
+import { planBudgetFillTail } from '../common/agentLoopHeuristics.js';
+import { updateTokenCalibration, clampTokenCalibration, serializeCalibration, deserializeCalibration } from '../common/tokenCalibration.js';
+import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
+
+/** APPLICATION-scope storage key for persisted per-(provider×model) token-calibration factors. */
+const TOKEN_CALIBRATION_STORAGE_KEY = 'vibeide.chat.tokenCalibrationFactors';
 import { AnthropicLLMChatMessage, AnthropicReasoning, GeminiLLMChatMessage, LLMChatMessage, LLMFIMMessage, OpenAILLMChatMessage, RawToolParamsObj } from '../common/sendLLMMessageTypes.js';
 import { IVibeideSettingsService } from '../common/vibeideSettingsService.js';
 import { ChatMode, FeatureName, ModelSelection, ProviderName } from '../common/vibeideSettingsTypes.js';
@@ -102,14 +108,19 @@ type SimpleLLMMessage = {
 	id: string;
 	name: ToolName;
 	rawParams: RawToolParamsObj;
+	/** Honored by budget-fill truncation: a pinned message is kept verbatim instead of being
+	 *  folded into <chat_summary>. Carried from ChatMessage.pinned (roadmap pin-context). */
+	pinned?: boolean;
 } | {
 	role: 'user';
 	content: string;
 	images?: ChatImageAttachment[];
+	pinned?: boolean;
 } | {
 	role: 'assistant';
 	content: string;
 	anthropicReasoning: AnthropicReasoning[] | null;
+	pinned?: boolean;
 	/** Free-form reasoning string captured from prior assistant turn. For
 	 *  OpenAI-compatible providers that surface `reasoning_content` on response
 	 *  delta (DeepSeek thinking, openCode/zen-proxied reasoning models, vLLM,
@@ -1293,6 +1304,8 @@ export interface IConvertToLLMMessageService {
 	prepareLLMChatMessages: (opts: { chatMessages: ChatMessage[], chatMode: ChatMode, modelSelection: ModelSelection | null, repoIndexerPromise?: Promise<{ results: string[], metrics: any } | null> }) => Promise<{ messages: LLMChatMessage[], separateSystemMessage: string | undefined }>
 	prepareFIMMessage(opts: { messages: LLMFIMMessage, modelSelection: ModelSelection | null, featureName: FeatureName, languageId?: string }): { prefix: string, suffix: string, stopTokens: string[] }
 	startRepoIndexerQuery: (chatMessages: ChatMessage[], chatMode: ChatMode) => Promise<{ results: string[], metrics: any } | null>
+	/** Feed back a provider-reported prompt token count so the token-budget estimator can self-calibrate per (provider×model). No-op until a prompt has been built for that model this session. */
+	recordActualPromptTokens(providerName: string, modelName: string, realPromptTokens: number): void
 }
 
 export const IConvertToLLMMessageService = createDecorator<IConvertToLLMMessageService>('ConvertToLLMMessageService');
@@ -1305,6 +1318,13 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 	// Optimized: Longer TTL since system messages rarely change during a session
 	private _systemMessageCache: Map<string, { message: string; timestamp: number }> = new Map();
 	private readonly _systemMessageCacheTTL = 120_000; // 2 minutes cache TTL (increased from 30s for better performance)
+
+	// Token-budget self-calibration (roadmap "provider-reported usage"). Keyed by `provider:model`.
+	// `_tokenCalibrationByModel` is the running EWMA estimate→real factor; `_lastRawPromptEstimate`
+	// holds our raw (length/4) estimate of the LAST prompt sent for that model, paired with the
+	// provider's reported promptTokens when it arrives (see recordActualPromptTokens).
+	private readonly _tokenCalibrationByModel: Map<string, number> = new Map();
+	private readonly _lastRawPromptEstimateByModel: Map<string, number> = new Map();
 
 	constructor(
 		@IModelService private readonly modelService: IModelService,
@@ -1323,8 +1343,15 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 		@IConfigurationService private readonly configurationService: IConfigurationService,
 		@IVibeContextGuardService private readonly contextGuardService: IVibeContextGuardService,
 		@IRemoteCatalogService private readonly remoteCatalogService: IRemoteCatalogService,
+		@IStorageService private readonly storageService: IStorageService,
 	) {
 		super()
+		// Restore persisted token-calibration factors (stable per model tokenizer) so the budget
+		// estimator doesn't re-learn from scratch every window reload. Populates the existing map.
+		try {
+			const restored = deserializeCalibration(this.storageService.get(TOKEN_CALIBRATION_STORAGE_KEY, StorageScope.APPLICATION))
+			for (const [k, v] of restored) { this._tokenCalibrationByModel.set(k, v) }
+		} catch { /* corrupted blob — start fresh */ }
 	}
 
 	// Read `.vibe/rules.md` and root `AGENTS.md` from workspace folders (open-document models when attached)
@@ -1498,6 +1525,7 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 					content: m.displayContent,
 					anthropicReasoning: m.anthropicReasoning,
 					reasoning: m.reasoning || undefined,
+					pinned: m.pinned,
 				})
 			}
 			else if (m.role === 'tool') {
@@ -1507,6 +1535,7 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 					name: m.name,
 					id: m.id,
 					rawParams: m.rawParams,
+					pinned: m.pinned,
 				})
 			}
 			else if (m.role === 'user') {
@@ -1514,10 +1543,26 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 					role: m.role,
 					content: m.content,
 					images: m.images,
+					pinned: m.pinned,
 				})
 			}
 		}
 		return simpleLLMMessages
+	}
+
+	recordActualPromptTokens: IConvertToLLMMessageService['recordActualPromptTokens'] = (providerName, modelName, realPromptTokens) => {
+		const key = `${providerName}:${modelName}`
+		const est = this._lastRawPromptEstimateByModel.get(key)
+		if (est === undefined) { return } // no prompt built for this model yet — nothing to pair against
+		const prev = this._tokenCalibrationByModel.get(key)
+		const next = updateTokenCalibration(prev, realPromptTokens, est)
+		this._tokenCalibrationByModel.set(key, next)
+		vibeLog.debug('tokenCalibration', `${key}: real=${realPromptTokens} est=${est} factor ${(prev ?? 1).toFixed(3)} → ${next.toFixed(3)}`)
+		// Persist (APPLICATION scope, MACHINE target) so the factor survives reloads. Payload is a
+		// tiny JSON object keyed by provider:model; storage writes are batched by the platform.
+		try {
+			this.storageService.store(TOKEN_CALIBRATION_STORAGE_KEY, serializeCalibration(this._tokenCalibrationByModel), StorageScope.APPLICATION, StorageTarget.MACHINE)
+		} catch { /* non-fatal — calibration still works in-memory this session */ }
 	}
 
 	prepareLLMSimpleMessages: IConvertToLLMMessageService['prepareLLMSimpleMessages'] = ({ simpleMessages, systemMessage, modelSelection, featureName }) => {
@@ -1902,7 +1947,9 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 				// Keep only the last maxTurnPairs user messages and their corresponding assistant messages
 				const lastUserIndices = userMessages.slice(-maxTurnPairs).map(um => llmMessages.indexOf(um))
 				const firstIndexToKeep = Math.min(...lastUserIndices)
-				llmMessages = llmMessages.slice(firstIndexToKeep)
+				// Honor pinned (roadmap pin-context): keep pinned messages even if older than the
+				// retained turn window, so important context isn't dropped before budget-fill runs.
+				llmMessages = llmMessages.filter((m, i) => i >= firstIndexToKeep || m.pinned)
 			}
 		}
 
@@ -1912,18 +1959,15 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 			const chatTokenCap = LOCAL_MODEL_TOKEN_CAPS['Chat']
 			effectiveContextWindow = Math.min(contextWindow, chatTokenCap + (reservedOutputTokenSpace || LOCAL_MODEL_RESERVED_OUTPUT))
 		} else {
-			// For cloud models, use existing logic
-			// Cap local model contexts: use 50% of model's context window, up to 128k max
-			// This reduces latency for large models while still allowing them to use their full capacity
-			// Small models (≤8k) keep full context, medium models (≤32k) get 16k, large models get min(50%, 128k)
-			if (contextWindow <= 8_000) {
-				effectiveContextWindow = contextWindow // Small models: use full context
-			} else if (contextWindow <= 32_000) {
-				effectiveContextWindow = Math.min(contextWindow, 16_000) // Medium models: cap at 16k
-			} else {
-				// Large models: use 50% of context, but cap at 128k to avoid excessive latency
-				effectiveContextWindow = Math.min(Math.floor(contextWindow * 0.5), 128_000)
-			}
+			// Cloud models: use the model's FULL advertised context window. The previous
+			// 50%/16k caps were a latency hedge, but on agentic runs they starved the model
+			// of context: a 128k model was budgeted at 64k, then the budget-fill truncation
+			// below trimmed further, forcing premature history summarization. With every
+			// prior tool result erased, the agent re-issued the same reads in circles
+			// (observed deepseek-v4-pro re-read loop). The budget-fill + Step A.5 passes
+			// below already keep the payload within the real window, so capping here only
+			// discarded usable headroom. Trust the advertised window.
+			effectiveContextWindow = contextWindow
 		}
 
 		// More aggressive budget: use 75% instead of 80% to leave more room for output
@@ -1931,6 +1975,20 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 		const budgetMultiplier = isLocalProviderForContext ? 0.70 : 0.75
 		const budget = Math.max(256, Math.floor(effectiveContextWindow * budgetMultiplier) - rot)
 		const beforeTokens = approximateTotalTokens(llmMessages, systemMessage, aiInstructions)
+
+		// Token-budget self-calibration (roadmap "provider-reported usage"). Our estimates are raw
+		// `length/4`; the provider's real promptTokens include tool-schema JSON + formatting +
+		// the model's true tokenizer. We keep estimating raw and instead DIVIDE the budget/cap
+		// thresholds by the learned factor, so the reserved headroom tracks reality. Factor 1
+		// (default / disabled / no sample yet) leaves behavior unchanged.
+		const calibrationKey = `${validProviderName}:${modelName}`
+		const calibrationEnabled = this.configurationService.getValue<boolean>('vibeide.chat.calibrateTokenBudgetFromUsage') !== false
+		const calibrationFactor = calibrationEnabled ? clampTokenCalibration(this._tokenCalibrationByModel.get(calibrationKey)) : 1
+		const calBudget = Math.max(256, Math.floor(budget / calibrationFactor))
+
+		// Clear any stale budget-fill stats from a previous build; the truncation branch below
+		// repopulates them when it fires. Keeps the UI transparency indicator accurate.
+		try { this.contextGuardService.setTruncationStats(undefined, undefined) } catch { }
 
 		// NOTE: ContextGuard status updates intentionally moved to AFTER both
 		// truncation passes. Previously we called updateUsage(beforeTokens, …)
@@ -1943,44 +2001,85 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 		// final updateUsage (after Step B, line ~2005) are the source of
 		// truth — both reflect post-truncation reality.
 
-		if (beforeTokens > budget && llmMessages.length > 6) {
-			// Smart truncation: Keep recent messages + prioritize user messages with selections
-			const keepTailCount = 6
-			const head = llmMessages.slice(0, Math.max(0, llmMessages.length - keepTailCount))
-			const tail = llmMessages.slice(-keepTailCount)
+		if (beforeTokens > calBudget && llmMessages.length > 6) {
+			// Budget-FILL truncation: keep as MANY of the newest messages as fit within
+			// `budget` at full fidelity, and summarize ONLY the genuine overflow head.
+			//
+			// The previous implementation kept a FIXED tail of 6 messages and crushed
+			// everything older into a ~2.4KB <chat_summary> stub — regardless of how much
+			// budget remained. A 150k-token agentic history therefore collapsed to ~9k even
+			// with a 48k budget, erasing every prior tool result. The model lost all memory
+			// of files it had already read and re-issued identical reads in circles (the
+			// observed deepseek-v4-pro loop). Filling the budget preserves recent reads/edits,
+			// so the model sees what it already did and stops repeating itself.
+			// Char budgets for the <chat_summary> block. Single source of truth: the reserve
+			// subtracted from tailBudget is DERIVED from these, so the reserve always matches
+			// what the summary can actually produce (the old fixed 1200-token reserve under-
+			// counted the ~2.1k-token worst case — pinned task 6000c + body 2400c — letting
+			// afterTokens drift over the soft budget; the hard-cap pass caught it, but the
+			// accounting was inconsistent).
+			const PINNED_TASK_MAX_CHARS = 6000
+			const PER_USER_MSG_MAX_CHARS = 2000
+			const USER_SUMMARY_MAX_CHARS = 2500
+			const PER_OTHER_MSG_MAX_CHARS = 500
+			const OTHER_SUMMARY_MAX_CHARS = 800
+			const SUMMARY_BODY_MAX_CHARS = 2400
+			const SUMMARY_WRAPPER_CHARS = 96 // tags + heading boilerplate
+			const sysInstrTokens = estimateTokens(systemMessage) + estimateTokens(aiInstructions)
+			// Reserve room for the summary block we may prepend to the system message, sized to its
+			// worst-case char output (pinned original task + summary body). Mirrors estimateTokens'
+			// chars-per-token ratio without allocating the placeholder string.
+			const summaryReserve = Math.ceil((PINNED_TASK_MAX_CHARS + SUMMARY_BODY_MAX_CHARS + SUMMARY_WRAPPER_CHARS) / 4)
+			const tailBudget = Math.max(256, calBudget - sysInstrTokens - summaryReserve)
 
-			const firstUser = llmMessages.find(m => m.role === 'user')
-			const firstUserIdx = firstUser ? llmMessages.indexOf(firstUser) : -1
-			const originalDropped = firstUser && firstUserIdx >= 0 && firstUserIdx < llmMessages.length - keepTailCount
-			const pinnedOriginal = originalDropped
-				? `<original_user_task>\n${firstUser.content.slice(0, 6000)}${firstUser.content.length > 6000 ? '\n…' : ''}\n</original_user_task>\n\n`
-				: ''
+			// Plan the kept set: the recent budget-fit tail PLUS any PINNED message that falls in
+			// the older head (kept verbatim so important context survives truncation regardless of
+			// age — roadmap pin-context). Only the older, non-pinned head is summarized.
+			// (Pure selection in agentLoopHeuristics.planBudgetFillTail.)
+			const plan = planBudgetFillTail(
+				llmMessages.map(m => ({ tokens: estimateTokens(m.content), pinned: m.pinned })),
+				tailBudget
+			)
+			const head = plan.summarizeIndices.map(i => llmMessages[i])
+			const keep = plan.keepIndices.map(i => llmMessages[i])
 
-			// Prioritize user messages (they contain selections/context)
-			const userMessages = head.filter(m => m.role === 'user')
-			const otherMessages = head.filter(m => m.role !== 'user')
+			if (head.length > 0) {
+				const firstUser = llmMessages.find(m => m.role === 'user')
+				// The original task is worth pinning into the summary ONLY if it actually landed in
+				// the summarized head; a pinned first message stays verbatim in `keep` (no double-pin).
+				const originalDropped = !!firstUser && head.includes(firstUser)
+				const pinnedOriginal = originalDropped
+					? `<original_user_task>\n${firstUser.content.slice(0, PINNED_TASK_MAX_CHARS)}${firstUser.content.length > PINNED_TASK_MAX_CHARS ? '\n…' : ''}\n</original_user_task>\n\n`
+					: ''
 
-			// Keep more user messages, truncate assistant messages more aggressively
-			const userSummary = userMessages.map(m => `${m.role}: ${m.content.slice(0, 2000)}`).join('\n').slice(0, 2500) // Reduced from 3000
-			const otherSummary = otherMessages.map(m => `${m.role}: ${m.content.slice(0, 500)}`).join('\n').slice(0, 800) // Reduced from 1000
+				// Prioritize user messages (they carry selections/intent); summarize the rest.
+				const userMessages = head.filter(m => m.role === 'user')
+				const otherMessages = head.filter(m => m.role !== 'user')
+				const userSummary = userMessages.map(m => `${m.role}: ${m.content.slice(0, PER_USER_MSG_MAX_CHARS)}`).join('\n').slice(0, USER_SUMMARY_MAX_CHARS)
+				const otherSummary = otherMessages.map(m => `${m.role}: ${m.content.slice(0, PER_OTHER_MSG_MAX_CHARS)}`).join('\n').slice(0, OTHER_SUMMARY_MAX_CHARS)
 
-			const headConcat = userSummary + (otherSummary ? '\n' + otherSummary : '')
-			const summaryBodyLimit = 2400
-			const summaryBody = `${pinnedOriginal}Prior conversation summarized (${head.length} messages). Key points:\n${headConcat.slice(0, summaryBodyLimit)}${headConcat.length > summaryBodyLimit ? '…' : ''}`
-			const summary = `\n\n<chat_summary>\n${summaryBody}\n</chat_summary>`
-			systemMessage = (systemMessage || '') + summary
-			llmMessages = tail
+				const headConcat = userSummary + (otherSummary ? '\n' + otherSummary : '')
+				const summaryBody = `${pinnedOriginal}Prior conversation summarized (${head.length} older messages; ${keep.length} kept in full incl. pinned). Key points:\n${headConcat.slice(0, SUMMARY_BODY_MAX_CHARS)}${headConcat.length > SUMMARY_BODY_MAX_CHARS ? '…' : ''}`
+				const summary = `\n\n<chat_summary>\n${summaryBody}\n</chat_summary>`
+				systemMessage = (systemMessage || '') + summary
+				llmMessages = keep
+				// Surface budget-fill transparency to the UI: N kept full / M summarized.
+				try { this.contextGuardService.setTruncationStats(keep.length, head.length) } catch { }
+			}
 			const afterTokens = approximateTotalTokens(llmMessages, systemMessage, aiInstructions)
 			// Update status bar to reflect post-truncation size; suppress popup (user sees % in status bar)
 			try { this.contextGuardService.updateUsage(afterTokens, contextWindow) } catch { }
-			vibeLog.debug('convertToLLMMessage', `Context smart truncation: ~${beforeTokens} → ~${afterTokens} tokens`); recordChatTrace('context:truncated', { before: beforeTokens, after: afterTokens })
+			vibeLog.debug('convertToLLMMessage', `Context smart truncation (budget-fill): ~${beforeTokens} → ~${afterTokens} tokens (kept ${llmMessages.length} msgs full, ${head.length} summarized)`); recordChatTrace('context:truncated', { before: beforeTokens, after: afterTokens })
 		}
 
 		// Second pass — active guard. If we are still over the model's real context window,
 		// aggressively elide oversized tool/assistant outputs and drop oldest tail messages
 		// before the request is sent. This prevents the empty-response failure mode that
 		// happens when the model refuses or truncates oversized prompts.
-		const hardCap = Math.floor(contextWindow * 0.92) // 8% headroom for output/reasoning
+		// hardCap and the final overflow window are in REAL tokens; our currentTokens is a raw
+		// length/4 estimate. Divide by the calibration factor so the comparison happens in the
+		// same (estimate) space — an under-counting estimator therefore trips the guard sooner.
+		const hardCap = Math.floor((contextWindow * 0.92) / calibrationFactor) // 8% headroom for output/reasoning
 		const TOOL_RESULT_TOKEN_THRESHOLD = 5000
 		let currentTokens = approximateTotalTokens(llmMessages, systemMessage, aiInstructions)
 
@@ -2052,7 +2151,11 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 		// Reflect the final number on the status bar.
 		try { this.contextGuardService.updateUsage(currentTokens, contextWindow) } catch { }
 
-		if (currentTokens > contextWindow) {
+		// Pair this turn's RAW estimate of the sent payload with the provider's reported
+		// promptTokens (arrives later via recordActualPromptTokens) to self-calibrate the budget.
+		this._lastRawPromptEstimateByModel.set(calibrationKey, currentTokens)
+
+		if (currentTokens > Math.floor(contextWindow / calibrationFactor)) {
 			throw new ContextOverflowError({
 				provider: validProviderName,
 				model: modelName,

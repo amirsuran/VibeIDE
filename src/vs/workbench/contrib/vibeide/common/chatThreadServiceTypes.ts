@@ -14,7 +14,7 @@ export type ToolMessage<T extends ToolName> = {
 	id: string;
 	rawParams: RawToolParamsObj;
 	mcpServerName: string | undefined; // the server name at the time of the call
-	pinned?: boolean; // RESERVED (pin-context feature) — not yet honored anywhere
+	pinned?: boolean; // pin-context: honored by budget-fill truncation; setter (UI) pending
 } & (
 		// in order of events:
 		| { type: 'invalid_params', result: null, name: T, }
@@ -145,9 +145,10 @@ export type ChatPDFAttachment = {
 };
 
 // WARNING: changing this format is a big deal!!!!!! need to migrate old format to new format on users' computers so people don't get errors.
-// `pinned?: boolean` is RESERVED for a future pin-context feature and is currently
-// INERT: nothing sets it (no pin UI/command) and no compaction/trim path honors it.
-// Don't document it as working until a setter + honor-logic land (roadmap AC).
+// `pinned?: boolean` (pin-context feature): HONORED by budget-fill truncation in
+// convertToLLMMessageService (pinned messages are kept verbatim instead of summarized, and
+// survive the local maxTurnPairs slice). The remaining piece is a SETTER — no pin UI/command
+// sets it yet, so honoring is latent until that lands (roadmap pin-context, next step).
 export type ChatMessage =
 	| {
 		role: 'user';
@@ -156,7 +157,7 @@ export type ChatMessage =
 		selections: StagingSelectionItem[] | null; // the user's selection
 		images?: ChatImageAttachment[]; // image attachments
 		pdfs?: ChatPDFAttachment[]; // PDF attachments
-		pinned?: boolean; // RESERVED (pin-context feature) — not yet honored anywhere
+		pinned?: boolean; // pin-context: honored by budget-fill truncation; setter (UI) pending
 		state: {
 			stagingSelections: StagingSelectionItem[];
 			isBeingEdited: boolean;
@@ -166,7 +167,7 @@ export type ChatMessage =
 		role: 'assistant';
 		displayContent: string; // content received from LLM  - allowed to be '', will be replaced with (empty)
 		reasoning: string; // reasoning from the LLM, used for step-by-step thinking
-		pinned?: boolean; // RESERVED (pin-context feature) — not yet honored anywhere
+		pinned?: boolean; // pin-context: honored by budget-fill truncation; setter (UI) pending
 
 		anthropicReasoning: AnthropicReasoning[] | null; // anthropic reasoning
 		createdAt?: number; // unix ms when message was added to thread
