@@ -266,6 +266,14 @@ export const detectToolByParamShape = (
 	if (hasStr('command') && keys.every(k => k === 'command' || k === 'cwd' || k === 'timeout_ms' || k === 'run_in_background')) {
 		return COMMAND_OWNING_TOOLS.has(requestedToolName) ? undefined : 'run_command';
 	}
+	// {nl_input, cwd?} → run_nl_command. `nl_input` is owned SOLELY by run_nl_command
+	// (no other tool declares it), so this shape is unambiguous — reroute unless the call
+	// is already run_nl_command. This is the safe subset of cross-tool arg re-routing
+	// (roadmap 1712); the general "args belong to another tool" case stays deferred because
+	// shared params (path/query/…) make it ambiguous, but a distinctive owner-only param is safe.
+	if (hasStr('nl_input') && keys.every(k => k === 'nl_input' || k === 'cwd')) {
+		return requestedToolName === 'run_nl_command' ? undefined : 'run_nl_command';
+	}
 	// {query, search_in_folder?, is_regex?, page_number?} WITHOUT uri → search_for_files
 	// (search_in_file pairs query WITH uri, so the `!uri` guard disambiguates it).
 	if (hasStr('query') && !('uri' in params) && keys.every(k => k === 'query' || k === 'search_in_folder' || k === 'is_regex' || k === 'page_number')) {

@@ -133,5 +133,23 @@ suite('detectToolByParamShape — shape→tool routing (model-stalls #010)', () 
 				assert.strictEqual(detectToolByParamShape({ uri: 'src/' }, 'get_dir_tree'), undefined);
 			});
 		});
+
+		// roadmap 1712 (safe subset): nl_input is owned solely by run_nl_command → unambiguous.
+		suite('{nl_input} → run_nl_command', () => {
+			test('{nl_input} under a wrong tool → run_nl_command', () => {
+				assert.strictEqual(detectToolByParamShape({ nl_input: 'list git branches' }, 'run_command'), 'run_nl_command');
+				assert.strictEqual(detectToolByParamShape({ nl_input: 'run tests', cwd: 'd:/p' }, 'read_file'), 'run_nl_command');
+			});
+			test('already run_nl_command → undefined (no reroute)', () => {
+				assert.strictEqual(detectToolByParamShape({ nl_input: 'x' }, 'run_nl_command'), undefined);
+			});
+			test('empty / non-string nl_input is not a match', () => {
+				assert.strictEqual(detectToolByParamShape({ nl_input: '' }, 'run_command'), undefined);
+				assert.strictEqual(detectToolByParamShape({ nl_input: 42 }, 'run_command'), undefined);
+			});
+			test('nl_input mixed with a foreign key → not a match', () => {
+				assert.strictEqual(detectToolByParamShape({ nl_input: 'x', command: 'y' }, 'read_file'), undefined);
+			});
+		});
 	});
 });
