@@ -53,7 +53,7 @@ import { formatProvenanceMarker, shouldMarkProvenance } from '../common/vibeAiPr
 import { IGitAutoStashService } from '../common/gitAutoStashService.js'
 import { decideAutoStash } from '../common/autoStashPolicy.js'
 import { ITextFileService } from '../../../services/textfile/common/textfiles.js'
-import { detectShellMisuse, ToolValidationError, truncateHeadTail, looksLikeShellAwaitingInput } from '../common/toolHardening.js'
+import { detectShellMisuse, ToolValidationError, truncateHeadTail, looksLikeShellAwaitingInput, formatTerminalTimeoutNotice } from '../common/toolHardening.js'
 import { IShellHardeningService } from './shellHardeningService.js'
 
 // tool use for AI
@@ -2343,14 +2343,13 @@ export class ToolsService implements IToolsService {
 				if (resolveReason.type === 'done') {
 					return `${result_}\n(exit code ${resolveReason.exitCode})`
 				}
-				// normal command
+				// normal command — inactivity timeout TERMINATES the command (temporary terminal is
+				// disposed via interrupt()), so the output is PARTIAL. Make non-completion explicit so
+				// the agent doesn't treat it as a finished step (roadmap #1640).
 				if (resolveReason.type === 'timeout') {
 					const usedTimeoutMs = params.timeoutMs ?? MAX_TERMINAL_INACTIVE_TIME * 1000
 					const awaitingInput = looksLikeShellAwaitingInput(typeof result_ === 'string' ? result_ : '')
-					const tail = awaitingInput
-						? ' The shell is waiting for more input (a ">>" continuation prompt) — most likely an unterminated quote or here-string. Do NOT re-run the same command; to write file contents use the rewrite_file or edit_file tool instead of building the file line-by-line in the shell.'
-						: ' Re-run with a larger timeout_ms (max 600000), or set run_in_background=true to keep it running and poll output via read_background_output.'
-					return `${result_}\nTerminal command timed out after ${Math.round(usedTimeoutMs / 1000)}s of inactivity.${tail}`
+					return `${result_}\n${formatTerminalTimeoutNotice(Math.round(usedTimeoutMs / 1000), awaitingInput)}`
 				}
 				throw new Error(`Unexpected internal error: Terminal command did not resolve with a valid reason.`)
 			},

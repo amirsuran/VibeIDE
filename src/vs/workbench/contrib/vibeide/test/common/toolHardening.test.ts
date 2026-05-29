@@ -6,7 +6,7 @@
 import { suite, test } from 'mocha';
 import * as assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { detectShellMisuse, truncateHeadTail, countLines, ToolValidationError, looksLikeShellAwaitingInput } from '../../common/toolHardening.js';
+import { detectShellMisuse, truncateHeadTail, countLines, ToolValidationError, looksLikeShellAwaitingInput, formatTerminalTimeoutNotice } from '../../common/toolHardening.js';
 
 suite('ToolHardening', () => {
 	ensureNoDisposablesAreLeakedInTestSuite();
@@ -277,6 +277,30 @@ suite('ToolHardening', () => {
 
 		test('does not match 4+ chevrons (not a real prompt)', () => {
 			assert.strictEqual(looksLikeShellAwaitingInput('>>>>'), false);
+		});
+	});
+
+	suite('formatTerminalTimeoutNotice (roadmap #1640)', () => {
+		test('signals non-completion explicitly (not an ambiguous "timed out")', () => {
+			const msg = formatTerminalTimeoutNotice(30, false);
+			assert.ok(/did NOT finish/i.test(msg), 'must state the command did not finish');
+			assert.ok(/PARTIAL/i.test(msg), 'must flag the output as partial');
+			assert.ok(/do NOT assume/i.test(msg), 'must warn against assuming success');
+			assert.ok(msg.includes('30s'), 'includes the elapsed seconds');
+		});
+
+		test('non-awaiting tail offers timeout_ms / background remediation', () => {
+			const msg = formatTerminalTimeoutNotice(60, false);
+			assert.ok(msg.includes('timeout_ms'));
+			assert.ok(msg.includes('run_in_background'));
+		});
+
+		test('awaiting-input tail points to the >> continuation cause + rewrite_file', () => {
+			const msg = formatTerminalTimeoutNotice(120, true);
+			assert.ok(msg.includes('>>'));
+			assert.ok(/rewrite_file|edit_file/.test(msg));
+			// still leads with the non-completion signal regardless of branch
+			assert.ok(/did NOT finish/i.test(msg));
 		});
 	});
 

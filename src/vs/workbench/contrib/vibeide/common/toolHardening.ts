@@ -180,6 +180,24 @@ export function looksLikeShellAwaitingInput(output: string): boolean {
 }
 
 /**
+ * Build the agent-facing notice appended to a `run_command` result when it resolved by INACTIVITY
+ * TIMEOUT (roadmap #1640). The temporary terminal is disposed on timeout (terminalToolService
+ * `interrupt()`), which TERMINATES the command — so the captured output is PARTIAL and the command
+ * did NOT complete. The agent previously read the bare "timed out" line as a finished step and moved
+ * on (e.g. abandoning a still-deploying `git push`). This notice makes non-completion explicit.
+ *
+ * Pure / deterministic — the wording is locked by tests so it can't silently regress to an ambiguous
+ * "timed out" that reads as success.
+ */
+export function formatTerminalTimeoutNotice(usedSeconds: number, awaitingInput: boolean): string {
+	const lead = `⚠️ Command did NOT finish: VibeIDE terminated it after ${usedSeconds}s of inactivity (no new output). The output above is PARTIAL — do NOT assume it succeeded or completed.`;
+	const tail = awaitingInput
+		? ' The shell was waiting for more input (a ">>" continuation prompt) — most likely an unterminated quote or here-string. Do NOT re-run the same command; to write file contents use the rewrite_file or edit_file tool instead of building the file line-by-line in the shell.'
+		: ' Re-run with a larger timeout_ms (max 600000), or set run_in_background=true to keep it running and poll output via read_background_output.';
+	return `${lead}${tail}`;
+}
+
+/**
  * Heuristic line-counter for cap-decisions without materialising arrays.
  */
 export function countLines(s: string): number {
