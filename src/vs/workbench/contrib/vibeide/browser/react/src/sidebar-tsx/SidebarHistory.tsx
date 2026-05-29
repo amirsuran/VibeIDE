@@ -155,8 +155,14 @@ const TokenBudgetFooter = () => {
 
 	return (
 		<div className="flex-shrink-0 border-t border-vibe-border-1 px-2 py-2 text-[11px] text-vibe-fg-2 select-none">
-			<div className={`flex items-center justify-between gap-2 mb-1${sessionBlink ? ' @@vibe-token-warn-blink' : ''}`} title={sessionWarnTitle} style={sessionBlink ? { color: 'var(--vibe-warning)' } : undefined}>
-				<span className={`truncate${sessionBlink ? '' : ' text-vibe-fg-3'}`}>{chatS.budgetFooterSessionLabel}</span>
+			<div
+				className={sessionBlink
+					? 'flex items-center justify-between gap-2 mb-1 @@vibe-token-warn-blink'
+					: 'flex items-center justify-between gap-2 mb-1'}
+				title={sessionWarnTitle}
+				style={sessionBlink ? { color: 'var(--vibe-warning)' } : undefined}
+			>
+				<span className={sessionBlink ? 'truncate' : 'truncate text-vibe-fg-3'}>{chatS.budgetFooterSessionLabel}</span>
 				<span className="font-mono text-[10.5px] truncate">
 					{sessionEnabled
 						? chatS.budgetFooterCounts(formatTokens(budget.sessionTokensUsed), formatTokens(budget.sessionTokensLimit), sessionPct)
