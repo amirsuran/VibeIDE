@@ -41,7 +41,7 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 			type: 'array',
 			items: { type: 'string' },
 			default: [],
-			description: localize('vibeide.logging.categories', 'Allowlist категорий (блоков). Пусто = показывать все. Иначе в консоль проходят только перечисленные категории, напр. ["Tool","llmTurn"]. Имя категории — это часть префикса `[VibeIDE/<категория>]`.'),
+			description: localize('vibeide.logging.categories', 'Allowlist категорий (блоков). Пусто = показывать все. Иначе в консоль проходят только перечисленные категории, напр. ["Tool","llmTurn"]. Имя категории — это часть префикса `[VibeIDE/<категория>]`. Поддерживается wildcard-префикс: `"chat*"` пропустит все категории, начинающиеся с `chat` (chatThread, chatThreadService, …) — удобно вместо перечисления ~150 имён.'),
 		},
 		'vibeide.logging.categoryLevels': {
 			type: 'object',
@@ -50,7 +50,7 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 				type: 'string',
 				enum: ['off', 'error', 'warn', 'info', 'debug', 'trace'],
 			},
-			description: localize('vibeide.logging.categoryLevels', 'Точечный порог уровня на отдельные категории — переопределяет глобальный `level` только для перечисленных. Ключ — имя категории (часть `[VibeIDE/<категория>]`), значение — уровень. Напр. {"llmTurn":"off","Tool":"trace"} заглушит llmTurn и включит максимум для Tool, остальные категории — по глобальному уровню. Работает поверх allowlist `categories` (если он непустой, незалистенные категории всё равно не проходят).'),
+			description: localize('vibeide.logging.categoryLevels', 'Точечный порог уровня на отдельные категории — переопределяет глобальный `level` только для перечисленных. Ключ — имя категории (часть `[VibeIDE/<категория>]`), значение — уровень. Напр. {"llmTurn":"off","Tool":"trace"} заглушит llmTurn и включит максимум для Tool, остальные категории — по глобальному уровню. Поддерживается wildcard-префикс `"chat*"` (применяется к группе категорий; при совпадении нескольких побеждает самый длинный префикс, точное имя — приоритетнее любого wildcard). Работает поверх allowlist `categories` (если он непустой, незалистенные категории всё равно не проходят).'),
 		},
 		'vibeide.logging.timestamps': {
 			type: 'boolean',

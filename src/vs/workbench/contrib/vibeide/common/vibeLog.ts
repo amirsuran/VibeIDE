@@ -29,6 +29,7 @@
  */
 
 import { vibeTraceTs } from './helpers/vibeTraceTs.js';
+import { logCategoryAllowed, resolveCategoryLevelWildcard } from './logCategoryMatch.js';
 
 export enum VibeLogLevel {
 	Off = 0,
@@ -90,11 +91,17 @@ function safeStr(a: unknown): string {
 
 function passes(level: VibeLogLevel, category: string): boolean {
 	if (!config.enabled) { return false; }
-	// A per-category threshold overrides the global level for that category only;
-	// everything else still uses `config.level`.
-	const threshold = config.categoryLevels.get(category) ?? config.level;
-	if (level > threshold) { return false; }
-	if (config.categories && config.categories.size > 0 && !config.categories.has(category)) { return false; }
+	// A per-category threshold overrides the global level for that category only; everything else
+	// uses `config.level`. Exact key first (O(1)); on a miss, a `prefix*` wildcard key may apply
+	// (roadmap #3115 — group ~150 flat categories without listing each one).
+	let threshold = config.categoryLevels.get(category);
+	if (threshold === undefined && config.categoryLevels.size > 0) {
+		const wildKey = resolveCategoryLevelWildcard(category, config.categoryLevels.keys());
+		if (wildKey !== undefined) { threshold = config.categoryLevels.get(wildKey); }
+	}
+	if (level > (threshold ?? config.level)) { return false; }
+	// Allowlist (empty/null = all). Supports exact names and `prefix*` wildcards.
+	if (!logCategoryAllowed(category, config.categories)) { return false; }
 	return true;
 }
 
