@@ -273,6 +273,17 @@ export const detectToolByParamShape = (
 	}
 	// {uri, <read pagination>} with no command/query/pattern → read_file, but only
 	// from a NON-uri tool (a bare {uri} is ambiguous with ls_dir/get_dir_tree/…).
+	// {uri[, page_number]} whose uri ends in a path separator (an unambiguous directory)
+	// → ls_dir, from a NON-uri tool. Checked BEFORE the read_file branch so a trailing-slash
+	// uri routes to ls_dir while a file path falls through to it. Trailing slash is the ONLY
+	// directory signal used: a name without an extension (LICENSE, Makefile, Dockerfile) is a
+	// FILE, so "no extension" is deliberately NOT treated as a directory (would misroute reads).
+	if (hasStr('uri') && !hasStr('command') && !hasStr('query') && !('pattern' in params)
+		&& keys.every(k => k === 'uri' || k === 'page_number')
+		&& NON_URI_TOOLS.has(requestedToolName)
+		&& /[/\\]\s*$/.test(params['uri'] as string)) {
+		return 'ls_dir';
+	}
 	if (hasStr('uri') && !hasStr('command') && !hasStr('query') && !('pattern' in params)
 		&& keys.every(k => k === 'uri' || k === 'start_line' || k === 'end_line' || k === 'page_number' || k === 'line_limit' || k === 'with_line_numbers')
 		&& NON_URI_TOOLS.has(requestedToolName)) {

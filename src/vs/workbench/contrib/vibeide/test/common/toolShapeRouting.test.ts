@@ -104,5 +104,34 @@ suite('detectToolByParamShape — shape→tool routing (model-stalls #010)', () 
 			assert.strictEqual(detectToolByParamShape({ command: 123 }, 'read_file'), undefined);
 			assert.strictEqual(detectToolByParamShape({ uri: 42 }, 'run_command'), undefined);
 		});
+
+		// roadmap 3195: {uri} with a trailing path-separator → ls_dir (directory), from a
+		// non-uri tool. Trailing slash is the ONLY directory signal (no "extensionless = dir").
+		suite('{uri} directory → ls_dir', () => {
+			test('trailing / from a non-uri tool → ls_dir', () => {
+				assert.strictEqual(detectToolByParamShape({ uri: 'src/components/' }, 'glob'), 'ls_dir');
+				assert.strictEqual(detectToolByParamShape({ uri: 'd:\\proj\\src\\' }, 'grep'), 'ls_dir');
+				assert.strictEqual(detectToolByParamShape({ uri: 'src/', page_number: '2' }, 'search_for_files'), 'ls_dir');
+			});
+
+			test('no trailing slash → read_file, not ls_dir', () => {
+				assert.strictEqual(detectToolByParamShape({ uri: 'src/main.ts' }, 'glob'), 'read_file');
+				// extensionless file path (no trailing slash) must NOT become ls_dir
+				assert.strictEqual(detectToolByParamShape({ uri: 'LICENSE' }, 'grep'), 'read_file');
+				assert.strictEqual(detectToolByParamShape({ uri: 'src/Makefile' }, 'grep'), 'read_file');
+			});
+
+			test('trailing slash + read-pagination → read_file (ls_dir branch declines, read_file branch keeps its pre-existing behavior)', () => {
+				// start_line means a read intent; the ls_dir branch requires keys ⊆ {uri,page_number}
+				// so it declines, and the (unchanged) read_file branch catches {uri,start_line}.
+				assert.strictEqual(detectToolByParamShape({ uri: 'src/', start_line: '1' }, 'grep'), 'read_file');
+			});
+
+			test('legitimate ls_dir / uri-owning tools are NOT hijacked', () => {
+				// ls_dir owns uri (not in NON_URI_TOOLS) → passes through untouched
+				assert.strictEqual(detectToolByParamShape({ uri: 'src/' }, 'ls_dir'), undefined);
+				assert.strictEqual(detectToolByParamShape({ uri: 'src/' }, 'get_dir_tree'), undefined);
+			});
+		});
 	});
 });
