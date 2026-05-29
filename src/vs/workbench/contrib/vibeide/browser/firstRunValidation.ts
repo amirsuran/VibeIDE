@@ -10,6 +10,7 @@ import { IStorageService, StorageScope, StorageTarget } from '../../../../platfo
 import { IEditorService } from '../../../services/editor/common/editorService.js';
 import { CommandsRegistry } from '../../../../platform/commands/common/commands.js';
 import { ISecretDetectionService } from '../common/secretDetectionService.js';
+import { IProductService } from '../../../../platform/product/common/productService.js';
 
 const FIRST_RUN_VALIDATION_KEY = 'vibeide.firstRunValidation';
 const FIRST_RUN_VALIDATION_COMPLETE_KEY = 'vibeide.firstRunValidationComplete';
@@ -34,10 +35,30 @@ export class FirstRunValidationContribution extends Disposable implements IWorkb
 		@IStorageService private readonly storageService: IStorageService,
 		@IEditorService private readonly editorService: IEditorService,
 		@ISecretDetectionService private readonly secretDetectionService: ISecretDetectionService,
+		@IProductService private readonly productService: IProductService,
 	) {
 		super();
+		this.logStartupBanner();
 		this.setupConsoleRedaction();
 		this.runValidation();
+	}
+
+	/**
+	 * Emit a one-line build banner on EVERY startup (constructor, not runValidation —
+	 * the latter early-returns after first run). Logs the VibeIDE version, the base
+	 * VS Code version, and the short commit so any pasted diagnostic log self-identifies
+	 * which build produced it. Added after a 2026-05-29 incident where a stale local
+	 * install was mistaken for a fresh release and cost a long misdiagnosis.
+	 */
+	private logStartupBanner(): void {
+		try {
+			const vibe = this.productService.vibeVersion ?? '?';
+			const base = this.productService.version ?? '?';
+			const commit = (this.productService.commit ?? 'dev').slice(0, 8);
+			vibeLog.info('Startup', `VibeIDE ${vibe} | base VS Code ${base} | commit ${commit}`);
+		} catch {
+			// Banner is diagnostic-only — never let it break startup.
+		}
 	}
 
 	/**
