@@ -118,12 +118,20 @@ const TokenBudgetFooter = () => {
 
 	const [budget, setBudget] = useState<TokenBudgetStatus>(() => budgetService.getStatus());
 	const [ctx, setCtx] = useState<ContextLimitStatus>(() => contextGuard.getStatus());
+	const [blinkEnabled, setBlinkEnabled] = useState<boolean>(() => configurationService.getValue<boolean>('vibeide.safety.sessionTokenWarningBlink') ?? true);
 
 	useEffect(() => {
 		const d1 = budgetService.onBudgetStatusChanged((s: TokenBudgetStatus) => setBudget(s));
 		const d2 = contextGuard.onUsageUpdated((s: ContextLimitStatus) => setCtx(s));
-		return () => { d1.dispose(); d2.dispose(); };
-	}, [budgetService, contextGuard]);
+		// Subscribe to the opt-out so toggling it takes effect immediately — even while idle
+		// at a warning (when no budget change would otherwise re-render the footer).
+		const d3 = configurationService.onDidChangeConfiguration(e => {
+			if (e.affectsConfiguration('vibeide.safety.sessionTokenWarningBlink')) {
+				setBlinkEnabled(configurationService.getValue<boolean>('vibeide.safety.sessionTokenWarningBlink') ?? true);
+			}
+		});
+		return () => { d1.dispose(); d2.dispose(); d3.dispose(); };
+	}, [budgetService, contextGuard, configurationService]);
 
 	const onReset = useCallback(() => {
 		void commandService.executeCommand('vibeide.tokenBudget.reset');
@@ -139,10 +147,9 @@ const TokenBudgetFooter = () => {
 		? 'bg-red-500'
 		: budget.isWarning ? 'bg-amber-500' : 'bg-green-500';
 	// Pulse the SESSION token line (not chat timestamps) while in the ≥80% warning band
-	// (below 100%). Honors the vibeide.safety.sessionTokenWarningBlink opt-out. Read in render
-	// (the footer re-renders on every budget change, which is exactly when the blink matters).
-	const sessionBlink = sessionEnabled && budget.isWarning && !budget.isExceeded
-		&& (configurationService.getValue<boolean>('vibeide.safety.sessionTokenWarningBlink') ?? true);
+	// (below 100%). Honors the vibeide.safety.sessionTokenWarningBlink opt-out (reactive via
+	// the config subscription above, so toggling it applies immediately even when idle).
+	const sessionBlink = sessionEnabled && budget.isWarning && !budget.isExceeded && blinkEnabled;
 	const sessionWarnTitle = sessionBlink
 		? `Сессия израсходовала ${sessionPct}% токенов — сбросьте сессию или поднимите лимит в настройках`
 		: undefined;
