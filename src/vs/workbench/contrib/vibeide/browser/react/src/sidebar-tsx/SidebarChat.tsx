@@ -794,6 +794,10 @@ export const VibeChatArea: React.FC<VibeideChatAreaProps> = ({
                 ${className}
             `}
 			onClick={(e) => {
+				// Don't pull focus back to the textarea when the click landed on an interactive
+				// control inside the composer (iterations <input>, model dropdown, buttons) — the
+				// click-release refocus otherwise steals focus and those inputs can't be edited.
+				if ((e.target as HTMLElement).closest('input,textarea,select,button,[contenteditable]')) { return }
 				onClickAnywhere?.()
 			}}
 			onDragOver={handleDragOver}
@@ -4163,9 +4167,11 @@ const CommandBarInChat = () => {
 			</div>
 
 			const acceptRejectButtons = <div
-				// do this with opacity so that the height remains the same at all times
+				// Match the top-level command bar: when hidden, collapse WIDTH (not just opacity) so the
+				// status label shifts flush to the right edge instead of leaving a phantom gap. Height is
+				// unaffected — the always-present status indicator in the same row fixes the row height.
 				className={`flex items-center gap-0.5
-					${isFinishedMakingFileChanges ? '' : 'opacity-0 pointer-events-none'}
+					${isFinishedMakingFileChanges ? 'ml-2' : 'w-0 overflow-hidden opacity-0 pointer-events-none'}
 				`}
 			>
 				{/* <JumpToFileButton
@@ -4201,9 +4207,11 @@ const CommandBarInChat = () => {
 						{fileNameHTML}
 						{detailsContent}
 					</div>
-					<div className="flex items-center gap-2">
-						{acceptRejectButtons}
+					{/* Status first, accept/reject pinned right — identical to the top-level command bar,
+					    so when the buttons collapse (while streaming) the status label shifts flush right. */}
+					<div className="flex items-center">
 						{fileStatusHTML}
+						{acceptRejectButtons}
 					</div>
 				</div>
 			)

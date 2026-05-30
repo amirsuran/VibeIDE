@@ -120,7 +120,7 @@ export const chatS = {
 	loadingDefaultAria: 'Загрузка',
 	statusNeedsApproval: 'Нужно подтверждение',
 	statusPreparing: 'Подготовка',
-	statusRunning: 'Думаю…',
+	statusRunning: 'Выполняется',
 	statusDone: 'Готово',
 	rejectAllTooltip: 'Отклонить всё',
 	acceptAllTooltip: 'Принять всё',
