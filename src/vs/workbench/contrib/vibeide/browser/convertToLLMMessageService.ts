@@ -60,6 +60,7 @@ import { reParsedToolXMLString, chat_systemMessage, chat_systemMessage_local } f
 import { detectModelFamily } from '../common/prompt/modelFamily.js';
 import { computeLastExchangePinSet } from '../common/prompt/lastExchangePin.js';
 import { isPinnedContextMessage } from '../common/prompt/pinnedContext.js';
+import { IVibeProjectRulesService } from './vibeProjectRulesService.js';
 import { planBudgetFillTail } from '../common/agentLoopHeuristics.js';
 import { updateTokenCalibration, clampTokenCalibration, serializeCalibration, deserializeCalibration } from '../common/tokenCalibration.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
@@ -889,7 +890,7 @@ const prepareOpenAIOrAnthropicMessages = ({
 	//
 	// XML-tagged sections keep the model from confusing system context with user-attached content (e.g. images).
 	const sysMsgParts: string[] = []
-	if (aiInstructions) sysMsgParts.push(`<workspace_guidelines source=".vibe/rules.md, AGENTS.md, .vibe/goals.md">\n${aiInstructions}\n</workspace_guidelines>`)
+	if (aiInstructions) sysMsgParts.push(`<workspace_guidelines>\n${aiInstructions}\n</workspace_guidelines>`)
 	if (systemMessage) sysMsgParts.push(`<assistant_instructions>\n${systemMessage}\n</assistant_instructions>`)
 	const combinedSystemMessage = sysMsgParts.join('\n\n')
 
@@ -1352,6 +1353,7 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 		@IVibeContextGuardService private readonly contextGuardService: IVibeContextGuardService,
 		@IRemoteCatalogService private readonly remoteCatalogService: IRemoteCatalogService,
 		@IStorageService private readonly storageService: IStorageService,
+		@IVibeProjectRulesService private readonly projectRulesService: IVibeProjectRulesService,
 	) {
 		super()
 		// Restore persisted token-calibration factors (stable per model tokenizer) so the budget
@@ -1363,26 +1365,18 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 	}
 
 	// Read `.vibe/rules.md` and root `AGENTS.md` from workspace folders (open-document models when attached)
-	private _getVibeRulesFileContents(): string {
+	private _getVibeRulesFileContents(activation?: { userText?: string }): string {
+		// R.0 — single source of truth: IVibeProjectRulesService combines flat `.vibe/rules.md` +
+		// `AGENTS.md` AND folder rules (`.vibe/rules/**`, `.cursor/rules/**` — `.md`/`.mdc`), with
+		// per-source `[Source: path]` labels + secret-sanitize. Previously this read just the two
+		// flat files inline via getModel, bypassing the service — so folder/`.mdc` rules never
+		// reached the prompt (incident 2026-05-30, model hallucinated filenames). `activation`
+		// (the user message) gates conditional rules (triggers/alwaysApply:false → R.7/R.3).
 		try {
-			const workspaceFolders = this.workspaceContextService.getWorkspace().folders;
-			const parts: string[] = [];
-			for (const folder of workspaceFolders) {
-				const rulesMdUri = URI.joinPath(folder.uri, '.vibe', 'rules.md');
-				const agentsMdUri = URI.joinPath(folder.uri, 'AGENTS.md');
-				const mdModel = this.vibeideModelService.getModel(rulesMdUri).model;
-				if (mdModel) {
-					parts.push(mdModel.getValue(EndOfLinePreference.LF));
-				}
-				const agentsModel = this.vibeideModelService.getModel(agentsMdUri).model;
-				if (agentsModel) {
-					parts.push(agentsModel.getValue(EndOfLinePreference.LF));
-				}
-			}
-			return parts.join('\n\n').trim();
+			return this.projectRulesService.getCombinedRules(activation);
 		}
 		catch (e) {
-			return ''
+			return '';
 		}
 	}
 
@@ -1409,9 +1403,9 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 	}
 
 	// Get combined AI instructions from settings, .vibe/rules.md, and AGENTS.md (via open models)
-	private _getCombinedAIInstructions(): string {
+	private _getCombinedAIInstructions(activation?: { userText?: string }): string {
 		const globalAIInstructions = this.vibeideSettingsService.state.globalSettings.aiInstructions;
-		const vibeRulesFileContent = this._getVibeRulesFileContents();
+		const vibeRulesFileContent = this._getVibeRulesFileContents(activation);
 
 		const ans: string[] = []
 		if (globalAIInstructions) ans.push(globalAIInstructions)
@@ -1894,7 +1888,7 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 		const langDirective = buildResponseLanguageDirective(responseLangSetting, lastUserTextForLang);
 		// NOTE: explicitSkillBodies are NOT added to system prompt — they get prepended
 		// to the last user message below. See model-stalls.md #002 for why.
-		const aiInstructions = [this._getCombinedAIInstructions(), skillsDiscovery, implicitSkills, langDirective].filter(s => s.trim().length > 0).join('\n\n');
+		const aiInstructions = [this._getCombinedAIInstructions({ userText: lastUserTextForSkills }), skillsDiscovery, implicitSkills, langDirective].filter(s => s.trim().length > 0).join('\n\n');
 		const isReasoningEnabled = getIsReasoningEnabledState('Chat', validProviderName, modelName, modelSelectionOptions, overridesOfModel)
 		const reservedOutputTokenSpace = getReservedOutputTokenSpace(validProviderName, modelName, { isReasoningEnabled, overridesOfModel })
 		let llmMessages = this._chatMessagesToSimpleMessages(chatMessages)

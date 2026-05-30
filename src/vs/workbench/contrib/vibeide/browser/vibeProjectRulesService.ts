@@ -37,18 +37,27 @@ import { INotificationService, Severity } from '../../../../platform/notificatio
 import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
 import { VSBuffer } from '../../../../base/common/buffer.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
-import { parseRuleFrontmatter, isRuleFileName } from '../common/prompt/ruleFrontmatter.js';
+import { parseRuleFrontmatter, isRuleFileName, parseAlwaysApply, parseTriggers, parseGlobs, decideRuleActivation } from '../common/prompt/ruleFrontmatter.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface LoadedRuleSource {
 	/** Relative path from workspace root */
 	relativePath: string;
-	/** Content after secret detection (may differ from raw) */
+	/** Content after secret detection (may differ from raw); for `.mdc`, frontmatter already stripped */
 	content: string;
 	/** Whether secrets were found and redacted */
 	wasRedacted: boolean;
 	sizeBytes: number;
+	// ── Activation metadata (R.7/R.3), parsed from `.mdc` frontmatter; undefined for flat/plain files ──
+	/** `true`/`false` when present; `undefined` = plain rule (always injected, back-compat). */
+	alwaysApply?: boolean;
+	/** Trigger words (lowercased) — inject when the user message contains one. */
+	triggers?: readonly string[];
+	/** Glob patterns — reserved for R.2 (open-file scoped activation); currently → "available" index. */
+	globs?: readonly string[];
+	/** `description` frontmatter — shown in the agent-requested "available rules" index. */
+	description?: string;
 }
 
 export const IVibeProjectRulesService = createDecorator<IVibeProjectRulesService>('vibeProjectRulesService');
@@ -57,11 +66,13 @@ export interface IVibeProjectRulesService {
 	readonly _serviceBrand: undefined;
 
 	/**
-	 * Get the combined AI instructions from all project rules files.
-	 * Each source is labeled. Content is sanitized.
+	 * Get the combined AI instructions from all project rules files. Each source is labeled
+	 * (`[Source: path]`) and secret-sanitized. With `activation` (the current user message),
+	 * conditional rules (triggers/`alwaysApply:false`/globs) are gated: matched → injected,
+	 * unmatched → listed in an "available rules" index (R.3/R.7). Without `activation` → inject all.
 	 * Returns empty string if no rules files found.
 	 */
-	getCombinedRules(): string;
+	getCombinedRules(activation?: { userText?: string }): string;
 
 	/** Get list of loaded rule sources (for UI preview / settings panel) */
 	getLoadedSources(): LoadedRuleSource[];
@@ -93,13 +104,11 @@ class VibeProjectRulesService extends Disposable implements IVibeProjectRulesSer
 
 	private _cachedSources: LoadedRuleSource[] = [];
 	private _cachedCombined = '';
-	private _dirty = true;
 
 	private readonly _onRulesChanged = this._register(new Emitter<void>());
 	readonly onRulesChanged: Event<void> = this._onRulesChanged.event;
 
 	private readonly _debouncer = this._register(new RunOnceScheduler(() => {
-		this._dirty = true;
 		this._onRulesChanged.fire();
 		this._log.info('[VibeProjectRules] Rules changed, cache invalidated');
 	}, WATCHER_DEBOUNCE_MS));
@@ -134,13 +143,46 @@ class VibeProjectRulesService extends Disposable implements IVibeProjectRulesSer
 		}));
 	}
 
-	getCombinedRules(): string {
-		if (this._dirty) {
-			// Synchronous cache miss — content was loaded async; return last known or empty
-			// The caller should call reloadRules() first for fresh content
-			return this._cachedCombined;
+	getCombinedRules(activation?: { userText?: string }): string {
+		// No activation (Settings preview / Ctrl+K / Autocomplete) → inject all (cached, computed
+		// in reloadRules). With activation (Chat agent path) → gate conditional rules by user text.
+		// Both read from `_cachedSources`; content was loaded async, so this is last-known (the
+		// contrib reloads on workspace change + the reload command refreshes).
+		if (!activation) { return this._cachedCombined; }
+		return this._combineSources(this._cachedSources, activation);
+	}
+
+	/**
+	 * Combine loaded sources into the prompt block: dedup by content (R.6), label each source
+	 * (`[Source: path]`), and — when `activation` is given — gate conditional rules, listing
+	 * unmatched ones in an "available rules" index (R.3/R.7). Without `activation` → inject all.
+	 */
+	private _combineSources(sources: readonly LoadedRuleSource[], activation: { userText?: string } | undefined): string {
+		const seen = new Set<string>();
+		const injected: string[] = [];
+		const indexed: LoadedRuleSource[] = [];
+		for (const s of sources) {
+			const body = s.content.trim();
+			if (body.length === 0) { continue; }
+			if (seen.has(body)) { continue; } // R.6 — dedup identical content across sources
+			seen.add(body);
+			const act = activation
+				? decideRuleActivation({ alwaysApply: s.alwaysApply, triggers: s.triggers ?? [], globs: s.globs ?? [] }, activation.userText)
+				: 'inject';
+			if (act === 'inject') {
+				const label = `[Source: ${s.relativePath}${s.wasRedacted ? ' (secrets redacted)' : ''}]`;
+				injected.push(`${label}\n${body}`);
+			} else {
+				indexed.push(s);
+			}
 		}
-		return this._cachedCombined;
+		const parts: string[] = [];
+		if (injected.length > 0) { parts.push(injected.join('\n\n')); }
+		if (indexed.length > 0) {
+			const list = indexed.map(s => `- ${s.relativePath}${s.description ? ` — ${s.description}` : ''}`).join('\n');
+			parts.push(`[Available project rules (conditional — not loaded for this turn)]\n${list}`);
+		}
+		return parts.join('\n\n').trim();
 	}
 
 	getLoadedSources(): LoadedRuleSource[] {
@@ -176,17 +218,8 @@ class VibeProjectRulesService extends Disposable implements IVibeProjectRulesSer
 		}
 
 		this._cachedSources = sources;
-
-		// Build labeled combined output
-		const parts = sources
-			.filter(s => s.content.trim().length > 0)
-			.map(s => {
-				const label = `[Source: ${s.relativePath}${s.wasRedacted ? ' (secrets redacted)' : ''}]`;
-				return `${label}\n${s.content}`;
-			});
-
-		this._cachedCombined = parts.join('\n\n').trim();
-		this._dirty = false;
+		// Cache the "inject all" combine for the no-activation callers (Settings / Ctrl+K / Autocomplete).
+		this._cachedCombined = this._combineSources(sources, undefined);
 
 		this._log.info(`[VibeProjectRules] Loaded ${sources.length} rule sources; combined ${this._cachedCombined.length} chars`);
 	}
@@ -200,14 +233,20 @@ class VibeProjectRulesService extends Disposable implements IVibeProjectRulesSer
 			const file = await this._fileService.readFile(uri);
 			const raw = file.value.toString().slice(0, MAX_RULE_FILE_BYTES);
 			// `.mdc` (Cursor) files carry a leading frontmatter block — strip it; the body is the
-			// actual instruction. Plain `.md` is left verbatim (a leading `---` there is content).
-			const effective = relativePath.toLowerCase().endsWith('.mdc') ? parseRuleFrontmatter(raw).body : raw;
+			// actual instruction, and the frontmatter feeds activation (alwaysApply/triggers/globs).
+			// Plain `.md` is left verbatim (a leading `---` there is content, not frontmatter).
+			const parsed = relativePath.toLowerCase().endsWith('.mdc') ? parseRuleFrontmatter(raw) : undefined;
+			const effective = parsed ? parsed.body : raw;
 			const guardResult = this._guard.sanitizeFileContent(effective, relativePath);
 			return {
 				relativePath,
 				content: guardResult.sanitized,
 				wasRedacted: effective !== guardResult.sanitized,
 				sizeBytes: effective.length,
+				alwaysApply: parsed ? parseAlwaysApply(parsed.frontmatter) : undefined,
+				triggers: parsed ? parseTriggers(parsed.frontmatter) : undefined,
+				globs: parsed ? parseGlobs(parsed.frontmatter) : undefined,
+				description: parsed ? (parsed.frontmatter['description'] || undefined) : undefined,
 			};
 		} catch {
 			return null; // File does not exist or cannot be read
