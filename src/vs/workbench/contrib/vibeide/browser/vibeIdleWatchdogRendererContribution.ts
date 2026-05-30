@@ -392,6 +392,16 @@ export class VibeIdleWatchdogRendererContribution extends Disposable implements 
 						run: () => this._commandService.executeCommand('vibeide.watchdog.bundleCrashReport'),
 					},
 					{
+						// D.8 — one-click recovery: a clean window reload frees the ballooning renderer
+						// before V8/commit OOM aborts it (the message already recommends this).
+						id: 'vibeide.watchdog.preOomAlert.reload',
+						label: localize('vibeide.watchdog.preOomAlert.reload', 'Перезагрузить окно'),
+						tooltip: '',
+						class: undefined,
+						enabled: true,
+						run: () => this._commandService.executeCommand('workbench.action.reloadWindow'),
+					},
+					{
 						id: 'vibeide.watchdog.preOomAlert.dismiss',
 						label: localize('vibeide.watchdog.preOomAlert.dismiss', 'Пропустить'),
 						tooltip: '',
