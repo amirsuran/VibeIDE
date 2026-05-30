@@ -3227,6 +3227,19 @@ Backlog (data-gated — не плодить спекулятивно, урок #
 - [ ] **Ratio-thrash breaker**: текущий thrash строго «подряд»; если ошибки перемежаются успехами и всё равно жгут бюджет (как в #010) — перейти на «N из последних M». Только при наблюдении такого кейса.
 - [x] **`{uri}` file-vs-dir эвристика** — ✅ (2026-05-29): в `detectToolByParamShape` добавлена ветка ПЕРЕД read_file — `{uri[, page_number]}` от non-uri тула, где значение `uri` оканчивается на `/`/`\`, → `ls_dir` (однозначная папка). **Сигнал только trailing-slash:** «без расширения» НЕ используется (`LICENSE`/`Makefile`/`Dockerfile` — файлы → misroute), вопреки исходной формулировке пункта. Сужено до keys ⊆ {uri,page_number}, так что `{uri, start_line}` падает в read_file (pre-existing, не тронуто); `ls_dir`/`get_dir_tree` (uri-владельцы) не угоняются. +5 тест-кейсов в `toolShapeRouting.test.ts`, node 14/14 (вкл. регрессию #010-кейсов). tsgo чист.
 
+## R. Project rules & context — Cursor-compatible (2026-05-30)
+
+> **Контекст:** инцидент 2026-05-30 — модель не видела `.vibe/rules/*.mdc` (движок читал только плоские `.vibe/rules.md` + `AGENTS.md`) → выдумывала пути (`dev.md`, `docs/roadmap/*/todo.md`), создавала дубли. Корень — узкая дискавери правил. Секция доводит правила до Cursor-паритета. Механика — `browser/vibeProjectRulesService.ts` + `common/prompt/ruleFrontmatter.ts`.
+
+- [x] **R.1 — дискавери `.vibe/rules/**/*.{md,mdc}` + `.cursor/rules/**/*.mdc`** — ✅ (2026-05-30): `vibeProjectRulesService` рекурсивно сканит rules-папки (cap `MAX_RULE_FILES=50`, depth 6, дети сортируются по имени → детерминизм), `.mdc`-frontmatter (`description`/`globs`/`alwaysApply`) стрипается pure-helper'ом `common/prompt/ruleFrontmatter.ts` (+тесты `ruleFrontmatter.test.ts`, node 16/16). Вотчер реагирует на изменения в папках (`e.affects`). Каждый файл — labeled-источник, sanitize через guard. Закрывает корень «модель не видит правила». tsgo чист. (Плоский `.md` не парсится как frontmatter — ведущий `---` там контент.)
+- [ ] **R.2 — glob-scoped активация `.mdc`** — применять rule только когда открытый/затронутый файл матчит `globs` фронтматтера (Cursor "Auto Attached"). Сейчас R.1 включает тело всегда; R.2 добавит условную инъекцию по текущему контексту файлов.
+- [ ] **R.3 — agent-requested rules (`alwaysApply:false`)** — вместо тела в системный промпт класть только `description`+имя; модель подтягивает тело тулом по требованию (Cursor "Agent Requested"). Экономит бюджет на больших наборах.
+- [ ] **R.4 — Settings/diagnostics: список найденных rule-источников** — показать в Vibe Settings (есть `getLoadedSources()` — нужен UI) + per-rule enable-тоггл и превью.
+- [ ] **R.5 — `@rule:NAME` / `/rules`** — ручная инъекция конкретного правила в чат (как `/skill:`), для glob-scoped/agent-requested.
+- [ ] **R.6 — дедуп/precedence источников** — если правило задублировано (flat + folder) — не слать дважды; определить порядок приоритета. Сейчас простая конкатенация.
+
+---
+
 | Документ | Описание |
 |---|---|
 | [`docs/v1/`](v1/README.md) | Детальная документация по всем модулям |
