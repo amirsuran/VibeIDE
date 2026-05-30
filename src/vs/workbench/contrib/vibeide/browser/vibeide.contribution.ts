@@ -645,6 +645,9 @@ import './vibeWorkspaceFormsService.js'
 // VibeIDE: Project rules settings — toggle per-source, stats preview, config watcher (§ H.1.2)
 import './vibeProjectRulesSettingsContribution.js'
 
+// VibeIDE: log full detail of global unexpected errors so "Подробности — в журнале" holds them (C)
+import './vibeUnexpectedErrorLoggingContribution.js'
+
 // VibeIDE: GDPR palette commands — export (DSAR) + delete (right to be forgotten) (§ N.2)
 import './vibeGdprPaletteContribution.js'
 
