@@ -8,7 +8,7 @@ import { EditorInput } from '../../../common/editor/editorInput.js';
 import * as nls from '../../../../nls.js';
 import { EditorExtensions, GroupModelChangeKind, IEditorFactoryRegistry, IEditorSerializer } from '../../../common/editor.js';
 import { EditorPane } from '../../../browser/parts/editor/editorPane.js';
-import { IEditorGroup, IEditorGroupsService, GroupDirection } from '../../../services/editor/common/editorGroupsService.js';
+import { IEditorGroup, IEditorGroupsService, GroupDirection, GroupsOrder } from '../../../services/editor/common/editorGroupsService.js';
 import { ITelemetryService } from '../../../../platform/telemetry/common/telemetry.js';
 import { IThemeService } from '../../../../platform/theme/common/themeService.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
@@ -79,6 +79,10 @@ let _hasChatGroupCtxKey: IContextKey<boolean> | undefined;
 const _chatTabFocusAt = new Map<string, number>();
 // Keeps the onDidRemoveGroup listener alive for the entire renderer session.
 let _groupListenerDisposable: IDisposable | undefined;
+// Keeps the onDidAddGroup listener (chat-group-rightmost invariant) alive for the session.
+let _groupAddListenerDisposable: IDisposable | undefined;
+// Re-entrancy guard: moveGroup fires group events that could re-trigger the invariant.
+let _enforcingChatRightmost = false;
 // Per-chat-group lockdown listener: bounces foreign editors out of the chat group.
 let _chatGroupLockdownDisposable: IDisposable | undefined;
 
@@ -97,6 +101,12 @@ function setupGroupRemovalListener(
 			_chatGroupLockdownDisposable = undefined;
 		}
 	});
+
+	// Chat-group-rightmost invariant (2026-05-31): re-assert on every group add so files always
+	// land to the LEFT of chat — covers the "only chat open" case where VS Code places the new
+	// file group to the RIGHT of the locked chat group (missed by the eviction listener above).
+	_groupAddListenerDisposable?.dispose();
+	_groupAddListenerDisposable = editorGroupsService.onDidAddGroup(() => enforceChatGroupRightmost(editorGroupsService));
 }
 
 function moveForeignEditorOut(
@@ -112,6 +122,30 @@ function moveForeignEditorOut(
 		target = editorGroupsService.addGroup(fromGroup, GroupDirection.LEFT);
 	}
 	fromGroup.moveEditor(editor, target);
+}
+
+/**
+ * Enforce the invariant "the chat group is the rightmost editor group" (idea 2026-05-31): files on
+ * the left, chat on the right. Called on every group add. This covers the case the eviction listener
+ * misses — when ONLY the locked chat group exists and a file opens, VS Code creates a fresh group
+ * and may place it to the RIGHT of chat (the file never enters the chat group, so the lockdown
+ * listener never fires). We move the chat group back to the far right so the layout stays
+ * `[files…] | [chat]`. Only acts on add (not on user-initiated group moves).
+ */
+function enforceChatGroupRightmost(editorGroupsService: IEditorGroupsService): void {
+	if (_enforcingChatRightmost || _chatEditorGroupId === undefined) { return; }
+	const chatGroup = editorGroupsService.getGroup(_chatEditorGroupId);
+	if (!chatGroup) { return; }
+	const ordered = editorGroupsService.getGroups(GroupsOrder.GRID_APPEARANCE);
+	if (ordered.length < 2) { return; }
+	const rightmost = ordered[ordered.length - 1];
+	if (rightmost.id === chatGroup.id) { return; } // already rightmost — nothing to do
+	_enforcingChatRightmost = true;
+	try {
+		editorGroupsService.moveGroup(chatGroup, rightmost, GroupDirection.RIGHT);
+	} finally {
+		_enforcingChatRightmost = false;
+	}
 }
 
 function setupChatGroupLockdown(
