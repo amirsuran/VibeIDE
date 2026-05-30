@@ -4615,7 +4615,19 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 
 			// Soft checkpoint (B): once this run crosses the iteration or token threshold, pause and
 			// ask before doing more work. The token side is only probed when that checkpoint is armed.
-			if (nMessagesSent >= nextSoftIterCheckpoint ||
+			// D.2b: autopilot may auto-reset the session token counter mid-run (it drops below our
+				// baseline). Re-baseline so the token checkpoint keeps firing instead of silently going
+				// dead (spent would otherwise clamp to 0 forever after a reset).
+				if (nextSoftTokenCheckpoint !== Number.POSITIVE_INFINITY) {
+					let nowTok = tokensAtRunStart
+					try { nowTok = this._tokenBudgetService.getStatus().sessionTokensUsed } catch { /* keep prev baseline */ }
+					if (nowTok < tokensAtRunStart) {
+						tokensAtRunStart = nowTok
+						nextSoftTokenCheckpoint = softCheckpointTokens
+					}
+				}
+
+				if (nMessagesSent >= nextSoftIterCheckpoint ||
 				(nextSoftTokenCheckpoint !== Number.POSITIVE_INFINITY && this._tokensSpentThisRun(tokensAtRunStart) >= nextSoftTokenCheckpoint)) {
 				const spent = this._tokensSpentThisRun(tokensAtRunStart)
 				const keepGoing = await this._promptAgentSoftCheckpoint(threadId, nMessagesSent, spent)
