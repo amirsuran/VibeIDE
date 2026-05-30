@@ -682,6 +682,19 @@ export const safetyS = {
 	memoryPanelColPreview: 'Содержимое',
 	memoryPanelDocsLink: 'Документация: docs/v1/session-memory.md',
 
+	// R.4.1 — Project rules panel
+	rulesPanelTitle: 'Правила проекта',
+	rulesPanelIntro: 'Найденные правила: `.vibe/rules.md`, `AGENTS.md`, `.vibe/rules/**` и `.cursor/rules/**` (`.md`/`.mdc`). Включённые подмешиваются в системный промпт с метками источника. Условные (`alwaysApply:false` / `globs` / `triggers`) активируются по контексту или через `@rule:<имя>`.',
+	rulesPanelReload: 'Перечитать',
+	rulesPanelEmpty: 'Правил проекта не найдено.',
+	rulesPanelColEnabled: 'Статус',
+	rulesPanelColSource: 'Источник',
+	rulesPanelColSize: 'Размер',
+	rulesPanelOn: 'Вкл',
+	rulesPanelOff: 'Выкл',
+	rulesPanelRedacted: '(секреты вычищены)',
+	rulesPanelDocsLink: 'Клик по источнику — превью содержимого. Тоггл выключает правило только в этом workspace.',
+
 	// Settings.tsx — extra (L481 long-tail)
 	perfPanelRunDoctorMsg: 'Запустите `npx vibe doctor --perf` в терминале для текстового отчёта.',
 	ageLessThanMin: '<1 мин',

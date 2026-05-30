@@ -61,6 +61,7 @@ import { IVibeModelsRegistryService } from '../../../../common/vibeModelsRegistr
 import { IVibeWorkspaceFormsService } from '../../../vibeWorkspaceFormsService.js'
 import { IVibeSessionMemoryService } from '../../../../common/vibeSessionMemoryService.js'
 import { IVibePerfGuardrailsService } from '../../../vibePerfGuardrailsService.js'
+import { IVibeProjectRulesService } from '../../../vibeProjectRulesService.js'
 import { IVibeCustomCommandsService } from '../../../vibeCustomCommandsService.js'
 import { IVibeTokenBudgetService } from '../../../../common/vibeTokenBudgetService.js'
 import { IVibeContextGuardService } from '../../../vibeContextGuardService.js'
@@ -269,6 +270,7 @@ const getReactAccessor = (accessor: ServicesAccessor) => {
 			IStorageService: accessor.get(IStorageService),
 
 			IVibeSessionMemoryService: accessor.get(IVibeSessionMemoryService),
+			IVibeProjectRulesService: accessor.get(IVibeProjectRulesService),
 			IVibePerfGuardrailsService: accessor.get(IVibePerfGuardrailsService),
 			IVibeCustomCommandsService: accessor.get(IVibeCustomCommandsService),
 

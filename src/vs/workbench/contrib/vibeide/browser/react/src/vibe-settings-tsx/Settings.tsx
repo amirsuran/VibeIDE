@@ -2219,6 +2219,103 @@ const PerfGuardrailsPanel = () => {
 // L992 / L1057 — Session-memory React panel.
 // Pulls in-memory snapshot from IVibeSessionMemoryService for the current
 // chat thread; manual refresh button so we don't subscribe to every append.
+// R.4.1 — Project rules panel: lists discovered rule sources (.vibe/rules.md, AGENTS.md,
+// .vibe/rules/**, .cursor/rules/** — .md/.mdc), with an enable/disable toggle (per-workspace,
+// honored in the prompt combine) and click-to-preview of the (frontmatter-stripped, sanitized) body.
+const ProjectRulesPanel = () => {
+	const accessor = useAccessor()
+	const rulesSvc = accessor.get('IVibeProjectRulesService')
+
+	type Src = { relativePath: string; content: string; sizeBytes: number; wasRedacted: boolean }
+	const [rows, setRows] = useState<Src[]>([])
+	const [enabledMap, setEnabledMap] = useState<Record<string, boolean>>({})
+	const [expanded, setExpanded] = useState<string | null>(null)
+
+	const refresh = useCallback(() => {
+		try {
+			void rulesSvc.reloadRules()
+			const sources = rulesSvc.getLoadedSources() as Src[]
+			setRows(sources)
+			const m: Record<string, boolean> = {}
+			for (const s of sources) { m[s.relativePath] = rulesSvc.isRuleEnabled(s.relativePath) }
+			setEnabledMap(m)
+		} catch {
+			setRows([])
+		}
+	}, [rulesSvc])
+
+	useEffect(() => { refresh() }, [refresh])
+
+	const toggle = (path: string) => {
+		const next = !(enabledMap[path] ?? true)
+		try { rulesSvc.setRuleEnabled(path, next) } catch { /* tolerated */ }
+		setEnabledMap(prev => ({ ...prev, [path]: next }))
+	}
+
+	const empty = rows.length === 0
+	return (
+		<div className='max-w-[800px]'>
+			<h2 className='text-xl mb-2'>{safetyS.rulesPanelTitle}</h2>
+			<h4 className='text-vibe-fg-3 mb-4'>{safetyS.rulesPanelIntro}</h4>
+			<div className='flex gap-2 mb-2'>
+				<VibeButtonBgDarken className='px-4 py-1 max-w-fit' onClick={refresh}>
+					{safetyS.rulesPanelReload}
+				</VibeButtonBgDarken>
+			</div>
+			{empty ? (
+				<div className='text-vibe-fg-3 text-sm'>{safetyS.rulesPanelEmpty}</div>
+			) : (
+				<table className='text-vibe-fg-1 text-sm w-full border-collapse'>
+					<thead>
+						<tr className='text-left text-vibe-fg-3'>
+							<th className='px-2 py-1'>{safetyS.rulesPanelColEnabled}</th>
+							<th className='px-2 py-1'>{safetyS.rulesPanelColSource}</th>
+							<th className='px-2 py-1'>{safetyS.rulesPanelColSize}</th>
+						</tr>
+					</thead>
+					<tbody>
+						{rows.flatMap(r => {
+							const on = enabledMap[r.relativePath] ?? true
+							const isOpen = expanded === r.relativePath
+							const trs = [
+								<tr key={r.relativePath}>
+									<td className='px-2 py-1 align-top'>
+										<button
+											type='button'
+											className={`px-2 py-0.5 rounded-sm ${on ? 'bg-vibe-bg-3 hover:bg-vibe-bg-4' : 'bg-vibe-bg-2 text-vibe-fg-3 hover:bg-vibe-bg-3'}`}
+											onClick={() => toggle(r.relativePath)}
+										>
+											{on ? safetyS.rulesPanelOn : safetyS.rulesPanelOff}
+										</button>
+									</td>
+									<td
+										className='px-2 py-1 align-top break-all cursor-pointer text-vibe-fg-1 hover:underline'
+										onClick={() => setExpanded(isOpen ? null : r.relativePath)}
+									>
+										{r.relativePath}{r.wasRedacted ? ` ${safetyS.rulesPanelRedacted}` : ''}
+									</td>
+									<td className='px-2 py-1 align-top whitespace-nowrap text-vibe-fg-3'>{r.sizeBytes} B</td>
+								</tr>,
+							]
+							if (isOpen) {
+								trs.push(
+									<tr key={`${r.relativePath}::preview`}>
+										<td colSpan={3} className='px-2 pb-2 align-top'>
+											<pre className='text-xs text-vibe-fg-2 whitespace-pre-wrap break-all bg-vibe-bg-2 p-2 rounded-sm max-h-[300px] overflow-auto'>{r.content}</pre>
+										</td>
+									</tr>
+								)
+							}
+							return trs
+						})}
+					</tbody>
+				</table>
+			)}
+			<div className='text-vibe-fg-3 text-xs mt-2'>{safetyS.rulesPanelDocsLink}</div>
+		</div>
+	)
+}
+
 const SessionMemoryPanel = () => {
 	const accessor = useAccessor()
 	const sessionMemory = accessor.get('IVibeSessionMemoryService')
@@ -2528,6 +2625,10 @@ const SafetyPanel = () => {
 
 			<ErrorBoundary>
 				<SessionMemoryPanel />
+			</ErrorBoundary>
+
+			<ErrorBoundary>
+				<ProjectRulesPanel />
 			</ErrorBoundary>
 
 			<ErrorBoundary>
