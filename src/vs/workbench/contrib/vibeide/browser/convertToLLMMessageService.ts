@@ -63,7 +63,7 @@ import { isPinnedContextMessage } from '../common/prompt/pinnedContext.js';
 import { IVibeProjectRulesService } from './vibeProjectRulesService.js';
 import { extractToolFilePaths, toWorkspaceRelative, parseRuleInvocations } from '../common/prompt/ruleFrontmatter.js';
 import { planBudgetFillTail } from '../common/agentLoopHeuristics.js';
-import { updateTokenCalibration, clampTokenCalibration, serializeCalibration, deserializeCalibration } from '../common/tokenCalibration.js';
+import { updateTokenCalibration, clampTokenCalibration, serializeCalibration, deserializeCalibration, TOKEN_CALIBRATION_MAX } from '../common/tokenCalibration.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
 
 /** APPLICATION-scope storage key for persisted per-(provider×model) token-calibration factors. */
@@ -1558,7 +1558,8 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 		const est = this._lastRawPromptEstimateByModel.get(key)
 		if (est === undefined) { return } // no prompt built for this model yet — nothing to pair against
 		const prev = this._tokenCalibrationByModel.get(key)
-		const next = updateTokenCalibration(prev, realPromptTokens, est)
+		const maxFactor = this.configurationService.getValue<number>('vibeide.context.tokenCalibrationMaxFactor') ?? TOKEN_CALIBRATION_MAX
+		const next = updateTokenCalibration(prev, realPromptTokens, est, maxFactor)
 		this._tokenCalibrationByModel.set(key, next)
 		vibeLog.debug('tokenCalibration', `${key}: real=${realPromptTokens} est=${est} factor ${(prev ?? 1).toFixed(3)} → ${next.toFixed(3)}`)
 		// Persist (APPLICATION scope, MACHINE target) so the factor survives reloads. Payload is a
@@ -2007,7 +2008,8 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 		// (default / disabled / no sample yet) leaves behavior unchanged.
 		const calibrationKey = `${validProviderName}:${modelName}`
 		const calibrationEnabled = this.configurationService.getValue<boolean>('vibeide.chat.calibrateTokenBudgetFromUsage') !== false
-		const calibrationFactor = calibrationEnabled ? clampTokenCalibration(this._tokenCalibrationByModel.get(calibrationKey)) : 1
+		const calibrationMaxFactor = this.configurationService.getValue<number>('vibeide.context.tokenCalibrationMaxFactor') ?? TOKEN_CALIBRATION_MAX
+		const calibrationFactor = calibrationEnabled ? clampTokenCalibration(this._tokenCalibrationByModel.get(calibrationKey), calibrationMaxFactor) : 1
 		const calBudget = Math.max(256, Math.floor(budget / calibrationFactor))
 
 		// Clear any stale budget-fill stats from a previous build; the truncation branch below
@@ -2092,7 +2094,7 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 			}
 			const afterTokens = approximateTotalTokens(llmMessages, systemMessage, aiInstructions)
 			// Update status bar to reflect post-truncation size; suppress popup (user sees % in status bar)
-			try { this.contextGuardService.updateUsage(afterTokens, contextWindow) } catch { }
+			try { this.contextGuardService.updateUsage(Math.round(afterTokens * calibrationFactor), contextWindow) } catch { }
 			vibeLog.debug('convertToLLMMessage', `Context smart truncation (budget-fill): ~${beforeTokens} → ~${afterTokens} tokens (kept ${llmMessages.length} msgs full, ${head.length} summarized)`); recordChatTrace('context:truncated', { before: beforeTokens, after: afterTokens })
 		}
 
@@ -2173,7 +2175,7 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 		}
 
 		// Reflect the final number on the status bar.
-		try { this.contextGuardService.updateUsage(currentTokens, contextWindow) } catch { }
+		try { this.contextGuardService.updateUsage(Math.round(currentTokens * calibrationFactor), contextWindow) } catch { }
 
 		// Pair this turn's RAW estimate of the sent payload with the provider's reported
 		// promptTokens (arrives later via recordActualPromptTokens) to self-calibrate the budget.

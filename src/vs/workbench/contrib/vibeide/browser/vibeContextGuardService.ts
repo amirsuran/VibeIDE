@@ -37,6 +37,13 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 			maximum: 99,
 			description: localize('vibeide.context.criticalThresholdPercent', 'Процент заполнения контекстного окна, при котором mid-task поднимается blocking-диалог "compact / continue / cancel + снапшот". По умолчанию 90%. Должен быть выше `warningThresholdPercent`.'),
 		},
+		'vibeide.context.tokenCalibrationMaxFactor': {
+			type: 'number',
+			default: 8,
+			minimum: 1,
+			maximum: 20,
+			description: localize('vibeide.context.tokenCalibrationMaxFactor', 'Верхняя граница калибровочного коэффициента «оценка→реальные токены». Грубая оценка размера промпта (длина/4) у reasoning-моделей и плотных токенизаторов (код/CJK) занижает реальное число токенов; коэффициент это компенсирует, но зажат сверху во избежание выброса от аномального замера. Дефолт 8 (раньше было жёстко 3 — упиралось на моделях вроде deepseek). Поднимите, если индикатор контекста всё ещё занижает; диапазон 1–20.'),
+		},
 	},
 });
 

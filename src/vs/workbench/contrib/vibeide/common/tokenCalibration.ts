@@ -25,18 +25,25 @@ export const TOKEN_CALIBRATION_DEFAULT = 1;
 export const TOKEN_CALIBRATION_ALPHA = 0.3;
 /** Clamp band for the factor — guards against a pathological single sample skewing the budget. */
 export const TOKEN_CALIBRATION_MIN = 0.5;
-export const TOKEN_CALIBRATION_MAX = 3;
+// Default upper clamp. Reasoning-heavy models proxied through aggregators (e.g. deepseek-v4-pro via
+// openCode) report real prompt tokens ~3x our length/4 estimate and were pinning the old cap of
+// 3 — leaving the context indicator and budget thresholds under-counting. 8 gives headroom for
+// dense CJK/code tokenizers while still bounding a pathological single sample. Overridable per
+// install via the `vibeide.context.tokenCalibrationMaxFactor` setting (passed as `maxFactor` to
+// the helpers below); this constant is the fallback default.
+export const TOKEN_CALIBRATION_MAX = 8;
 
 /**
  * EWMA update of the estimate→real calibration factor. `ratio = realTokens / estimatedTokens`,
  * clamped to [MIN, MAX]. Returns the previous factor unchanged on non-positive / non-finite
  * inputs (a failed/empty turn must not corrupt the running average).
  */
-export const updateTokenCalibration = (prev: number | undefined, realTokens: number, estimatedTokens: number): number => {
+export const updateTokenCalibration = (prev: number | undefined, realTokens: number, estimatedTokens: number, maxFactor: number = TOKEN_CALIBRATION_MAX): number => {
 	if (!Number.isFinite(realTokens) || !Number.isFinite(estimatedTokens) || realTokens <= 0 || estimatedTokens <= 0) {
 		return prev ?? TOKEN_CALIBRATION_DEFAULT;
 	}
-	const ratio = Math.min(TOKEN_CALIBRATION_MAX, Math.max(TOKEN_CALIBRATION_MIN, realTokens / estimatedTokens));
+	const hi = Number.isFinite(maxFactor) && maxFactor >= TOKEN_CALIBRATION_MIN ? maxFactor : TOKEN_CALIBRATION_MAX;
+	const ratio = Math.min(hi, Math.max(TOKEN_CALIBRATION_MIN, realTokens / estimatedTokens));
 	if (prev === undefined || !Number.isFinite(prev)) { return ratio; }
 	return prev * (1 - TOKEN_CALIBRATION_ALPHA) + ratio * TOKEN_CALIBRATION_ALPHA;
 };
@@ -45,9 +52,10 @@ export const updateTokenCalibration = (prev: number | undefined, realTokens: num
  * Defensive read of a stored factor: substitutes the identity factor for undefined / non-finite
  * values and clamps anything out of band. Use at the point where the factor is applied.
  */
-export const clampTokenCalibration = (factor: number | undefined): number => {
+export const clampTokenCalibration = (factor: number | undefined, maxFactor: number = TOKEN_CALIBRATION_MAX): number => {
 	if (factor === undefined || !Number.isFinite(factor)) { return TOKEN_CALIBRATION_DEFAULT; }
-	return Math.min(TOKEN_CALIBRATION_MAX, Math.max(TOKEN_CALIBRATION_MIN, factor));
+	const hi = Number.isFinite(maxFactor) && maxFactor >= TOKEN_CALIBRATION_MIN ? maxFactor : TOKEN_CALIBRATION_MAX;
+	return Math.min(hi, Math.max(TOKEN_CALIBRATION_MIN, factor));
 };
 
 /**
