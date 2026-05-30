@@ -6,9 +6,13 @@
 /**
  * VibeProjectRulesService — workspace project rules for AI context.
  *
- * Sources only:
- *  - `.vibe/rules.md`
+ * Sources:
+ *  - `.vibe/rules.md` (flat file)
  *  - `AGENTS.md` (workspace folder root)
+ *  - `.vibe/rules/**\/*.{md,mdc}` and `.cursor/rules/**\/*.mdc` (folder form, Cursor-compatible — R.1).
+ *    `.mdc` frontmatter (`description`/`globs`/`alwaysApply`) is stripped from the body.
+ *    Before R.1 only the two flat files were read, so Cursor-style rules sitting in a `rules/`
+ *    folder were invisible to the model — it then hallucinated filenames (incident 2026-05-30).
  *
  * Each block is prefixed with `[Source: path]`; content is sanitized via IVibePromptGuardService.
  * File watcher invalidates cache on changes. Command: `vibeide.projectRules.reload`.
@@ -22,7 +26,7 @@ import { ILogService } from '../../../../platform/log/common/log.js';
 import { IFileService } from '../../../../platform/files/common/files.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { URI } from '../../../../base/common/uri.js';
-import { joinPath } from '../../../../base/common/resources.js';
+import { joinPath, relativePath } from '../../../../base/common/resources.js';
 import { IVibePromptGuardService } from '../common/vibePromptGuardService.js';
 import { Emitter, Event } from '../../../../base/common/event.js';
 import { RunOnceScheduler } from '../../../../base/common/async.js';
@@ -33,6 +37,7 @@ import { INotificationService, Severity } from '../../../../platform/notificatio
 import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
 import { VSBuffer } from '../../../../base/common/buffer.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
+import { parseRuleFrontmatter, isRuleFileName } from '../common/prompt/ruleFrontmatter.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -70,9 +75,15 @@ export interface IVibeProjectRulesService {
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-/** Rule files to load in order */
+/** Flat rule files to load in order */
 const RULE_FILE_NAMES = ['.vibe/rules.md', 'AGENTS.md'];
+/** Folders scanned recursively for `*.md` / `*.mdc` rule files (R.1, Cursor-compatible). */
+const RULE_FOLDER_NAMES = ['.vibe/rules', '.cursor/rules'];
 const MAX_RULE_FILE_BYTES = 102400; // 100KB per file
+/** Cap total folder-discovered rule files so a stray big rules/ tree can't blow the prompt budget. */
+const MAX_RULE_FILES = 50;
+/** Recursion depth cap for the rules-folder scan. */
+const MAX_RULE_FOLDER_DEPTH = 6;
 const WATCHER_DEBOUNCE_MS = 350;
 
 // ── Implementation ─────────────────────────────────────────────────────────────
@@ -109,6 +120,12 @@ class VibeProjectRulesService extends Disposable implements IVibeProjectRulesSer
 						return true;
 					}
 				}
+				// R.1 — any add/change/delete under a rules folder invalidates the cache.
+				for (const folder of RULE_FOLDER_NAMES) {
+					if (e.affects(joinPath(root, ...folder.split('/')))) {
+						return true;
+					}
+				}
 				return false;
 			});
 			if (relevantChange) {
@@ -135,11 +152,26 @@ class VibeProjectRulesService extends Disposable implements IVibeProjectRulesSer
 		const folders = this._workspace.getWorkspace().folders;
 
 		for (const folder of folders) {
-			// Load named rule files
+			// Load named flat rule files
 			for (const name of RULE_FILE_NAMES) {
 				const uri = joinPath(folder.uri, ...name.split('/'));
 				const source = await this._tryLoadRuleFile(uri, name);
 				if (source) { sources.push(source); }
+			}
+			// R.1 — recursively discover rule files in rules folders (Cursor-compatible).
+			for (const folderName of RULE_FOLDER_NAMES) {
+				if (sources.length >= MAX_RULE_FILES) { break; }
+				const dirUri = joinPath(folder.uri, ...folderName.split('/'));
+				const ruleUris = await this._collectFolderRuleUris(dirUri, 0);
+				for (const ruleUri of ruleUris) {
+					if (sources.length >= MAX_RULE_FILES) {
+						this._log.warn(`[VibeProjectRules] Hit MAX_RULE_FILES=${MAX_RULE_FILES}; remaining rule files skipped`);
+						break;
+					}
+					const rel = relativePath(folder.uri, ruleUri) ?? ruleUri.path;
+					const source = await this._tryLoadRuleFile(ruleUri, rel);
+					if (source) { sources.push(source); }
+				}
 			}
 		}
 
@@ -167,16 +199,45 @@ class VibeProjectRulesService extends Disposable implements IVibeProjectRulesSer
 			}
 			const file = await this._fileService.readFile(uri);
 			const raw = file.value.toString().slice(0, MAX_RULE_FILE_BYTES);
-			const guardResult = this._guard.sanitizeFileContent(raw, relativePath);
+			// `.mdc` (Cursor) files carry a leading frontmatter block — strip it; the body is the
+			// actual instruction. Plain `.md` is left verbatim (a leading `---` there is content).
+			const effective = relativePath.toLowerCase().endsWith('.mdc') ? parseRuleFrontmatter(raw).body : raw;
+			const guardResult = this._guard.sanitizeFileContent(effective, relativePath);
 			return {
 				relativePath,
 				content: guardResult.sanitized,
-				wasRedacted: raw !== guardResult.sanitized,
-				sizeBytes: raw.length,
+				wasRedacted: effective !== guardResult.sanitized,
+				sizeBytes: effective.length,
 			};
 		} catch {
 			return null; // File does not exist or cannot be read
 		}
+	}
+
+	/**
+	 * R.1 — recursively collect `*.md` / `*.mdc` rule files under a folder (Cursor-compatible).
+	 * Returns [] when the folder is absent. Depth-capped; children sorted by name for a stable,
+	 * deterministic ordering (the model sees rules in the same order every run).
+	 */
+	private async _collectFolderRuleUris(dirUri: URI, depth: number): Promise<URI[]> {
+		if (depth > MAX_RULE_FOLDER_DEPTH) { return []; }
+		let stat;
+		try {
+			stat = await this._fileService.resolve(dirUri);
+		} catch {
+			return []; // folder doesn't exist — expected, silent
+		}
+		if (!stat.isDirectory || !stat.children) { return []; }
+		const files: URI[] = [];
+		const children = [...stat.children].sort((a, b) => a.name.localeCompare(b.name));
+		for (const child of children) {
+			if (child.isDirectory) {
+				files.push(...await this._collectFolderRuleUris(child.resource, depth + 1));
+			} else if (isRuleFileName(child.name)) {
+				files.push(child.resource);
+			}
+		}
+		return files;
 	}
 }
 
@@ -302,7 +363,7 @@ registerAction2(class extends Action2 {
 		const { ITextModelService } = await import('../../../../editor/common/services/resolverService.js');
 
 		const content = sources.length === 0
-			? '// No project rules files found.\n// Create: .vibe/rules.md | AGENTS.md'
+			? '// No project rules files found.\n// Create: .vibe/rules.md | AGENTS.md | .vibe/rules/*.md(c) | .cursor/rules/*.mdc'
 			: sources.map(s => `// ${s.relativePath} (${s.sizeBytes} bytes${s.wasRedacted ? ', secrets redacted' : ''})\n${s.content}`).join('\n\n---\n\n');
 
 		const uri = URI_.parse(`untitled://project-rules-sources-${Date.now()}.md`);
