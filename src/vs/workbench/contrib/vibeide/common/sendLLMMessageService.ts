@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------*/
 
 import { vibeLog } from './vibeLog.js';
+import { sanitizeLlmErrorForLog } from './llmErrorSanitize.js';
 import { EventLLMMessageOnTextParams, EventLLMMessageOnErrorParams, EventLLMMessageOnFinalMessageParams, ServiceSendLLMMessageParams, MainSendLLMMessageParams, MainLLMMessageAbortParams, ServiceModelListParams, EventModelListOnSuccessParams, EventModelListOnErrorParams, MainModelListParams, OllamaModelResponse, OpenaiCompatibleModelResponse, } from './sendLLMMessageTypes.js';
 import { IVibeTokenBudgetService } from './vibeTokenBudgetService.js';
 
@@ -30,22 +31,6 @@ export interface ILLMMessageService {
 	abort: (requestId: string) => void;
 	ollamaList: (params: ServiceModelListParams<OllamaModelResponse>) => void;
 	openAICompatibleList: (params: ServiceModelListParams<OpenaiCompatibleModelResponse>) => void;
-}
-
-
-/**
- * Serialize an LLM error for logging while OMITTING the echoed prompt payload. AI SDK errors
- * (AI_APICallError etc.) carry the full request under `requestBodyValues` / `messages` / `prompt`;
- * logging it verbatim leaks file contents and non-pattern secrets and bloats the log. The
- * diagnostic fields (name / message / reason / url / statusCode / requestId) are preserved.
- */
-const LLM_ERROR_HEAVY_KEYS = new Set(['requestBodyValues', 'messages', 'prompt', 'input', 'rawPrompt', 'body']);
-export function sanitizeLlmErrorForLog(e: unknown): string {
-	try {
-		return JSON.stringify(e, (key, value) => (key && LLM_ERROR_HEAVY_KEYS.has(key)) ? '[omitted: request payload]' : value);
-	} catch {
-		return '[unserializable LLM error]';
-	}
 }
 
 // open this file side by side with llmMessageChannel
