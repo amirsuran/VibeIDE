@@ -651,4 +651,57 @@ assert.match(out, /\*\[.+\]\*/);
 			assert.strictEqual(resolveInvokeToolName('SomeUnknownTag'), 'someunknowntag');
 		});
 	});
+
+	// roadmap 1739 — regression lock for Fix A: the 4th XML shape, attributes on a PAIRED
+	// (non-self-closing) tool tag `<read_file path="x">…</read_file>`. The handler in
+	// `normalizeAlternativeToolSyntax` converts attributes → child param tags (with param
+	// aliasing) for canonical tools, and bails on non-tools. Behaviour captured from the
+	// real implementation (esbuild+node). The native-flip half of 1739 (forceToolCallFormat
+	// auto-downgrade) is routing-layer, not this pure normalizer — tracked separately.
+	suite('normalizeAlternativeToolSyntax — paired-attr extraction (Fix A / 1739)', () => {
+
+		test('read_file paired-attr → <uri> child (path→uri alias), inner text dropped', () => {
+			assert.strictEqual(
+				normalizeAlternativeToolSyntax('<read_file path="x.ts">body</read_file>'),
+				'<read_file><uri>x.ts</uri></read_file>'
+			);
+		});
+
+		test('read_file paired-attr offset/limit → start_line/line_limit aliases', () => {
+			assert.strictEqual(
+				normalizeAlternativeToolSyntax('<read_file path="x.ts" offset="1" limit="30"></read_file>'),
+				'<read_file><uri>x.ts</uri><start_line>1</start_line><line_limit>30</line_limit></read_file>'
+			);
+		});
+
+		test('grep paired-attr → pattern + search_in_folder child tags', () => {
+			assert.strictEqual(
+				normalizeAlternativeToolSyntax('<grep pattern="foo" search_in_folder="src">x</grep>'),
+				'<grep><pattern>foo</pattern><search_in_folder>src</search_in_folder></grep>'
+			);
+		});
+
+		test('non-tool paired tag with attrs is left untouched (bail on non-tool)', () => {
+			assert.strictEqual(
+				normalizeAlternativeToolSyntax('<note color="red">hello</note>'),
+				'<note color="red">hello</note>'
+			);
+		});
+
+		test('paired alias form <read>…</read> is NOT extracted (documented asymmetry, X.0.3)', () => {
+			// Self-closing `<read … />` resolves the alias, but the paired alias form is left
+			// for the safety-net strip — locking the intentional asymmetry, not a desired state.
+			assert.strictEqual(
+				normalizeAlternativeToolSyntax('<read path="/foo.ts">x</read>'),
+				'<read path="/foo.ts">x</read>'
+			);
+		});
+
+		test('prose containing a bare tool word is untouched', () => {
+			assert.strictEqual(
+				normalizeAlternativeToolSyntax('just a sentence with <read> of memory'),
+				'just a sentence with <read> of memory'
+			);
+		});
+	});
 });
