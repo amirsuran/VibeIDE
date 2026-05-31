@@ -74,7 +74,9 @@ export const HistoryScopeToggle = ({ showAll, setShowAll, otherCount = 0, classN
 }
 
 export const PastThreadsList = ({ className = '', onAfterSwitch }: { className?: string; onAfterSwitch?: () => void }) => {
-	const [showAll, setShowAll] = useState(false);
+	// List-expansion (show all threads vs the first few). Distinct from the
+	// project-scope `showAll` below — keep separate names to avoid shadowing.
+	const [expanded, setExpanded] = useState(false);
 
 	const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
 
@@ -115,9 +117,9 @@ export const PastThreadsList = ({ className = '', onAfterSwitch }: { className?:
 		return <div key="error" className="p-1">{chatS.historyError}</div>;
 	}
 
-	// Get only first 5 threads if not showing all
+	// Get only first 5 threads if not expanded
 	const hasMoreThreads = sortedThreadIds.length > numInitialThreads;
-	const displayThreads = showAll ? sortedThreadIds : sortedThreadIds.slice(0, numInitialThreads);
+	const displayThreads = expanded ? sortedThreadIds : sortedThreadIds.slice(0, numInitialThreads);
 
 	return (
 		<div className={`@@vibe-chat-neon-scope flex flex-col mb-2 gap-2 w-full text-nowrap text-vibe-fg-2 select-none relative ${className}`}>
@@ -149,18 +151,18 @@ export const PastThreadsList = ({ className = '', onAfterSwitch }: { className?:
 				})
 			}
 
-			{hasMoreThreads && !showAll && (
+			{hasMoreThreads && !expanded && (
 				<div
 					className="text-vibe-fg-3 opacity-80 hover:opacity-100 hover:brightness-115 cursor-pointer p-1 text-xs"
-					onClick={() => setShowAll(true)}
+					onClick={() => setExpanded(true)}
 				>
 					{chatS.historyShowMore(sortedThreadIds.length - numInitialThreads)}
 				</div>
 			)}
-			{hasMoreThreads && showAll && (
+			{hasMoreThreads && expanded && (
 				<div
 					className="text-vibe-fg-3 opacity-80 hover:opacity-100 hover:brightness-115 cursor-pointer p-1 text-xs"
-					onClick={() => setShowAll(false)}
+					onClick={() => setExpanded(false)}
 				>
 					{chatS.historyShowLess}
 				</div>
