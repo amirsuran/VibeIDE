@@ -13,7 +13,7 @@
 // registration; service files keep their existing `getValue` calls untouched.
 
 import { Registry } from '../../../../platform/registry/common/platform.js';
-import { IConfigurationRegistry, Extensions as ConfigurationExtensions } from '../../../../platform/configuration/common/configurationRegistry.js';
+import { IConfigurationRegistry, Extensions as ConfigurationExtensions, ConfigurationScope } from '../../../../platform/configuration/common/configurationRegistry.js';
 import { localize } from '../../../../nls.js';
 
 Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({
@@ -55,6 +55,13 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 			type: 'boolean',
 			default: false,
 			description: localize('vibeide.agent.allowWriteOutsideWorkspace', 'Разрешить изменяющим инструментам агента (edit_file, rewrite_file, create/delete, rename_symbol, extract_function, generate_tests) писать файлы вне открытой рабочей области. Off-by-default — защита от случайной записи в системные файлы и соседние проекты. Включайте осознанно.'),
+		},
+		'vibeide.agent.externalAccessAllowlist': {
+			type: 'array',
+			items: { type: 'string' },
+			default: [],
+			scope: ConfigurationScope.RESOURCE,
+			description: localize('vibeide.agent.externalAccessAllowlist', 'Список папок ВНЕ рабочей области, к которым агенту разрешён доступ (гранулярная альтернатива глобальному тогглу). Доступ распространяется на папку и её содержимое. Управляется командами «VibeIDE: Разрешить папку для доступа агента» / «Отозвать». Сессионные разрешения сюда не пишутся (живут до перезагрузки окна).'),
 		},
 		'vibeide.agent.maxLoopIterations': {
 			type: 'number',

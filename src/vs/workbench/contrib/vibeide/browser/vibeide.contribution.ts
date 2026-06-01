@@ -455,6 +455,9 @@ import './vibeMemorySnapshotAction.js'
 import './vibeDismissPlanAction.js'
 import './vibeForceResetChatStateAction.js'
 import './vibeChatHistoryActions.js'
+import './vibeChatPinAction.js'
+import './vibeExternalAccessActions.js'
+import './vibeRepairWarningContribution.js'
 
 // VibeIDE: Memory dispatcher — routes writes via memoryLayerRouter pure helper
 import './vibeMemoryDispatcherService.js'

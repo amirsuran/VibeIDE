@@ -49,6 +49,15 @@ export function trimThreadMessages(messages: ChatMessage[], cap: number, headroo
 	};
 
 	const tail = messages.slice(dropCount);
-	const trimmed = anchorMsg ? [anchorMsg, trimMarker, ...tail] : [trimMarker, ...tail];
+	// Honor pin-context: keep any user-pinned message from the dropped head verbatim
+	// (same treatment as the task anchor) so an explicit pin survives the hard thread
+	// cap, not just budget-fill truncation. Exclude the anchor index to avoid a dup.
+	const pinnedFromHead = messages
+		.slice(0, dropCount)
+		.filter((m, i) => (m as { pinned?: boolean }).pinned && i !== firstUserIdx);
+	const head: ChatMessage[] = [];
+	if (anchorMsg) { head.push(anchorMsg); }
+	head.push(...pinnedFromHead, trimMarker);
+	const trimmed = [...head, ...tail];
 	return { trimmed, dropCount, target, pinnedAnchor: !!anchorMsg };
 }

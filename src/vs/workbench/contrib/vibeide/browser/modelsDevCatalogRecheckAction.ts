@@ -126,14 +126,28 @@ class ModelsDevCatalogRecheckAction extends Action2 {
 
 		if (status.state === 'loaded_from_local') {
 			const sourceLabel = labelOfSource(status.source);
+			// O.15.1 — exeDir is a user-PINNED file with top precedence, not an offline
+			// fallback. Saying «сеть недоступна» there is wrong: the network wasn't used
+			// BECAUSE the pinned exe-file wins. Branch the wording so a recheck on a pinned
+			// catalog is honest about why nothing changed.
+			const isPinnedExe = status.source === 'exeDir';
 			void modalSvc.showModal<'ok' | 'copyUrl'>({
-				title: localize('vibeide.modelsDev.recheck.offline.title', 'Каталог models.dev: офлайн режим'),
-				body: localize(
-					'vibeide.modelsDev.recheck.offline.body',
-					'Сеть недоступна. Загружен {0}.\n\nЧтобы обновить — скачайте {1} и положите рядом с VibeIDE.exe.',
-					sourceLabel,
-					MODELS_DEV_URL,
-				),
+				title: isPinnedExe
+					? localize('vibeide.modelsDev.recheck.pinned.title', 'Каталог models.dev: активен запиненный файл')
+					: localize('vibeide.modelsDev.recheck.offline.title', 'Каталог models.dev: офлайн режим'),
+				body: isPinnedExe
+					? localize(
+						'vibeide.modelsDev.recheck.pinned.body',
+						'Активен {0} — это приоритетный источник, поэтому сеть не использовалась и перепроверка его НЕ меняет.\n\nЧтобы переключиться на сетевой каталог или обновить — замените файл рядом с VibeIDE.exe свежей версией с {1} либо удалите его, чтобы вернуться к сетевому/встроенному.',
+						sourceLabel,
+						MODELS_DEV_URL,
+					)
+					: localize(
+						'vibeide.modelsDev.recheck.offline.body',
+						'Сеть недоступна. Загружен {0}.\n\nЧтобы обновить — скачайте {1} и положите рядом с VibeIDE.exe.',
+						sourceLabel,
+						MODELS_DEV_URL,
+					),
 				icon: 'info',
 				size: 'medium',
 				buttons: [

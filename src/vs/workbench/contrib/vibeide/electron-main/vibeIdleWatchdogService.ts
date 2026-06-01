@@ -37,7 +37,7 @@ import * as fs from 'original-fs';
 import * as v8 from 'node:v8';
 import * as zlib from 'node:zlib';
 import { PerformanceObserver } from 'node:perf_hooks';
-import { app, webContents } from 'electron';
+import { app, webContents, powerMonitor } from 'electron';
 import { Emitter, Event } from '../../../../base/common/event.js';
 import { parse as parseJsonc } from '../../../../base/common/jsonc.js';
 
@@ -493,6 +493,13 @@ export class VibeIdleWatchdogService {
 	 * captures a full `process.report` subset (libuv-handle breakdown) so the post-crash
 	 * `external` leak hunt gets per-tick granularity. Reset only on a fresh service start. */
 	private _rendererCrashSeen = false;
+	/** W.56 — renderer OS-pids alive at the last `suspend`. Compared on `resume` to
+	 *  detect a renderer that died in the unobserved sleep window (timers frozen → no
+	 *  sample, and the OS-level render-process-gone write may be lost). null = not suspended. */
+	private _renderersAtSuspend: Set<number> | null = null;
+	/** Stable bound refs so the powerMonitor listeners can be removed in `stop()`. */
+	private readonly _onSuspendBound = () => this._onSuspend();
+	private readonly _onResumeBound = () => this._onResume();
 	/** 1630 — remaining ticks of fast (burst) sampling; > 0 means burst is active. */
 	private _burstTicksRemaining = 0;
 	/** Effective interval (ms) of the currently-armed timer — lets `_maybeReschedule`
@@ -548,6 +555,59 @@ export class VibeIdleWatchdogService {
 		this._watchSettings();
 		this._schedulePersistState();
 		this._installSignalHandler();
+		this._installPowerHandlers();
+	}
+
+	/**
+	 * W.56 — power-event bracketing. The sampler's timers are frozen while the
+	 * machine sleeps, so an overnight renderer OOM lands in a blind window: no
+	 * sample, no crash entry, no snapshot (incident 2026-05-31: renderer flat at
+	 * 243 MB until sleep, then gone — nothing recorded). Bracket the sleep with a
+	 * `pre-suspend` tick (last-known-good) and a `post-resume` tick, and on resume
+	 * record any renderer that vanished across the gap.
+	 */
+	private _installPowerHandlers(): void {
+		try {
+			powerMonitor.on('suspend', this._onSuspendBound);
+			powerMonitor.on('resume', this._onResumeBound);
+		} catch {
+			// powerMonitor may be unavailable in headless/test envs — best-effort.
+		}
+	}
+
+	private _liveRendererPids(): Set<number> {
+		const out = new Set<number>();
+		try {
+			for (const m of app.getAppMetrics()) {
+				if (m.type === 'Tab' && m.pid !== process.pid) { out.add(m.pid); }
+			}
+		} catch {
+			// getAppMetrics can throw very early / very late in app lifecycle.
+		}
+		return out;
+	}
+
+	private _onSuspend(): void {
+		// Capture the renderer set + write a last-known-good tick before the freeze.
+		this._renderersAtSuspend = this._liveRendererPids();
+		this._tickMain('pre-suspend');
+	}
+
+	private _onResume(): void {
+		const before = this._renderersAtSuspend;
+		this._renderersAtSuspend = null;
+		// Detect renderers that died during the sleep window BEFORE the post-resume
+		// tick reconciles (and cleans) their tracking keys — so `recordCrash` can
+		// still resolve `lastTickRef` to the pre-suspend sample.
+		if (before && before.size > 0) {
+			const live = this._liveRendererPids();
+			for (const pid of before) {
+				if (!live.has(pid)) {
+					this.recordCrash({ proc: 'renderer', pid, reason: 'gone-during-suspend' });
+				}
+			}
+		}
+		this._tickMain('post-resume');
 	}
 
 	/**
@@ -583,6 +643,10 @@ export class VibeIdleWatchdogService {
 		}
 		this._settingsWatcher?.close();
 		this._settingsWatcher = null;
+		try {
+			powerMonitor.removeListener('suspend', this._onSuspendBound);
+			powerMonitor.removeListener('resume', this._onResumeBound);
+		} catch { /* best-effort */ }
 		this._gcObserver?.dispose();
 		this._persistState(); // final write before drain (W.45)
 		this._writeQueue.dispose(); // synchronous drain (W.44)

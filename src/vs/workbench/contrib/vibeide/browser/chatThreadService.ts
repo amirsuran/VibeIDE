@@ -43,6 +43,8 @@ import { INotificationHandle, INotificationService, Severity } from '../../../..
 import { truncate } from '../../../../base/common/strings.js';
 import { THREAD_STORAGE_KEY } from '../common/storageKeys.js';
 import { HISTORY_SHOW_ALL_PROJECTS_KEY, HISTORY_DEFAULT_SHOW_ALL_KEY, threadOwnedBy } from '../common/chatHistoryScope.js';
+import { IVibeExternalAccessService, ExternalAccessRequiredError } from '../common/vibeExternalAccessService.js';
+import { unclaimedToolTagPlaceholder } from '../common/xmlToolNormalize.js';
 import { IConvertToLLMMessageService, ContextOverflowError } from './convertToLLMMessageService.js';
 import { timeout } from '../../../../base/common/async.js';
 import { deepClone } from '../../../../base/common/objects.js';
@@ -568,6 +570,9 @@ export interface IChatThreadService {
 	editPlan(opts: { threadId: string, messageIdx: number, updatedPlan: PlanMessage }): void;
 	toggleStepDisabled(opts: { threadId: string, messageIdx: number, stepNumber: number }): void;
 	reorderPlanSteps(opts: { threadId: string, messageIdx: number, newStepOrder: number[] }): void;
+	/** Pin-context: toggle `pinned` on a user/assistant message. Pinned messages are kept verbatim
+	 *  by budget-fill truncation in convertToLLMMessageService (the honor side already exists). */
+	toggleMessagePinned(opts: { threadId: string, messageIdx: number }): void;
 	dismissAllPendingPlans(threadId: string, opts?: { resumeBlockedMessage?: boolean }): number;
 
 	// Step execution control
@@ -596,6 +601,9 @@ export const IChatThreadService = createDecorator<IChatThreadService>('vibeChatT
 export const WAITING_FOR_MODEL_RESPONSE_SENTINEL = 'Waiting for model response...';
 class ChatThreadService extends Disposable implements IChatThreadService {
 	_serviceBrand: undefined;
+
+	// #6 — show the "repair fired (slower)" attribution toast at most once per window session.
+	private _xmlRepairFiredNotified = false;
 
 	// this fires when the current thread changes at all (a switch of currentThread, or a message added to it, etc)
 	private readonly _onDidChangeCurrentThread = new Emitter<void>();
@@ -744,6 +752,7 @@ class ChatThreadService extends Disposable implements IChatThreadService {
 		@IVibeSearchContextService private readonly _searchContextService: IVibeSearchContextService,
 		@IVibeAIDebuggingService private readonly _aiDebuggingService: IVibeAIDebuggingService,
 		@IVibeContextGuardService private readonly _contextGuardService: IVibeContextGuardService,
+		@IVibeExternalAccessService private readonly _externalAccessService: IVibeExternalAccessService,
 	) {
 		super()
 		this.state = { allThreads: {}, currentThreadId: null as unknown as string } // default state
@@ -1892,6 +1901,15 @@ class ChatThreadService extends Disposable implements IChatThreadService {
 			)
 		}
 		this._editMessageInThread(opts.threadId, opts.messageIdx, updatedPlan)
+	}
+
+	toggleMessagePinned(opts: { threadId: string, messageIdx: number }) {
+		const thread = this.state.allThreads[opts.threadId]
+		if (!thread) return
+		const message = thread.messages[opts.messageIdx]
+		// Only user/assistant messages carry `pinned` (and are meaningful to keep verbatim).
+		if (!message || (message.role !== 'user' && message.role !== 'assistant')) return
+		this._editMessageInThread(opts.threadId, opts.messageIdx, { ...message, pinned: !message.pinned } as ChatMessage)
 	}
 
 	reorderPlanSteps(opts: { threadId: string, messageIdx: number, newStepOrder: number[] }) {
@@ -3713,7 +3731,21 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 			// 1. validate tool params
 			try {
 				if (isBuiltInTool) {
-					const params = this._toolsService.validateParams[toolName](opts.unvalidatedToolParams)
+					let params
+					try {
+						params = this._toolsService.validateParams[toolName](opts.unvalidatedToolParams)
+					} catch (e) {
+						// Variant B — outside-workspace access needs authorization. Prompt async,
+						// and on approval re-validate (the folder is now in the allowlist). On deny,
+						// rethrow so the normal validation-error path reports the refusal.
+						if (e instanceof ExternalAccessRequiredError) {
+							const granted = await this._externalAccessService.requestAccess(e.uri)
+							if (!granted) { throw e }
+							params = this._toolsService.validateParams[toolName](opts.unvalidatedToolParams)
+						} else {
+							throw e
+						}
+					}
 					toolParams = params
 				}
 				else {
@@ -4550,6 +4582,8 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 		// Track if we've synthesized tools for this request (prevents infinite loops)
 		// This is more reliable than checking message patterns
 		let hasSynthesizedToolsInThisRequest = false
+		// #6 — broken-XML tool-call repair fires at most once per request (anti-loop).
+		let hasRepairedXmlThisRequest = false
 
 		// Track tools executed in this request to detect incomplete workflows
 		let toolsExecutedInRequest: string[] = []
@@ -5930,6 +5964,40 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 						await this._addUserCheckpoint({ threadId })
 						return
 					}
+				}
+
+				// #6 (Design 2) — broken XML tool-call repair. The model emitted a tool tag the XML
+				// parser couldn't extract (e.g. truncated <invoke> from deepseek): no toolCall, and
+				// extractGrammar substituted the unclaimed-tag placeholder. Rather than stall the
+				// agent, inject ONE corrective turn so the model re-emits a canonical tool call.
+				// Once per request (anti-loop); opt-out via vibeide.llm.repairBrokenToolCalls.
+				if (chatMode === 'agent' && !toolCall && !hasRepairedXmlThisRequest
+					&& info.fullText.includes(unclaimedToolTagPlaceholder())
+					&& this._configurationService.getValue<boolean>('vibeide.llm.repairBrokenToolCalls') !== false) {
+					hasRepairedXmlThisRequest = true
+					// On-fire attribution: the repair adds a round-trip → latency. Tell the user once/session
+					// so slowness is attributable to this debug-mode feature, not blamed on the app at large.
+					if (!this._xmlRepairFiredNotified) {
+						this._xmlRepairFiredNotified = true
+						this._notificationService.notify({
+							severity: Severity.Info,
+							message: localize('vibeide.llm.repairFired', 'VibeIDE переотправил модели запрос на исправление битого tool-call (доп. обращение — медленнее). Это режим отладки совместимости; отключить — настройка vibeide.llm.repairBrokenToolCalls.'),
+						})
+					}
+					// Preserve the model's (malformed) turn, then add a corrective user turn so the next
+					// iteration re-emits. Reasoning preserved for thinking-mode providers (same contract
+					// as the synthesis paths below). Mirrors their addMessage + shouldSendAnotherMessage flow.
+					this._addMessageToThread(threadId, {
+						role: 'assistant',
+						displayContent: info.fullText,
+						reasoning: info.fullReasoning || '',
+						anthropicReasoning: info.anthropicReasoning ?? null,
+					})
+					const corrective = '⚙️ Авто-исправление: твой предыдущий tool-call был в некорректном/обрезанном XML и не распознан. Переотправь РОВНО ОДИН валидный tool-call в каноническом формате. Если инструмент не нужен — ответь обычным текстом.'
+					this._addMessageToThread(threadId, { role: 'user', content: corrective, displayContent: corrective, selections: null, state: defaultMessageState })
+					shouldSendAnotherMessage = true
+					this._setStreamState(threadId, { isRunning: 'idle', interrupt: 'not_needed' })
+					continue
 				}
 
 				// Detect if Agent Mode should have used tools but didn't

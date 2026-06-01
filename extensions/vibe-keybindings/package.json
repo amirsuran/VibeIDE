@@ -510,12 +510,6 @@
         "command": "workbench.view.debug"
       },
       {
-        "key": "ctrl ctrl",
-        "mac": "ctrl ctrl",
-        "command": "workbench.action.tasks.runTask",
-        "when": "taskCommandsRegistered && !terminalFocus"
-      },
-      {
         "key": "shift+f10",
         "mac": "ctrl+r",
         "command": "workbench.action.tasks.reRunTask",

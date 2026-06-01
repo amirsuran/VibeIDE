@@ -412,7 +412,7 @@ export const resetNormalizeCounters = (): void => {
  * resolved on each call, after the NLS bundle has loaded. Acceptable cost
  * given this hot-path runs at most once per tool-tag occurrence per render.
  */
-const unclaimedToolTagPlaceholder = (): string =>
+export const unclaimedToolTagPlaceholder = (): string =>
 	'\n*' + localize('vibeide.xml.unclaimedToolTag', '[вызов инструмента — некорректный формат от модели, скрыто]') + '*\n'
 
 /**

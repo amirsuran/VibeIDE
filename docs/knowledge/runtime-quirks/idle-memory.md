@@ -6,6 +6,31 @@
 
 ---
 
+## [инцидент] 2026-06-01 — ночной renderer-OOM на ГРАНИЦЕ СНА (новый подкласс)
+
+**Состояние:** диагностирован по watchdog-логу + Windows power-событиям. Версия 0.17.0 (packaged). Это **третий, отдельный** подкласс — не balloon-под-нагрузкой (2026-05-31 день) и не постепенный idle-leak.
+
+### Факты
+
+| Факт | Источник |
+|---|---|
+| OOM-диалог `reason:"oom", code:"-536870904"` (`0xE0000008`) | скриншот пользователя |
+| Renderer (pid 6128) **плоский ~243 МБ commit ~3 ч** (18:11→20:01 UTC), max за день 313 МБ (разогрев) — **баллона нет** | `2026-05-31.jsonl`, 888 сэмплов |
+| Watchdog оборвался **23:01 local** (20:01 UTC) на здоровом renderer; **0 crash-/snapshot-событий, файла за след. UTC-день нет** | watchdog-лог |
+| exthost вышел **чисто, code 0** в 23:03 local | session `20260531T211150` main.log |
+| Машина **спала всю ночь** — Windows Kernel-General resync времени в **06:04** (пробуждение) | Event Log (System) |
+| Ни в одной session-main.log нет строки `renderer process gone / oom` | grep по всем `2026053*` |
+
+### Вывод
+
+Смерть пришлась на **окно сна/пробуждения**, которое sampler структурно не видит (таймеры заморожены при suspend). Триггер — suspend/resume commit-charge OOM (Windows modern-standby: компрессия/pagefile-давление), НЕ нагрузка и НЕ постепенная утечка (commit был ровный до засыпания). Тот же код `0xE0000008`, что у balloon-класса, но другой механизм. Инструментация W.51/burst/W.55 здесь бессильна: commit плоский (нет slope), сон замораживает тики.
+
+### Фикс — W.56 (power-event bracketing)
+
+`powerMonitor` suspend/resume в watchdog: `pre-suspend` тик (last-known-good) + захват renderer-pid'ов; на `resume` — детект исчезнувших за сон renderer'ов (`recordCrash{reason:'gone-during-suspend'}`, до reconcile) + `post-resume` тик. Закрывает слепое окно: следующий sleep-OOM запишется, а не пропадёт. Детали — roadmap §W.56.
+
+---
+
 ## [наблюдение] 2026-05-31 (день) — 0.17.0: commit-баллон ~2 ГБ под нагрузкой агента ПОЙМАН инструментацией
 
 **Состояние:** валидация W.51 + 1630. Crash-report (4 бандла `D:\Temp\1..4.zip`, собраны самим watchdog через «Собрать crash report»). Краша нет — снято pre-OOM, баллон в процессе формирования.

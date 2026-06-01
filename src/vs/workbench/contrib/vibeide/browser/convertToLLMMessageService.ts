@@ -65,6 +65,8 @@ import { extractToolFilePaths, toWorkspaceRelative, parseRuleInvocations } from 
 import { planBudgetFillTail } from '../common/agentLoopHeuristics.js';
 import { updateTokenCalibration, clampTokenCalibration, serializeCalibration, deserializeCalibration, TOKEN_CALIBRATION_MAX } from '../common/tokenCalibration.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
+import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
+import { localize } from '../../../../nls.js';
 
 /** APPLICATION-scope storage key for persisted per-(provider×model) token-calibration factors. */
 const TOKEN_CALIBRATION_STORAGE_KEY = 'vibeide.chat.tokenCalibrationFactors';
@@ -895,6 +897,17 @@ const prepareOpenAIOrAnthropicMessages = ({
 	if (systemMessage) sysMsgParts.push(`<assistant_instructions>\n${systemMessage}\n</assistant_instructions>`)
 	const combinedSystemMessage = sysMsgParts.join('\n\n')
 
+	// D.16 diagnostic — split "system param arrived empty" vs "built full then trimmed".
+	// `systemMessage` here is the <assistant_instructions> body (chat_systemMessage + repo_context);
+	// `aiInstructions` is the <workspace_guidelines> body. If sysParamLen===0 the collapse is
+	// upstream (build/cache/race); if it's full here but newSysMsgLen (below) is tiny, the trim
+	// pipeline crushed it. vibeLog self-gates on level/category.
+	vibeLog.debug('promptDump', 'sys assembly (pre-trim)', {
+		sysParamLen: systemMessage.length,
+		aiInstructionsLen: aiInstructions.length,
+		combinedLen: combinedSystemMessage.length,
+	})
+
 	messages.unshift({ role: 'system', content: combinedSystemMessage })
 
 	// ================ trim ================
@@ -1063,6 +1076,16 @@ const prepareOpenAIOrAnthropicMessages = ({
 
 	// ================ system message hack ================
 	const newSysMsg = messages.shift()!.content
+
+	// D.16 diagnostic — did the trim pipeline shrink the system between pre-trim and here?
+	// combinedSystemMessage is the pre-trim baseline (captured above at unshift time).
+	if (newSysMsg.length !== combinedSystemMessage.length) {
+		vibeLog.debug('promptDump', 'sys assembly (post-trim)', {
+			preTrimLen: combinedSystemMessage.length,
+			postTrimLen: newSysMsg.length,
+			trimmedAway: combinedSystemMessage.length - newSysMsg.length,
+		})
+	}
 
 
 	// ================ tools and anthropicReasoning ================
@@ -1335,6 +1358,8 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 	// provider's reported promptTokens when it arrives (see recordActualPromptTokens).
 	private readonly _tokenCalibrationByModel: Map<string, number> = new Map();
 	private readonly _lastRawPromptEstimateByModel: Map<string, number> = new Map();
+	/** R.12 — `@rule:<name>` names already warned-about (unknown rule) this session, to toast once each. */
+	private readonly _warnedUnknownRules = new Set<string>();
 
 	constructor(
 		@IModelService private readonly modelService: IModelService,
@@ -1355,6 +1380,7 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 		@IRemoteCatalogService private readonly remoteCatalogService: IRemoteCatalogService,
 		@IStorageService private readonly storageService: IStorageService,
 		@IVibeProjectRulesService private readonly projectRulesService: IVibeProjectRulesService,
+		@INotificationService private readonly notificationService: INotificationService,
 	) {
 		super()
 		// Restore persisted token-calibration factors (stable per model tokenizer) so the budget
@@ -1911,7 +1937,16 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 		const invokedRuleBlocks: string[] = [];
 		for (const ruleName of parseRuleInvocations(lastUserTextForSkills)) {
 			const body = this.projectRulesService.getRuleByName(ruleName)?.content.trim();
-			if (body) { invokedRuleBlocks.push(`<rule_invocation name="${ruleName}">\n${body}\n</rule_invocation>`); }
+			if (body) {
+				invokedRuleBlocks.push(`<rule_invocation name="${ruleName}">\n${body}\n</rule_invocation>`);
+			} else if (!this._warnedUnknownRules.has(ruleName)) {
+				// R.12 — surface a typo'd / missing @rule once per name (silent drop was confusing).
+				this._warnedUnknownRules.add(ruleName);
+				this.notificationService.notify({
+					severity: Severity.Warning,
+					message: localize('vibeide.rules.unknownInvocation', 'Правило @rule:{0} не найдено — проверьте имя (без расширения) или список в панели «Правила проекта».', ruleName),
+				});
+			}
 		}
 		const ruleInvocationPrefix = invokedRuleBlocks.length > 0
 			? `The user invoked @rule. Follow the rule body below as authoritative for this request.\n\n${invokedRuleBlocks.join('\n\n')}`
@@ -2131,7 +2166,7 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 				let compacted = 0
 				let savedTokens = 0
 				llmMessages = llmMessages.map((m, i) => {
-					if (i < keepFromIdx && m.role === 'tool' && m.content.length > 300) {
+					if (i < keepFromIdx && m.role === 'tool' && m.content.length > 300 && !m.pinned) {
 						const tokensBefore = estimateTokens(m.content)
 						compacted++
 						savedTokens += tokensBefore
@@ -2150,7 +2185,7 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 			// Step A — elide oversized tool / assistant outputs in remaining tail
 			llmMessages = llmMessages.map(m => {
 				const tokens = estimateTokens(m.content)
-				if ((m.role === 'tool' || m.role === 'assistant') && tokens > TOOL_RESULT_TOKEN_THRESHOLD) {
+				if ((m.role === 'tool' || m.role === 'assistant') && tokens > TOOL_RESULT_TOKEN_THRESHOLD && !m.pinned) {
 					return { ...m, content: `[elided ${m.role} output: ~${tokens.toLocaleString()} tokens]` }
 				}
 				return m
@@ -2189,6 +2224,20 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 				finalTokens: currentTokens,
 				contextWindow,
 			})
+		}
+
+		// D.16 safety net — a cloud model that wants a system message must never receive an empty
+		// assistant-instructions body. If `systemMessage` somehow arrived empty (cache/race/dep
+		// failure observed on openCode-family providers), log loudly and rebuild ONCE bypassing the
+		// cache, so the model never silently runs without its operating instructions.
+		if (!disableSystemMessage && !isLocal && systemMessage.trim().length === 0) {
+			vibeLog.error('convertToLLMMessage', 'D.16 system collapse: assistant-instructions empty before send — rebuilding (cache bypassed)', {
+				provider: validProviderName,
+				model: modelName,
+				aiInstructionsLen: aiInstructions.length,
+			})
+			this._systemMessageCache.clear()
+			systemMessage = await this._generateChatMessagesSystemMessage(chatMode, specialToolFormat, validProviderName, modelName)
 		}
 
 		const { messages, separateSystemMessage } = prepareMessages({

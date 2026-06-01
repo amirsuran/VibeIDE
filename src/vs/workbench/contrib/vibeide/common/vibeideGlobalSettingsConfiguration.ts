@@ -383,6 +383,11 @@ export class VibeideGlobalSettingsConfigurationContribution extends Disposable i
 			title: localize('vibeide.llm.title', 'VibeIDE — LLM Runtime'),
 			type: 'object',
 			properties: {
+				'vibeide.llm.repairBrokenToolCalls': {
+					type: 'boolean',
+					default: true,
+					description: localize('vibeide.llm.repairBrokenToolCalls', 'Авто-починка битых XML tool-call\'ов: если модель прислала tool-call в некорректном/обрезанном XML (частая проблема deepseek/minimax через aggregator), агент вливает корректирующий ход и даёт модели переотправить вызов в каноне (1 попытка на ход), вместо того чтобы «заткнуться». **Режим отладки совместимости** — добавляет доп. обращение к модели (медленнее) на битых ходах. ON по умолчанию; выключите, если важнее предсказуемая скорость/стоимость.'),
+				},
 				'vibeide.llm.timeoutMs.local': {
 					type: 'integer',
 					minimum: 1000,

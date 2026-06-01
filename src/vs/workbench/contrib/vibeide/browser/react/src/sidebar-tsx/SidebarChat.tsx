@@ -24,7 +24,7 @@ import { ChatMode, displayInfoOfProviderName, FeatureName, isFeatureNameDisabled
 import { ICommandService } from '../../../../../../../platform/commands/common/commands.js';
 import { WarningBox } from '../vibe-settings-tsx/WarningBox.js';
 import { getModelCapabilities, getIsReasoningEnabledState, getReservedOutputTokenSpace } from '../../../../common/modelCapabilities.js';
-import { AlertTriangle, File, Ban, Check, ChevronRight, Dot, FileIcon, Pencil, Undo, Undo2, X, Flag, Copy as CopyIcon, Info, CirclePlus, Ellipsis, CircleEllipsis, Folder, ALargeSmall, TypeOutline, Text, Image as ImageIcon, FileText, LoaderCircle, Maximize2, Maximize } from 'lucide-react';
+import { AlertTriangle, File, Ban, Check, ChevronRight, Dot, FileIcon, Pencil, Undo, Undo2, X, Flag, Copy as CopyIcon, Info, CirclePlus, Ellipsis, CircleEllipsis, Folder, ALargeSmall, TypeOutline, Text, Image as ImageIcon, FileText, LoaderCircle, Maximize2, Maximize, Pin } from 'lucide-react';
 import { ChatMessage, CheckpointEntry, StagingSelectionItem, ToolMessage, PlanMessage, ReviewMessage, PlanStep, StepStatus, PlanApprovalState } from '../../../../common/chatThreadServiceTypes.js';
 import { formatChatTimestamp, chatTimestampToISO, CHAT_TIMESTAMP_STREAMING_PLACEHOLDER } from '../../../../common/chatTimestampFormatter.js';
 import { BuiltinToolCallParams, BuiltinToolName, ToolName, LintErrorItem, ToolApprovalType, toolApprovalTypes } from '../../../../common/toolsServiceTypes.js';
@@ -1788,11 +1788,28 @@ const UserMessageComponent = ({ chatMessage, messageIdx, isCheckpointGhost, curr
 		{mode === 'display' && <ChatTimestamp ts={chatMessage.createdAt} align='right' />}
 
 		<div
-			className="absolute -top-1 -right-1 translate-x-0 -translate-y-0 z-1"
-		// data-tooltip-id='vibe-tooltip'
-		// data-tooltip-content='Edit message'
-		// data-tooltip-place='left'
+			className="absolute -top-1 -right-1 translate-x-0 -translate-y-0 z-1 flex items-center gap-1"
 		>
+			{/* Pin-context: keep this message verbatim through context truncation. Shown on
+			    hover, or always while pinned so the state stays visible. */}
+			{mode === 'display' && (
+				<Pin
+					size={18}
+					title={chatMessage.pinned ? 'Открепить сообщение' : 'Закрепить сообщение (не обрезать при сжатии контекста)'}
+					className={`
+                    cursor-pointer
+                    p-[2px]
+                    bg-vibe-bg-1 border border-vibe-border-1 rounded-md
+                    transition-opacity duration-200 ease-in-out
+                    ${chatMessage.pinned ? 'opacity-100 fill-current' : isHovered ? 'opacity-100 text-vibe-fg-3' : 'opacity-0'}
+                `}
+					style={chatMessage.pinned ? { color: 'var(--vscode-vibeide-chatGroup-activeBorder, #fc28a8)' } : undefined}
+					onClick={(e) => {
+						e.stopPropagation()
+						chatThreadsService.toggleMessagePinned({ threadId: currentThreadId, messageIdx })
+					}}
+				/>
+			)}
 			<EditSymbol
 				size={18}
 				className={`

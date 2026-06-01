@@ -24,6 +24,7 @@ import { Disposable, MutableDisposable } from '../../../../base/common/lifecycle
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
 import { IFileDialogService } from '../../../../platform/dialogs/common/dialogs.js';
+import { IConfigurationService, ConfigurationTarget } from '../../../../platform/configuration/common/configuration.js';
 import { joinPath } from '../../../../base/common/resources.js';
 import { localize } from '../../../../nls.js';
 import { IVibeIdleWatchdogProxy } from '../common/vibeIdleWatchdogProxy.js';
@@ -31,6 +32,7 @@ import type { WatchdogCrashEntry, WatchdogLine } from '../common/vibeIdleWatchdo
 
 const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
 const PREFLIGHT_DELAY_MS = 5_000;
+const SLOPE_SNAPSHOT_KEY = 'vibeide.diagnostics.idleWatchdog.snapshotRenderersOnCommitSlope';
 
 function isCrash(line: WatchdogLine): line is WatchdogCrashEntry {
 	return (line as { type?: string }).type === 'crash';
@@ -65,6 +67,7 @@ export class VibeIdleWatchdogPreFlightContribution extends Disposable implements
 		@IVibeIdleWatchdogProxy private readonly _watchdog: IVibeIdleWatchdogProxy,
 		@INotificationService private readonly _notifications: INotificationService,
 		@IFileDialogService private readonly _fileDialog: IFileDialogService,
+		@IConfigurationService private readonly _configuration: IConfigurationService,
 	) {
 		super();
 		this._scheduleCheck();
@@ -89,6 +92,42 @@ export class VibeIdleWatchdogPreFlightContribution extends Disposable implements
 		const reason = crash.reason ?? 'unknown';
 		const lastTickRef = crash.lastTickRef ?? '—';
 
+		const primary = [
+			{
+				id: 'vibeide.watchdog.preFlight.bundle',
+				label: localize('vibeide.watchdog.preFlight.bundle', 'Собрать crash report'),
+				tooltip: '',
+				class: undefined,
+				enabled: true,
+				run: () => { void this._bundleCrashReport(); },
+			},
+		];
+
+		// W.56/W.55 — for a renderer death, offer to arm the commit-slope heap
+		// snapshot so the NEXT balloon dumps the culprit's retained objects. Only
+		// when it isn't already on (heavy, opt-in). Closes the «видим OOM, не видим
+		// причину» loop straight from the crash notification.
+		const slopeSnapshotOn = this._configuration.getValue<boolean>(SLOPE_SNAPSHOT_KEY) === true;
+		if (crash.proc === 'renderer' && !slopeSnapshotOn) {
+			primary.push({
+				id: 'vibeide.watchdog.preFlight.armDiag',
+				label: localize('vibeide.watchdog.preFlight.armDiag', 'Вооружить диагностику памяти'),
+				tooltip: '',
+				class: undefined,
+				enabled: true,
+				run: () => { void this._armMemoryDiagnostics(); },
+			});
+		}
+
+		primary.push({
+			id: 'vibeide.watchdog.preFlight.dismiss',
+			label: localize('vibeide.watchdog.preFlight.dismiss', 'Пропустить'),
+			tooltip: '',
+			class: undefined,
+			enabled: true,
+			run: () => { /* no-op */ },
+		});
+
 		this._notifications.notify({
 			severity: Severity.Info,
 			message: localize(
@@ -98,27 +137,26 @@ export class VibeIdleWatchdogPreFlightContribution extends Disposable implements
 				reason,
 				lastTickRef,
 			),
-			actions: {
-				primary: [
-					{
-						id: 'vibeide.watchdog.preFlight.bundle',
-						label: localize('vibeide.watchdog.preFlight.bundle', 'Собрать crash report'),
-						tooltip: '',
-						class: undefined,
-						enabled: true,
-						run: () => this._bundleCrashReport(),
-					},
-					{
-						id: 'vibeide.watchdog.preFlight.dismiss',
-						label: localize('vibeide.watchdog.preFlight.dismiss', 'Пропустить'),
-						tooltip: '',
-						class: undefined,
-						enabled: true,
-						run: () => { /* no-op */ },
-					},
-				],
-			},
+			actions: { primary },
 		});
+	}
+
+	private async _armMemoryDiagnostics(): Promise<void> {
+		try {
+			await this._configuration.updateValue(SLOPE_SNAPSHOT_KEY, true, ConfigurationTarget.APPLICATION);
+			this._notifications.notify({
+				severity: Severity.Info,
+				message: localize(
+					'vibeide.watchdog.preFlight.armDiagDone',
+					'Диагностика памяти включена: при следующем росте commit-памяти renderer будет снят heap snapshot для анализа причины. Снимок сохраняется локально.',
+				),
+			});
+		} catch (e) {
+			this._notifications.notify({
+				severity: Severity.Warning,
+				message: localize('vibeide.watchdog.preFlight.armDiagFailed', 'Не удалось включить диагностику памяти: {0}', e instanceof Error ? e.message : String(e)),
+			});
+		}
 	}
 
 	private _procLabel(proc: string): string {

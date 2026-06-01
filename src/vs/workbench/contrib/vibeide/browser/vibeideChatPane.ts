@@ -99,7 +99,23 @@ function setupGroupRemovalListener(
 			_hasChatGroupCtxKey?.set(false);
 			_chatGroupLockdownDisposable?.dispose();
 			_chatGroupLockdownDisposable = undefined;
+			return;
 		}
+		// Another group closed (e.g. Settings editor). VS Code MERGES its editors into the
+		// surviving neighbour, which can dump a file into the chat group (observed: closing
+		// settings left rules.md + Chat in one tab bar). The EDITOR_OPEN lockdown listener does
+		// not fire for merge-arrivals, so re-assert isolation: evict foreign editors, keep chat rightmost.
+		if (_chatEditorGroupId === undefined) { return; }
+		const survivingChatGroup = editorGroupsService.getGroup(_chatEditorGroupId);
+		if (!survivingChatGroup) { return; }
+		for (const foreign of survivingChatGroup.editors.filter(e => !(e instanceof VibeChatEditorInput))) {
+			moveForeignEditorOut(foreign, survivingChatGroup, editorGroupsService);
+		}
+		if (!(survivingChatGroup.activeEditor instanceof VibeChatEditorInput)) {
+			const chatEditor = survivingChatGroup.editors.find(e => e instanceof VibeChatEditorInput);
+			if (chatEditor) { void survivingChatGroup.openEditor(chatEditor); }
+		}
+		enforceChatGroupRightmost(editorGroupsService);
 	});
 
 	// Chat-group-rightmost invariant (2026-05-31): re-assert on every group add so files always

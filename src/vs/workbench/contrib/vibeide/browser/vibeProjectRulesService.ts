@@ -110,6 +110,11 @@ const WATCHER_DEBOUNCE_MS = 350;
 const DISABLED_SOURCES_KEY = 'vibeide.projectRules.disabledSources';
 const MAX_COMBINED_CHARS_KEY = 'vibeide.projectRules.maxCombinedChars';
 const DEFAULT_MAX_COMBINED_CHARS = 20000;
+
+/** R.13 — normalize a rule-source key (relativePath) so the disabled-set is stable across
+ *  path-separator and case differences (symlinks, Windows case-insensitive FS). Applied on
+ *  both store and compare, so pre-normalization entries keep matching. */
+const normalizeRuleKey = (p: string): string => p.replace(/\\/g, '/').toLowerCase();
 const MAX_FILES_KEY = 'vibeide.projectRules.maxFiles';
 const MAX_FOLDER_DEPTH_KEY = 'vibeide.projectRules.maxFolderDepth';
 const MAX_FILE_BYTES_KEY = 'vibeide.projectRules.maxFileBytes';
@@ -188,12 +193,12 @@ class VibeProjectRulesService extends Disposable implements IVibeProjectRulesSer
 	 * unmatched ones in an "available rules" index (R.3/R.7). Without `activation` → inject all.
 	 */
 	private _combineSources(sources: readonly LoadedRuleSource[], activation: { userText?: string; files?: readonly string[] } | undefined): string {
-		const disabled = new Set(this._config.getValue<string[]>(DISABLED_SOURCES_KEY) ?? []);
+		const disabled = new Set((this._config.getValue<string[]>(DISABLED_SOURCES_KEY) ?? []).map(normalizeRuleKey));
 		const seen = new Set<string>();
 		const injected: string[] = [];
 		const indexed: LoadedRuleSource[] = [];
 		for (const s of sources) {
-			if (disabled.has(s.relativePath)) { continue; } // disabled in settings (vibeide.projectRules.disabledSources)
+			if (disabled.has(normalizeRuleKey(s.relativePath))) { continue; } // disabled in settings (vibeide.projectRules.disabledSources)
 			const body = s.content.trim();
 			if (body.length === 0) { continue; }
 			if (seen.has(body)) { continue; } // R.6 — dedup identical content across sources
@@ -236,14 +241,17 @@ class VibeProjectRulesService extends Disposable implements IVibeProjectRulesSer
 	}
 
 	isRuleEnabled(relativePath: string): boolean {
-		return !((this._config.getValue<string[]>(DISABLED_SOURCES_KEY) ?? []).includes(relativePath));
+		const key = normalizeRuleKey(relativePath);
+		return !((this._config.getValue<string[]>(DISABLED_SOURCES_KEY) ?? []).some(p => normalizeRuleKey(p) === key));
 	}
 
 	async setRuleEnabled(relativePath: string, enabled: boolean): Promise<void> {
-		const current = this._config.getValue<string[]>(DISABLED_SOURCES_KEY) ?? [];
+		const key = normalizeRuleKey(relativePath);
+		// Normalize existing entries too so toggling collapses pre-normalization duplicates.
+		const current = (this._config.getValue<string[]>(DISABLED_SOURCES_KEY) ?? []).map(normalizeRuleKey);
 		const next = enabled
-			? current.filter(p => p !== relativePath)
-			: [...new Set([...current, relativePath])];
+			? current.filter(p => p !== key)
+			: [...new Set([...current, key])];
 		// Persist to the registered workspace setting; the onDidChangeConfiguration listener
 		// recomputes the cache + fires onRulesChanged.
 		await this._config.updateValue(DISABLED_SOURCES_KEY, next, ConfigurationTarget.WORKSPACE);

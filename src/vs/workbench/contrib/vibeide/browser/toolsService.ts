@@ -8,9 +8,9 @@ import { CancellationToken, CancellationTokenSource } from '../../../../base/com
 import { URI } from '../../../../base/common/uri.js'
 import { isAbsolute as pathIsAbsolute } from '../../../../base/common/path.js'
 import { joinPath } from '../../../../base/common/resources.js'
-import { localize } from '../../../../nls.js'
 import { IFileService } from '../../../../platform/files/common/files.js'
 import { IVibeConstraintsService, ConstraintViolationError } from '../common/vibeConstraintsService.js'
+import { IVibeExternalAccessService, ExternalAccessRequiredError } from '../common/vibeExternalAccessService.js'
 import { IVibePromptGuardService } from '../common/vibePromptGuardService.js'
 import { IVibePerFilePermissionsService } from '../common/vibePerFilePermissionsService.js'
 import { registerSingleton, InstantiationType } from '../../../../platform/instantiation/common/extensions.js'
@@ -77,7 +77,7 @@ const validateStr = (argName: string, value: unknown) => {
  * Validates a URI string and converts it to a URI object.
  * Now includes workspace validation for safety in Agent Mode.
  */
-const validateURI = (uriStr: unknown, workspaceContextService?: IWorkspaceContextService, requireWorkspace: boolean = true, accessKind: 'read' | 'write' = 'read') => {
+const validateURI = (uriStr: unknown, workspaceContextService?: IWorkspaceContextService, requireWorkspace: boolean = true, accessKind: 'read' | 'write' = 'read', isAllowedOutside?: (uri: URI) => boolean) => {
 	if (uriStr === null) throw new Error(`Invalid LLM output: uri was null.`)
 	if (typeof uriStr !== 'string') throw new Error(`Invalid LLM output format: Provided uri must be a string, but it's a(n) ${typeof uriStr}. Full value: ${JSON.stringify(uriStr)}.`)
 
@@ -133,16 +133,11 @@ const validateURI = (uriStr: unknown, workspaceContextService?: IWorkspaceContex
 	// denial message names, so the user can copy-paste it into Settings search.
 	if (requireWorkspace && workspaceContextService) {
 		const isInWorkspace = workspaceContextService.isInsideWorkspace(uri);
-		if (!isInWorkspace) {
-			const settingKey = accessKind === 'write'
-				? 'vibeide.agent.allowWriteOutsideWorkspace'
-				: 'vibeide.agent.allowReadOutsideWorkspace';
-			throw new Error(localize(
-				'vibeide.tools.outsideWorkspace',
-				"Доступ к файлу вне рабочей области отключён: {0}\nЧтобы разрешить, включите настройку: {1}\n(Параметры → вставьте этот ключ в поиск.)",
-				uri.fsPath,
-				settingKey,
-			));
+		// O.13 — a user-pre-authorized external folder (Variant A) bypasses the block. Otherwise
+		// throw the TYPED error: the tool-dispatch layer (Variant B) catches it, prompts the user
+		// async, and re-validates on approval. Uncaught → access is denied (fail-closed).
+		if (!isInWorkspace && !isAllowedOutside?.(uri)) {
+			throw new ExternalAccessRequiredError(uri, accessKind);
 		}
 	}
 
@@ -258,6 +253,7 @@ export class ToolsService implements IToolsService {
 		@IGitAutoStashService private readonly _gitAutoStashService: IGitAutoStashService,
 		@ITextFileService private readonly _textFileService: ITextFileService,
 		@IShellHardeningService private readonly _shellHardeningService: IShellHardeningService,
+		@IVibeExternalAccessService private readonly _externalAccess: IVibeExternalAccessService,
 	) {
 		this._offlineGate = new OfflinePrivacyGate();
 		const queryBuilder = instantiationService.createInstance(QueryBuilder);
@@ -291,8 +287,9 @@ export class ToolsService implements IToolsService {
 			this._configurationService.getValue<boolean>('vibeide.agent.allowReadOutsideWorkspace') === false
 		const requireWorkspaceForWrite = (): boolean =>
 			this._configurationService.getValue<boolean>('vibeide.agent.allowWriteOutsideWorkspace') !== true
-		const validateReadURI = (u: unknown) => validateURI(u, workspaceContextService, requireWorkspaceForRead(), 'read')
-		const validateWriteURI = (u: unknown) => validateURI(u, workspaceContextService, requireWorkspaceForWrite(), 'write')
+		const isAllowedOutside = (u: URI) => this._externalAccess.isAllowed(u)
+		const validateReadURI = (u: unknown) => validateURI(u, workspaceContextService, requireWorkspaceForRead(), 'read', isAllowedOutside)
+		const validateWriteURI = (u: unknown) => validateURI(u, workspaceContextService, requireWorkspaceForWrite(), 'write', isAllowedOutside)
 		const validateOptionalReadURI = (u: unknown) => isFalsy(u) ? null : validateReadURI(u)
 
 		this.validateParams = {
