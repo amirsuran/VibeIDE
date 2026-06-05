@@ -3,7 +3,6 @@
  *  Licensed under the MIT License. See LICENSE.txt in the project root for license information.
  *--------------------------------------------------------------------------------------*/
 
-import { suite, test } from 'mocha';
 import * as assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { classifyToolCallFormat, isAutoDowngradeInEffect } from '../../common/toolCallFormatStatus.js';

@@ -29,7 +29,7 @@ import { computeDirectoryTree1Deep, IDirectoryStrService, stringifyDirectoryTree
 import { IMarkerService, MarkerSeverity } from '../../../../platform/markers/common/markers.js'
 import { timeout } from '../../../../base/common/async.js'
 import { RawToolParamsObj } from '../common/sendLLMMessageTypes.js'
-import { MAX_CHILDREN_URIs_PAGE, MAX_FILE_CHARS_PAGE, MAX_TERMINAL_BG_COMMAND_TIME, MAX_TERMINAL_INACTIVE_TIME, READ_FILE_DEFAULT_LINE_LIMIT, READ_FILE_MAX_LINE_LIMIT } from '../common/prompt/prompts.js'
+import { MAX_CHILDREN_URIs_PAGE, MAX_FILE_CHARS_PAGE, MAX_TERMINAL_BG_COMMAND_TIME, MAX_TERMINAL_INACTIVE_TIME, READ_FILE_DEFAULT_LINE_LIMIT, READ_FILE_LARGE_FILE_CHARS, READ_FILE_LARGE_FILE_WINDOW_CHARS, READ_FILE_MAX_LINE_LIMIT } from '../common/prompt/prompts.js'
 import { IVibeideSettingsService } from '../common/vibeideSettingsService.js'
 import { generateUuid } from '../../../../base/common/uuid.js'
 import { INotificationService } from '../../../../platform/notification/common/notification.js'
@@ -53,7 +53,7 @@ import { formatProvenanceMarker, shouldMarkProvenance } from '../common/vibeAiPr
 import { IGitAutoStashService } from '../common/gitAutoStashService.js'
 import { decideAutoStash } from '../common/autoStashPolicy.js'
 import { ITextFileService } from '../../../services/textfile/common/textfiles.js'
-import { detectShellMisuse, ToolValidationError, truncateHeadTail, looksLikeShellAwaitingInput, formatTerminalTimeoutNotice } from '../common/toolHardening.js'
+import { detectShellMisuse, ToolValidationError, truncateHeadTail, looksLikeShellAwaitingInput, formatTerminalTimeoutNotice, clampLineWindowToCharBudget } from '../common/toolHardening.js'
 import { IShellHardeningService } from './shellHardeningService.js'
 
 // tool use for AI
@@ -820,6 +820,18 @@ export class ToolsService implements IToolsService {
 					// pageNumber > 1: legacy char-window kicks in (handled below).
 					startLineReturned = 1
 					endLineReturned = totalNumLines
+				}
+
+				// Large-file guard: a FULL default read (no explicit range) of a >200KB file can fit the
+				// 2k-line limit (long lines) yet blow a huge chunk of the context in one tool result.
+				// Shrink the window to the char budget and flag it partial so the nav hint steers the
+				// model to start_line continuation / grep instead. Explicit-range reads are untouched.
+				if (!isLineRangeMode && pageNumber === 1 && fullText.length > READ_FILE_LARGE_FILE_CHARS) {
+					const cappedEnd = clampLineWindowToCharBudget(allLines, startLineReturned, endLineReturned, READ_FILE_LARGE_FILE_WINDOW_CHARS)
+					if (cappedEnd < endLineReturned) {
+						endLineReturned = cappedEnd
+						truncatedByLineLimit = true
+					}
 				}
 
 				let contents: string

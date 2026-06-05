@@ -18,6 +18,7 @@ import { MAX_TERMINAL_BG_COMMAND_TIME, MAX_TERMINAL_CHARS, MAX_TERMINAL_INACTIVE
 import { TerminalResolveReason } from '../common/toolsServiceTypes.js';
 import { timeout } from '../../../../base/common/async.js';
 import { truncateHeadTail } from '../common/toolHardening.js';
+import { generateUuid } from '../../../../base/common/uuid.js';
 
 
 
@@ -260,7 +261,7 @@ export class TerminalToolService extends Disposable implements ITerminalToolServ
 
 		const disposables: IDisposable[] = []
 
-		const waitTimeout = timeout(10_000)
+		const waitTimeout = timeout(2_000)
 		const waitForCapability = new Promise<ITerminalCapabilityImplMap[TerminalCapability.CommandDetection]>((res) => {
 			disposables.push(
 				terminal.capabilities.onDidAddCapability((e) => {
@@ -341,8 +342,40 @@ export class TerminalToolService extends Disposable implements ITerminalToolServ
 			})
 
 
+			// Shell-integration-independent completion signal. CommandDetection (and thus
+			// `onCommandFinished`) silently never mounts when PowerShell's ExecutionPolicy blocks the
+			// integration script — common in locked-down corp shells — so EVERY foreground command would
+			// otherwise block until the inactivity timeout (~8s) on top of the capability wait. We echo a
+			// unique marker + `$?` after the command (PowerShell → True/False, POSIX → exit code) and
+			// resolve the instant it shows up in `onData`. The marker is UUID-based so it can't collide
+			// with real output, and the regex requires True/False/digits so it never matches the literal
+			// `$?` in the echoed command line itself.
+			const marker = `VIBEDONE${generateUuid().replace(/-/g, '')}`
+			const useSentinel = !isPersistent
+			const waitUntilSentinel = new Promise<void>(resolve => {
+				if (!useSentinel) { return }
+				let buf = ''
+				const re = new RegExp(`${marker}:(True|False|-?\\d+)`)
+				const d = terminal.onData(chunk => {
+					if (resolveReason) { return }
+					buf += chunk
+					const m = re.exec(buf)
+					if (!m) { return }
+					const tok = m[1]
+					const code = tok === 'True' ? 0 : tok === 'False' ? 1 : parseInt(tok, 10)
+					resolveReason = { type: 'done', exitCode: Number.isFinite(code) ? code : 0 }
+					d.dispose()
+					resolve()
+				})
+				disposables.push(d)
+			})
+
 			// send the command now that listeners are attached
 			await terminal.sendText(command, true)
+			// Queue the marker echo right after; the shell runs it once the command returns.
+			if (useSentinel) {
+				await terminal.sendText(`echo "${marker}:$?"`, true)
+			}
 
 			// Caller-supplied timeout takes precedence over the hard-coded inactivity / bg limits.
 			// timeoutMs interpretation:
@@ -376,15 +409,19 @@ export class TerminalToolService extends Disposable implements ITerminalToolServ
 				})
 
 			// wait for result
-			await Promise.any([waitUntilDone, waitUntilInterrupt])
+			await Promise.any([waitUntilDone, waitUntilSentinel, waitUntilInterrupt])
 				.finally(() => disposables.forEach(d => d.dispose()))
 
 
 
-			// read result if timed out, since we didn't get it (could clean this code up but it's ok)
-			if (resolveReason?.type === 'timeout') {
+			// read result if timed out OR resolved via the sentinel (the structured `getOutput()` wasn't
+			// captured), then strip the marker echo + marker output line from the raw terminal text.
+			if (resolveReason?.type === 'timeout' || (resolveReason?.type === 'done' && !result)) {
 				const terminalId = isPersistent ? params.persistentTerminalId : params.terminalId
 				result = await this.readTerminal(terminalId)
+			}
+			if (useSentinel && result) {
+				result = result.split('\n').filter(line => !line.includes(marker)).join('\n')
 			}
 
 			if (!isPersistent) {

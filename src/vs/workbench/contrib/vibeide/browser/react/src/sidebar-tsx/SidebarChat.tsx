@@ -35,7 +35,7 @@ import { approvalTypeOfBuiltinToolName } from '../../../../common/prompt/tools/i
 import { CopyButton, EditToolAcceptRejectButtonsHTML, IconShell1, JumpToFileButton, JumpToTerminalButton, StatusIndicator, StatusIndicatorForApplyButton, useApplyStreamState, useEditToolStreamState } from '../markdown/ApplyBlockHoverButtons.js';
 import { IsRunningType, WAITING_FOR_MODEL_RESPONSE_SENTINEL } from '../../../chatThreadService.js';
 import { acceptAllBg, acceptBorder, buttonFontSize, buttonTextColor, rejectAllBg, rejectBg, rejectBorder } from '../../../../common/helpers/colors.js';
-import { builtinToolNames, isABuiltinToolName, MAX_FILE_CHARS_PAGE, MAX_TERMINAL_INACTIVE_TIME } from '../../../../common/prompt/prompts.js';
+import { builtinToolNames, isABuiltinToolName, MAX_TERMINAL_INACTIVE_TIME } from '../../../../common/prompt/prompts.js';
 import { stripUnclaimedToolTags } from '../../../../common/xmlToolNormalize.js';
 import { RawToolCallObj } from '../../../../common/sendLLMMessageTypes.js';
 import ErrorBoundary from './ErrorBoundary.js';
@@ -2748,7 +2748,11 @@ const builtinToolNameToComponent: { [T in BuiltinToolName]: { resultWrapper: Res
 				const { result } = toolMessage
 				componentParams.onClick = () => { voidOpenFileFn(params.uri, accessor, range) }
 				if (result.hasNextPage && params.pageNumber === 1 && range === undefined)  // first page of a full-file read (not a line-range slice)
-					componentParams.desc2 = `(truncated after ${Math.round(MAX_FILE_CHARS_PAGE) / 1000}k)`
+					// Honest partial-read label: truncation can now happen well before the 500k page cap
+					// (line limit or the large-file char budget), so report the actual window instead.
+					componentParams.desc2 = result.endLineReturned && result.totalNumLines
+						? `(partial: lines 1-${result.endLineReturned} of ${result.totalNumLines})`
+						: `(partial read)`
 				else if (params.pageNumber > 1) // subsequent pages
 					componentParams.desc2 = `(part ${params.pageNumber})`
 			}

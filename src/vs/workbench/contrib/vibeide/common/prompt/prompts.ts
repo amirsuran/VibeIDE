@@ -34,6 +34,13 @@ export const MAX_CHILDREN_URIs_PAGE = 500
 // per call, separate from MAX_FILE_CHARS_PAGE which is a byte hard-cap per page.
 export const READ_FILE_DEFAULT_LINE_LIMIT = 2_000
 export const READ_FILE_MAX_LINE_LIMIT = 10_000
+// Large-file guard for FULL default reads (no explicit start_line/end_line/line_limit): a 381KB
+// markdown file with long lines fits the 2k-line limit AND the 500KB page cap, so it reached the
+// model as one ~95k-token result (~25% of a 400k context in a single tool call). Above the
+// threshold the returned window is shrunk to the char budget (~20k tokens) and flagged as a
+// partial read, steering the model to ranged reads / grep. Explicit-range reads are NOT affected.
+export const READ_FILE_LARGE_FILE_CHARS = 200_000
+export const READ_FILE_LARGE_FILE_WINDOW_CHARS = 80_000
 
 // terminal tool info
 export const MAX_TERMINAL_CHARS = 100_000

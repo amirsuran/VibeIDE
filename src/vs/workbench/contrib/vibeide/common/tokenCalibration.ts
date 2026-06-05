@@ -21,8 +21,11 @@
 
 /** Identity factor used before any real usage sample has been observed (or when disabled). */
 export const TOKEN_CALIBRATION_DEFAULT = 1;
-/** EWMA weight on the newest sample (0..1). Higher = adapts faster, noisier. */
-export const TOKEN_CALIBRATION_ALPHA = 0.3;
+/** EWMA weight on the newest sample (0..1). Higher = adapts faster, noisier. Kept low because the
+ * raw estimate's error is content-dependent (a turn dominated by a huge file tokenises very
+ * differently from a normal turn), so per-sample ratios swing widely (~0.5↔2.2); a small alpha
+ * averages that out into a steadier factor instead of letting the indicator/thresholds oscillate. */
+export const TOKEN_CALIBRATION_ALPHA = 0.15;
 /** Clamp band for the factor — guards against a pathological single sample skewing the budget. */
 export const TOKEN_CALIBRATION_MIN = 0.5;
 // Default upper clamp. Reasoning-heavy models proxied through aggregators (e.g. deepseek-v4-pro via

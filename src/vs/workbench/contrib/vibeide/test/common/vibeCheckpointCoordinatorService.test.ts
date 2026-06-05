@@ -3,7 +3,6 @@
  *  Licensed under the MIT License. See LICENSE.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { suite, test } from 'mocha';
 import * as assert from 'assert';
 import { VibeCheckpointCoordinator } from '../../common/vibeCheckpointCoordinatorService.js';
 

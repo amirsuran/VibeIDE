@@ -227,6 +227,27 @@ export function formatTerminalTimeoutNotice(usedSeconds: number, awaitingInput: 
 }
 
 /**
+ * Shrink an inclusive 1-based line window [startLine, endLine] so the '\n'-joined content fits a
+ * char budget. Used by read_file's large-file guard: a full default read of a huge file can pass
+ * the line limit (long lines) yet dump hundreds of KB into the context in one tool result.
+ *
+ * Always keeps at least the first line — a single pathological line (minified bundle) may exceed
+ * the budget on its own; the byte-level page cap downstream still bounds it. Returns the new
+ * inclusive end line (≤ endLine, ≥ startLine).
+ */
+export function clampLineWindowToCharBudget(allLines: readonly string[], startLine: number, endLine: number, charBudget: number): number {
+	let used = 0;
+	let end = startLine;
+	for (let ln = startLine; ln <= endLine && ln <= allLines.length; ln++) {
+		const len = allLines[ln - 1].length + (ln > startLine ? 1 : 0); // +1 for the joining '\n'
+		if (ln > startLine && used + len > charBudget) break;
+		used += len;
+		end = ln;
+	}
+	return end;
+}
+
+/**
  * Heuristic line-counter for cap-decisions without materialising arrays.
  */
 export function countLines(s: string): number {

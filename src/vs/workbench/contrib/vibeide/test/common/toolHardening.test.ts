@@ -3,10 +3,9 @@
  *  Licensed under the Apache License, Version 2.0. See LICENSE.txt for more information.
  *--------------------------------------------------------------------------------------*/
 
-import { suite, test } from 'mocha';
 import * as assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { detectShellMisuse, truncateHeadTail, countLines, ToolValidationError, looksLikeShellAwaitingInput, formatTerminalTimeoutNotice } from '../../common/toolHardening.js';
+import { detectShellMisuse, truncateHeadTail, countLines, ToolValidationError, looksLikeShellAwaitingInput, formatTerminalTimeoutNotice, clampLineWindowToCharBudget } from '../../common/toolHardening.js';
 
 suite('ToolHardening', () => {
 	ensureNoDisposablesAreLeakedInTestSuite();
@@ -216,9 +215,12 @@ suite('ToolHardening', () => {
 			assert.ok(detectShellMisuse('pwsh -c "Add-Content file.ps1 -Value foo"'));
 		});
 
-		// Anti-false-positive: reading via a shell wrapper is NOT a write.
-		test('does NOT flag Get-Content wrapped in powershell (read, not write)', () => {
-			assert.strictEqual(detectShellMisuse('powershell -Command "Get-Content d:/p/main.php"'), null);
+		// Anti-false-positive: reading via a shell wrapper is NOT a write. Since D.39 the wrapper
+		// is unwrapped and the inner Get-Content IS still flagged — but as a READ misuse.
+		test('flags Get-Content wrapped in powershell as read misuse (not write)', () => {
+			const m = detectShellMisuse('powershell -Command "Get-Content d:/p/main.php"');
+			assert.ok(m);
+			assert.strictEqual(m!.kind, 'read_file');
 		});
 
 		// Anti-false-positive: legit remote deploy (read local, pipe to remote tee)
@@ -352,6 +354,35 @@ suite('ToolHardening', () => {
 			assert.strictEqual(e.suggestedTool, 't');
 			assert.strictEqual(e.name, 'ToolValidationError');
 			assert.ok(e instanceof Error);
+		});
+	});
+
+	suite('clampLineWindowToCharBudget', () => {
+		test('window already within budget is unchanged', () => {
+			const lines = ['aaa', 'bbb', 'ccc'];
+			assert.strictEqual(clampLineWindowToCharBudget(lines, 1, 3, 100), 3);
+		});
+
+		test('shrinks the window at a line boundary to fit the budget', () => {
+			// 10 lines of 10 chars; joined cost = 10 + 9*11 chars. Budget 35 fits lines 1-3 (10+11+11=32).
+			const lines = Array.from({ length: 10 }, () => 'x'.repeat(10));
+			assert.strictEqual(clampLineWindowToCharBudget(lines, 1, 10, 35), 3);
+		});
+
+		test('keeps at least the first line even when it alone exceeds the budget', () => {
+			const lines = ['y'.repeat(1000), 'z'];
+			assert.strictEqual(clampLineWindowToCharBudget(lines, 1, 2, 50), 1);
+		});
+
+		test('respects a non-1 start line', () => {
+			const lines = ['aaaa', 'bbbb', 'cccc', 'dddd'];
+			// From line 2: 4 + 5 = 9 chars for lines 2-3; line 4 (+5) would exceed 10.
+			assert.strictEqual(clampLineWindowToCharBudget(lines, 2, 4, 10), 3);
+		});
+
+		test('clamps endLine beyond the array length', () => {
+			const lines = ['a', 'b'];
+			assert.strictEqual(clampLineWindowToCharBudget(lines, 1, 99, 1000), 2);
 		});
 	});
 });
