@@ -72,10 +72,10 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 		},
 		'vibeide.agent.softCheckpointIterations': {
 			type: 'number',
-			default: 25,
+			default: 0,
 			minimum: 0,
 			maximum: 500,
-			description: localize('vibeide.agent.softCheckpointIterations', 'Мягкий чекпоинт: после стольких итераций tool-use loop в одном агентском прогоне агент ПАУЗИТСЯ и спросит, продолжать ли (в отличие от жёсткого `maxLoopIterations`, который просто обрывает прогон). Защита от тихого «молочения» десятков шагов. `0` = выкл. Дефолт 25. После подтверждения порог сдвигается на следующий интервал.'),
+			description: localize('vibeide.agent.softCheckpointIterations', 'Мягкий чекпоинт: после стольких итераций tool-use loop в одном агентском прогоне агент ПАУЗИТСЯ и спросит, продолжать ли (в отличие от жёсткого `maxLoopIterations`, который просто обрывает прогон). Защита от тихого «молочения» десятков шагов. `0` = выкл (дефолт) — прогон без пауз, под стать включённому по умолчанию автопилоту; токеновый чекпоинт при этом тоже спит. Поставьте, например, 25 для контролируемого режима. После подтверждения порог сдвигается на следующий интервал.'),
 		},
 		'vibeide.agent.softCheckpointTokens': {
 			type: 'number',

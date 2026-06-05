@@ -87,7 +87,7 @@ export const chatS = {
 	suggestAgentRules: 'Прикрепить правила агента (@agent)',
 	autopilotLabel: 'Автопилот',
 	autopilotTitle:
-		'Автопилот: запускать инструменты (правки, удаление, терминал, MCP) без подтверждения. Выключите — подтверждать каждый шаг.',
+		'Автопилот (вкл. по умолчанию): запускать инструменты (правки, удаление, терминал, MCP) без подтверждения. Выключите — подтверждать каждый шаг.',
 	maxLoopIterationsLabel: 'итер.',
 	maxLoopIterationsOffLabel: '∞ итер.',
 	maxLoopIterationsOffHint: 'лимит снят',
@@ -99,7 +99,12 @@ export const chatS = {
 	softCheckpointOffLabel: 'без пауз',
 	softCheckpointOffHint: 'пауза снята',
 	softCheckpointTitle:
-		'Soft-checkpoint: после скольких шагов в ОДНОМ прогоне агент паузится и спрашивает «продолжить?» (vibeide.agent.softCheckpointIterations). Работает НЕЗАВИСИМО от лимита итераций слева — срабатывает даже при ∞ как страховка от тихого runaway. Дефолт 25, 0 = без пауз.',
+		'Soft-checkpoint: после скольких шагов в ОДНОМ прогоне агент паузится и спрашивает «продолжить?» (vibeide.agent.softCheckpointIterations). Работает НЕЗАВИСИМО от лимита итераций слева — срабатывает даже при ∞ как страховка от тихого runaway. Дефолт 0 = без пауз (полная автономия); поставьте, например, 25 для контролируемого режима.',
+	autoNudgesLabel: 'подпин.',
+	autoNudgesOffLabel: 'без подпин.',
+	autoNudgesOffHint: 'автоподпинывание выключено',
+	autoNudgesTitle:
+		'Автоподпинывание (vibeide.agent.autoContinueMaxNudges): сколько раз ПОДРЯД при включённом автопилоте агент подтолкнёт модель продолжить, если та завершила ход текстом без вызова инструмента (артефакт слабых tool-calling-моделей). Счётчик сбрасывается на каждом выполненном инструменте. 0 = выкл — останавливаться сразу. Дефолт 2.',
 	trainingUnknown: 'обуч.?',
 	trainingNone: 'без обуч.',
 	trainingOptIn: 'opt-in',

@@ -481,8 +481,8 @@ const ChatAgentAutopilotToggle = ({ className }: { className?: string }) => {
 	const onChange = useCallback((v: boolean) => {
 		vibeideSettingsService.setGlobalSetting('chatAgentAutopilot', v)
 		// #5 — couple with the iterations counter: full autonomy ON → no pause (counter 0); OFF →
-		// controlled mode (bounded default, pause + confirmations). Mirror of ChatAgentIterationsControl.
-		configurationService.updateValue(SOFT_CHECKPOINT_KEY, v ? 0 : SOFT_CHECKPOINT_DEFAULT)
+		// controlled mode (bounded counter, pause + confirmations). Mirror of ChatAgentIterationsControl.
+		configurationService.updateValue(SOFT_CHECKPOINT_KEY, v ? 0 : SOFT_CHECKPOINT_CONTROLLED)
 		metricsService.capture('Chat Agent Autopilot Toggle', { enabled: v })
 	}, [vibeideSettingsService, configurationService, metricsService])
 
@@ -504,9 +504,15 @@ const ChatAgentAutopilotToggle = ({ className }: { className?: string }) => {
 
 
 /** Single agent-iterations control = soft-checkpoint pause (`vibeide.agent.softCheckpointIterations`). 0 = run to completion. */
-const SOFT_CHECKPOINT_DEFAULT = 25
+const SOFT_CHECKPOINT_DEFAULT = 0 // mirrors the registered config default: ∞ / no pauses (autopilot-on world)
+const SOFT_CHECKPOINT_CONTROLLED = 25 // value the counter snaps to when the user flips Autopilot OFF (controlled mode)
 const SOFT_CHECKPOINT_UPPER = 500
 const SOFT_CHECKPOINT_KEY = 'vibeide.agent.softCheckpointIterations'
+/** Auto-continue nudges control (`vibeide.agent.autoContinueMaxNudges`): how many CONSECUTIVE
+ * text-only turns autopilot auto-nudges the model to continue. 0 = off (stop immediately). */
+const AUTO_NUDGES_DEFAULT = 2
+const AUTO_NUDGES_UPPER = 10
+const AUTO_NUDGES_KEY = 'vibeide.agent.autoContinueMaxNudges'
 
 /**
  * Reusable numeric stepper bound to a config key: [−] [input] [+] [label]. 0 renders an off-label.
@@ -678,6 +684,33 @@ const ChatAgentIterationsControl = ({ className }: { className?: string }) => {
 			title={chatS.softCheckpointTitle}
 			presets={[0, 25, 50, 100]}
 			onValueCommitted={onValueCommitted}
+		/>
+	)
+}
+
+/**
+ * Auto-continue nudges control («автоподпинывание»). Bound to `vibeide.agent.autoContinueMaxNudges`:
+ * under Autopilot, when the model ends a turn with plain text and NO tool call (weak-tool-calling
+ * artefact), the agent auto-nudges it to continue up to N CONSECUTIVE times (counter resets on every
+ * executed tool call). `0` = off — stop immediately even under Autopilot. Quick toolbar access next
+ * to the iterations counter; global setting, not part of the per-tab chat config.
+ */
+const ChatAgentNudgesControl = ({ className }: { className?: string }) => {
+	const settingsState = useSettingsState()
+
+	const mode = settingsState.globalSettings.chatMode
+	if (mode !== 'agent' && mode !== 'plan') { return null }
+	return (
+		<NumberStepperControl
+			className={className}
+			configKey={AUTO_NUDGES_KEY}
+			defaultValue={AUTO_NUDGES_DEFAULT}
+			upper={AUTO_NUDGES_UPPER}
+			label={chatS.autoNudgesLabel}
+			offLabel={chatS.autoNudgesOffLabel}
+			offHint={chatS.autoNudgesOffHint}
+			title={chatS.autoNudgesTitle}
+			presets={[0, 2, 5]}
 		/>
 	)
 }
@@ -1016,6 +1049,7 @@ export const VibeChatArea: React.FC<VibeideChatAreaProps> = ({
 						{featureName === 'Chat' && <ChatTrainingPolicyBadge />}
 						{featureName === 'Chat' && <ChatAgentAutopilotToggle />}
 						{featureName === 'Chat' && <ChatAgentIterationsControl />}
+						{featureName === 'Chat' && <ChatAgentNudgesControl />}
 						<ReasoningOptionSlider featureName={featureName} />
 					</div>
 				)}
@@ -4583,7 +4617,8 @@ export const SidebarChat = () => {
 	const SOFT_CHECKPOINT_ITER_KEY = 'vibeide.agent.softCheckpointIterations'
 	const readIter = useCallback((): number => {
 		const r = configurationService.getValue<unknown>(SOFT_CHECKPOINT_ITER_KEY)
-		return (typeof r === 'number' && Number.isFinite(r) && r >= 0) ? Math.floor(r) : 25
+		// Fallback mirrors the registered config default (0 = ∞ / no pauses).
+		return (typeof r === 'number' && Number.isFinite(r) && r >= 0) ? Math.floor(r) : 0
 	}, [configurationService])
 	const [iterValue, setIterValue] = useState<number>(readIter)
 	useEffect(() => {

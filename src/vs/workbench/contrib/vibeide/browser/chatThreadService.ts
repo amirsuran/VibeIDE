@@ -1723,6 +1723,12 @@ class ChatThreadService extends Disposable implements IChatThreadService {
 		const lastMsg = thread.messages[thread.messages.length - 1]
 		if (!(lastMsg.role === 'tool' && lastMsg.type === 'tool_request')) return // should never happen
 
+		// A manual approval is a live "user is present and in control" signal — the session token
+		// gate exists to stop UNATTENDED runaway runs, so blocking a supervised session at the 2M
+		// cap is pure friction. Reset the counter on each approval; flows with no manual clicks
+		// (autopilot, or per-type auto-approve covering every tool) keep the gate intact.
+		try { this._tokenBudgetService.resetSession() } catch { /* gate reset is best-effort */ }
+
 		const callThisToolFirst: ToolMessage<ToolName> = lastMsg
 
 		this._wrapRunAgentToNotify(
@@ -4730,7 +4736,8 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 			// non-converging autopilot run can't silently grind dozens of steps / millions of tokens.
 			// Independent of the hard maxLoopIterations cap (which the user may have disabled with 0).
 			const rawSoftIter = this._configurationService.getValue<unknown>('vibeide.agent.softCheckpointIterations')
-			const softCheckpointIterations = (typeof rawSoftIter === 'number' && Number.isFinite(rawSoftIter) && rawSoftIter >= 0) ? Math.floor(rawSoftIter) : 25
+			// Fallback mirrors the registered config default (0 = no pauses, full-autonomy default).
+			const softCheckpointIterations = (typeof rawSoftIter === 'number' && Number.isFinite(rawSoftIter) && rawSoftIter >= 0) ? Math.floor(rawSoftIter) : 0
 			const rawSoftTok = this._configurationService.getValue<unknown>('vibeide.agent.softCheckpointTokens')
 			const softCheckpointTokens = (typeof rawSoftTok === 'number' && Number.isFinite(rawSoftTok) && rawSoftTok >= 0) ? Math.floor(rawSoftTok) : 1_000_000
 			let nextSoftIterCheckpoint = softCheckpointIterations > 0 ? softCheckpointIterations : Number.POSITIVE_INFINITY

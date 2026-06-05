@@ -586,7 +586,7 @@ export type GlobalSettings = {
 	};
 	// Local-First AI: When enabled, heavily bias router toward local models
 	localFirstAI?: boolean; // Prefer local models over cloud models (default: false)
-	/** When true, built-in and MCP tool calls run without per-step approval (incl. deletions & terminal). Default off — ask every time unless per-type autoApprove is on. */
+	/** When true, built-in and MCP tool calls run without per-step approval (incl. deletions & terminal). Default ON — most users want unattended runs; switch off for per-step control. */
 	chatAgentAutopilot?: boolean;
 	/** When true, `.vibe/README.md` is created on workspace init if missing (together with other `.vibe/` defaults). */
 	createVibeReadmeOnWorkspaceInit: boolean;
@@ -648,7 +648,7 @@ export const defaultGlobalSettings: GlobalSettings = {
 		routerCacheTtlMs: 2000, // 2 second cache TTL (caching enabled)
 	},
 	localFirstAI: false, // Local-First AI disabled by default (users can enable for privacy/performance)
-	chatAgentAutopilot: false,
+	chatAgentAutopilot: true, // ON by default (paired with iterations counter defaulting to 0/∞); explicit user choice is persisted and wins
 	createVibeReadmeOnWorkspaceInit: true,
 	showChatTimestamps: true,
 }
