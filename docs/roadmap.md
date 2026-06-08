@@ -16,6 +16,8 @@
 - [ ] **Обкатка токен-бюджетной компакции на длинной сессии** — ждём warning `Step A.5 compacted…`, падение `in:`, один холодный ход и восстановление кеша (`vibeide.chat.compactToolResultsAtTokens=60000`); при желании ускорить — временно 15000.
 - [ ] **Перепроверка зависаний Zen** (когда восстановятся лимиты) — раздутый запрос 40–90k на Zen-sonnet vs Zen-deepseek; гипотеза «Zen + anthropic-протокол + большой payload» в `docs/knowledge/runtime-quirks/provider-quota-429.md`.
 - [ ] **Проверка `cache_control` через OpenRouter для claude-моделей** — эксперимент уже в коде (`aiSdkAdapter`), подтвердить по `cached:` в TokenBudget-логе; если нули — докрутить форму system-блока.
+- [ ] **Псевдо-тесты на удаление** (предложено, не одобрено) — `test/browser/toolsService.test.ts` (инлайн toy-логика, POSIX-пути падают на Windows) и `test/common/applyEngineV2.test.ts` (160-строчная реимплементация внутри `setup()`). Решить: удалить или переписать как реальные тесты.
+- [ ] **12 pre-existing падающих юнит-тестов** — окруженческие/чужие, НЕ из наших правок: `wordWrap on without minimap` (font-metrics 89≠88), `Kerberos lookup` (нет нативного модуля `kerberos`), 6× `toolsService.test.ts` + 4× `applyEngineV2.test.ts` (см. пункт выше). Зелёный прогон `scripts\test.bat` = 20422 passing при этих 12 failing — зафиксировать как baseline, починить окружение или пометить skip.
 
 ---
 
