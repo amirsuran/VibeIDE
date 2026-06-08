@@ -5,6 +5,7 @@
 
 import { vibeLog } from '../common/vibeLog.js';
 import { Disposable, IDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
+import { RunOnceScheduler } from '../../../../base/common/async.js';
 import { registerSingleton, InstantiationType } from '../../../../platform/instantiation/common/extensions.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
@@ -755,6 +756,16 @@ class ChatThreadService extends Disposable implements IChatThreadService {
 	private static readonly MESSAGE_PREP_CACHE_TTL = 5000; // 5 seconds - messages can change during agent loops
 	private static readonly MESSAGE_PREP_CACHE_MAX_SIZE = 50; // Limit cache size
 
+	// PERFORMANCE: coalesce thread persistence. `_storeAllThreads` is called 10+ times per agent
+	// turn (every message / tool result); each call re-serialized the ENTIRE thread store (a 65MB
+	// JSON.stringify on heavy sessions — the slope-alert watchdog flagged the resulting churn).
+	// We now buffer the latest state and write once per debounce window (bounded — fires ~1.5s
+	// after the FIRST change in a burst, then re-arms), with a guaranteed flush on storage-save
+	// and dispose so nothing buffered is lost.
+	private static readonly STORE_THREADS_DEBOUNCE_MS = 1500;
+	private _pendingThreadsToStore: ChatThreads | undefined = undefined;
+	private readonly _storeThreadsScheduler = this._register(new RunOnceScheduler(() => this._flushStoreThreads(), ChatThreadService.STORE_THREADS_DEBOUNCE_MS));
+
 
 
 	constructor(
@@ -801,6 +812,11 @@ class ChatThreadService extends Disposable implements IChatThreadService {
 		this.state = { allThreads: {}, currentThreadId: null as unknown as string, openTabIds: [] } // default state
 		// When set for a thread, the next call to _shouldGeneratePlan will return false and clear the flag
 		this._suppressPlanOnceByThread = {}
+
+		// Flush the debounced thread write BEFORE the storage layer persists (shutdown / periodic
+		// save) and on dispose, so a buffered write inside the debounce window is never lost.
+		this._register(this._storageService.onWillSaveState(() => this._flushStoreThreads()))
+		this._register(toDisposable(() => this._flushStoreThreads()))
 
 		const readThreads = this._readAllThreads() || {}
 
@@ -938,6 +954,20 @@ class ChatThreadService extends Disposable implements IChatThreadService {
 	}
 
 	private _storeAllThreads(threads: ChatThreads) {
+		// Coalesce: buffer the latest state, write once per debounce window instead of
+		// re-serializing the whole store on every mutation. `schedule()` only on the FIRST
+		// change of a burst (bounds the max delay to STORE_THREADS_DEBOUNCE_MS); later changes
+		// just update the buffer and ride the already-armed timer.
+		this._pendingThreadsToStore = threads;
+		if (!this._storeThreadsScheduler.isScheduled()) {
+			this._storeThreadsScheduler.schedule();
+		}
+	}
+
+	private _flushStoreThreads() {
+		const threads = this._pendingThreadsToStore;
+		if (threads === undefined) { return; }
+		this._pendingThreadsToStore = undefined;
 		// Convert Uint8Array image data to base64 before serializing
 		const serializedThreads = JSON.stringify(threads, (key, value) => {
 			// Convert Uint8Array to base64 string for storage
