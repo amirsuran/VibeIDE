@@ -28,12 +28,12 @@ import { availableTools, InternalToolInfo } from '../../common/prompt/prompts.js
 import { TOOL_NAME_ALIASES, applyParamAliases } from '../../common/prompt/toolAliases.js';
 import { lenientJsonParseObject } from '../../common/lenientJson.js';
 import { getModelSdkNpm } from './modelsDevCatalog.js';
-import { getModelCapabilities } from '../../common/modelCapabilities.js';
+import { getModelCapabilities, getProviderCapabilities, getSendableReasoningInfo } from '../../common/modelCapabilities.js';
 import { buildContextOverflowError, buildEmptyResponseError, isContextOverflow, LLMChatMessage, LLMTokenUsage, RawToolCallObj, RawToolParamsObj } from '../../common/sendLLMMessageTypes.js';
 import { getModelQuirks } from '../modelQuirks/modelQuirksService.js';
 import { SettingsOfProvider } from '../../common/vibeideSettingsTypes.js';
 import { ensureSystemCADispatcher } from './systemCAFetch.js';
-import { extractReasoningWrapper, extractXMLToolsWrapper } from './extractGrammar.js';
+import { extractReasoningWrapper, extractXMLToolsWrapper, stripThinkTagsWrapper } from './extractGrammar.js';
 import type { SendChatParams_Internal } from './sendLLMMessage.internalTypes.js';
 import { assertHttpHeaderSafe, getGoogleApiKey } from './llmHelpers.js';
 
@@ -41,7 +41,7 @@ import { assertHttpHeaderSafe, getGoogleApiKey } from './llmHelpers.js';
 // anthropic, gemini, ollama, vLLM, lmStudio) stay on the legacy path until
 // later stages.
 export type AiSdkProviderName =
-	| 'openCode' | 'openCodeZen' | 'openRouter' | 'openAICompatible' | 'liteLLM' | 'lmRoute' | 'pollinations'
+	| 'openCode' | 'openCodeZen' | 'openRouter' | 'minimax' | 'openAICompatible' | 'liteLLM' | 'lmRoute' | 'pollinations'
 	| 'deepseek' | 'mistral' | 'xAI' | 'groq' | 'awsBedrock' | 'googleVertex' | 'microsoftAzure';
 
 const EMPTY_CONTENT_PLACEHOLDER = '(no content)';
@@ -251,6 +251,11 @@ const resolveEndpoint = async (
 		case 'deepseek': {
 			const c = settingsOfProvider.deepseek;
 			return { baseURL: 'https://api.deepseek.com/v1', apiKey: c?.apiKey ?? '' };
+		}
+		case 'minimax': {
+			// Vanilla OpenAI-compatible — no custom headers. See how it behaves out of the box.
+			const c = settingsOfProvider.minimax;
+			return { baseURL: 'https://api.minimax.io/v1', apiKey: c?.apiKey ?? '' };
 		}
 		case 'mistral': {
 			const c = settingsOfProvider.mistral;
@@ -756,6 +761,7 @@ export const sendViaAISdk = async (params: SendChatParams_Internal): Promise<voi
 		providerName,
 		chatMode,
 		overridesOfModel,
+		modelSelectionOptions,
 		mcpTools,
 		runtimeOptions,
 		separateSystemMessage,
@@ -763,6 +769,15 @@ export const sendViaAISdk = async (params: SendChatParams_Internal): Promise<voi
 
 	const caps = getModelCapabilities(providerName, modelName_, overridesOfModel);
 	const { modelName, additionalOpenAIPayload, reasoningCapabilities } = caps;
+
+	// Reasoning-control payload (e.g. `reasoning_effort`, `thinking:{type:disabled}`) — parity with
+	// the legacy `_sendOpenAICompatibleChat` path. Without this the reasoning slider / off-toggle
+	// were dead on the AI-SDK path: the user's choice never reached the request body. Merged into
+	// `transformRequestBody` (openai-compatible only) alongside `additionalOpenAIPayload`.
+	const { providerReasoningIOSettings } = getProviderCapabilities(providerName);
+	const reasoningInfo = getSendableReasoningInfo('Chat', providerName, modelName_, modelSelectionOptions, overridesOfModel);
+	const reasoningInputPayload = providerReasoningIOSettings?.input?.includeInPayload?.(reasoningInfo) ?? {};
+	const openAICompatExtraBody: Record<string, unknown> = { ...(additionalOpenAIPayload as Record<string, unknown> | undefined ?? {}), ...reasoningInputPayload };
 
 	// Honor `vibeide.llm.toolFallbackMode` (with backward-compat from legacy
 	// `vibeide.llm.assumeNativeTools`) for aggregator-synthesized fallbacks.
@@ -798,6 +813,15 @@ export const sendViaAISdk = async (params: SendChatParams_Internal): Promise<voi
 	let onFinalMessage = onFinalMessage_;
 	if (openSourceThinkTags) {
 		const wrapped = extractReasoningWrapper(onText, onFinalMessage, openSourceThinkTags);
+		onText = wrapped.newOnText;
+		onFinalMessage = wrapped.newOnFinalMessage;
+	}
+	// Native-reasoning models that ALSO duplicate the CoT as inline <think> in content
+	// (MiniMax-M3): strip the duplicate from the body WITHOUT touching the native reasoning
+	// channel (it stays authoritative for the fold + export). See stripThinkTagsWrapper.
+	const stripThinkTags = (reasoningCapabilities && (reasoningCapabilities as any).stripThinkTagsFromContent) as [string, string] | undefined;
+	if (stripThinkTags) {
+		const wrapped = stripThinkTagsWrapper(onText, onFinalMessage, stripThinkTags);
 		onText = wrapped.newOnText;
 		onFinalMessage = wrapped.newOnFinalMessage;
 	}
@@ -904,8 +928,8 @@ export const sendViaAISdk = async (params: SendChatParams_Internal): Promise<voi
 					queryParams,
 					fetch: customFetch as any,
 					includeUsage: true,
-					transformRequestBody: additionalOpenAIPayload
-						? (body) => ({ ...body, ...(additionalOpenAIPayload as Record<string, unknown>) })
+					transformRequestBody: Object.keys(openAICompatExtraBody).length
+						? (body) => ({ ...body, ...openAICompatExtraBody })
 						: undefined,
 				}).chatModel(modelName);
 

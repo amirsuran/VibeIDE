@@ -33,6 +33,9 @@ export const defaultProviderSettings = {
 	openCode: {
 		apiKey: '',
 	},
+	minimax: { // direct cloud, OpenAI-compatible — https://platform.minimax.io/docs/api-reference/text-chat-openai
+		apiKey: '',
+	},
 	openRouter: {
 		apiKey: '',
 		/** `'1'` = load model list from OpenRouter public API without an API key (inference still needs a key). */
@@ -138,6 +141,12 @@ export const defaultModelsOfProvider = {
 	pollinations: [],
 	openCodeZen: [],
 	openCode: [],
+	// Empty like every other catalog-capable cloud provider: models come from
+	// RemoteCatalogService (/v1/models) after the key is entered. Seeding here
+	// would collide with catalog 'autodetected' rows (same modelName, different
+	// `type`) — _modelsWithSwappedInNewModels only swaps within a type, so both
+	// would survive and produce duplicate React keys in the model dropdown.
+	minimax: [],
 
 
 } as const satisfies Record<ProviderName, string[]>
@@ -176,6 +185,13 @@ export type VibeideStaticModelInfo = { // not stateful
 
 		// if it's open source and specifically outputs think tags, put the think tags here and we'll parse them out (e.g. ollama)
 		readonly openSourceThinkTags?: [string, string];
+
+		// For models that emit a NATIVE reasoning channel (`reasoning-delta`) AND duplicate the
+		// same chain-of-thought as inline tags in the content (observed: MiniMax-M3). Unlike
+		// `openSourceThinkTags`, this DOES NOT route the tag content to reasoning (the native
+		// channel is authoritative) — it only STRIPS the duplicate tags from the answer text so
+		// they don't leak into the body. Pair = [open, close].
+		readonly stripThinkTagsFromContent?: [string, string];
 
 		// the only other field related to reasoning is "providerReasoningIOSettings", which varies by provider.
 	};
@@ -1946,6 +1962,78 @@ const openRouterSettings: VoidStaticProviderInfo = {
 
 
 
+// ---------------- MINIMAX ----------------
+// Direct cloud, OpenAI-compatible. Base URL https://api.minimax.io/v1.
+// Standard direct-provider profile (same shape as deepseek/openAI): accurate
+// context window + reasoning metadata, no problematic-model workarounds.
+// MiniMax-M2 is a thinking model (interleaved, always on) that streams its
+// chain-of-thought in `reasoning_content`. Context spec: 204,800 tokens.
+// Reference: https://platform.minimax.io/docs/api-reference/text-chat-openai
+const minimaxModelOptions = {
+	// M3: 1M-token context (MSA architecture), toggleable interleaved thinking, native
+	// multimodality. Ref: https://www.minimax.io/models/text/m3
+	'MiniMax-M3': {
+		contextWindow: 1_000_000,
+		reservedOutputTokenSpace: 8_192,
+		cost: { input: 0, output: 0 }, // informational only; not used for routing
+		downloadable: false,
+		supportsFIM: false,
+		supportsVision: true,
+		specialToolFormat: 'openai-style',
+		supportsSystemMessage: 'system-role',
+		reasoningCapabilities: { supportsReasoning: true, canTurnOffReasoning: true, canIOReasoning: true, stripThinkTagsFromContent: ['<think>', '</think>'], reasoningSlider: { type: 'effort_slider', values: ['low', 'high'], default: 'low' } },
+	},
+	'MiniMax-M2': {
+		contextWindow: 204_800,
+		reservedOutputTokenSpace: 8_192,
+		cost: { input: 0, output: 0 }, // informational only; not used for routing
+		downloadable: false,
+		supportsFIM: false,
+		specialToolFormat: 'openai-style',
+		supportsSystemMessage: 'system-role',
+		reasoningCapabilities: { supportsReasoning: true, canTurnOffReasoning: false, canIOReasoning: true, stripThinkTagsFromContent: ['<think>', '</think>'], reasoningSlider: { type: 'effort_slider', values: ['low', 'high'], default: 'low' } },
+	},
+	'MiniMax-M2-Stable': {
+		contextWindow: 204_800,
+		reservedOutputTokenSpace: 8_192,
+		cost: { input: 0, output: 0 },
+		downloadable: false,
+		supportsFIM: false,
+		specialToolFormat: 'openai-style',
+		supportsSystemMessage: 'system-role',
+		reasoningCapabilities: { supportsReasoning: true, canTurnOffReasoning: false, canIOReasoning: true, stripThinkTagsFromContent: ['<think>', '</think>'], reasoningSlider: { type: 'effort_slider', values: ['low', 'high'], default: 'low' } },
+	},
+} as const satisfies { [s: string]: VibeideStaticModelInfo }
+
+const minimaxSettings: VoidStaticProviderInfo = {
+	modelOptions: minimaxModelOptions,
+	// Recognise the generation so an unlisted id gets the right profile: `m3` → 1M-context
+	// M3 profile; everything else (M2, M2.x, …) → the M2 profile. The catalog (/v1/models)
+	// still wins for an exact id.
+	modelOptionsFallback: (modelName) => {
+		const recognized = /m-?3/i.test(modelName) ? 'MiniMax-M3' : 'MiniMax-M2';
+		return { modelName, recognizedModelName: recognized, ...minimaxModelOptions[recognized] };
+	},
+	providerReasoningIOSettings: {
+		// Input: when reasoning is OFF, MiniMax-M3 disables thinking via `thinking:{type:disabled}`;
+		// when ON, the effort slider maps to `reasoning_effort: 'low'|'high'`.
+		input: {
+			includeInPayload: (reasoningInfo) => {
+				if (!reasoningInfo) { return null; }
+				if (!reasoningInfo.isReasoningEnabled) { return { thinking: { type: 'disabled' } }; }
+				if (reasoningInfo.type === 'effort_slider_value') { return { reasoning_effort: reasoningInfo.reasoningEffort }; }
+				return null;
+			},
+		},
+		// Output: MiniMax-M3 emits a NATIVE reasoning channel — `reasoning_content` delta (mapped
+		// to AI-SDK `reasoning-delta`). That is the authoritative reasoning source → fold + export.
+		// It ALSO duplicates the same text as inline `<think>…</think>` in `content`; that duplicate
+		// is stripped (not re-routed) via the model's `stripThinkTagsFromContent` so it never leaks
+		// into the answer body and the native reasoning is never clobbered.
+		output: { nameOfFieldInDelta: 'reasoning_content' },
+	},
+}
+
 
 // ---------------- model settings of everything above ----------------
 
@@ -1973,6 +2061,7 @@ const modelSettingsOfProvider: { [providerName in ProviderName]: VoidStaticProvi
 	pollinations: pollinationsSettings,
 	openCodeZen: openCodeZenSettings,
 	openCode: openCodeSettings,
+	minimax: minimaxSettings,
 
 	googleVertex: googleVertexSettings,
 	microsoftAzure: microsoftAzureSettings,

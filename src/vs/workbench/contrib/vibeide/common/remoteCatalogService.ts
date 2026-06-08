@@ -90,6 +90,7 @@ export const remoteCatalogCapableProviderNames: readonly ProviderName[] = [
 	'openRouter',
 	'openCodeZen',
 	'openCode',
+	'minimax',
 	'liteLLM',
 	'lmRoute',
 	'openAICompatible',
@@ -324,6 +325,8 @@ export class RemoteCatalogService implements IRemoteCatalogService {
 					return await this.fetchOpenAICompatibleModelsCatalog('https://opencode.ai/zen/v1/models', apiKey);
 				case 'openCode':
 					return await this.fetchOpenAICompatibleModelsCatalog('https://opencode.ai/zen/go/v1/models', apiKey);
+				case 'minimax':
+					return await this.fetchOpenAICompatibleModelsCatalog('https://api.minimax.io/v1/models', apiKey);
 				case 'liteLLM': {
 					const ep = (this.settingsService.state.settingsOfProvider.liteLLM.endpoint || '').trim();
 					if (!ep) {

@@ -112,6 +112,16 @@ Azure: `baseURL = .../openai/deployments/{modelName}` + `queryParams = { 'api-ve
 
 ---
 
+## [пробел→фикс] AI-SDK путь не отправлял reasoning-control payload (проверено 2026-06-08)
+
+**Контекст:** legacy `_sendOpenAICompatibleChat` вычисляет `reasoningInfo` (`getSendableReasoningInfo`) и мёржит `providerReasoningIOSettings.input.includeInPayload(reasoningInfo)` в тело запроса (`reasoning_effort`, `thinking:{...}`). А `sendViaAISdk` этого НЕ делал — в нём вообще не было `modelSelectionOptions`/`getSendableReasoningInfo`. `transformRequestBody` слал только статичный `additionalOpenAIPayload`.
+
+**Суть:** для ВСЕХ провайдеров на AI-SDK пути (minimax, deepseek, openRouter, …) слайдер/тумблер reasoning были **мёртвыми** — выбор пользователя не доходил до запроса. Фикс: в `aiSdkAdapter` добавлен `modelSelectionOptions` в destructure, считается `reasoningInputPayload = providerReasoningIOSettings.input.includeInPayload(getSendableReasoningInfo('Chat', …))` и мёржится в `transformRequestBody` рядом с `additionalOpenAIPayload` (только для openai-compatible; google/anthropic создаются отдельными factory без этого transform). Пустой payload (reasoning по умолчанию) ничего не добавляет.
+
+**Применение:** если у какой-то AI-SDK модели «слайдер усилия не действует» — payload теперь уходит; проверять сторону вендора (как MiniMax-M3, см. [[model-quirks]]), а не плюминг. Anthropic-style `thinking:{budget_tokens}` через transformRequestBody НЕ идёт (anthropic — отдельный factory `createAnthropic`, у него свой `providerOptions.anthropic`).
+
+---
+
 ## Связанные файлы
 
 - [aiSdkAdapter.ts](../../../src/vs/workbench/contrib/vibeide/electron-main/llmMessage/aiSdkAdapter.ts) — адаптер.

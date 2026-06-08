@@ -59,6 +59,7 @@ export const BRAND_ALLOWLIST: ReadonlySet<string> = new Set([
 	'LM Router',
 	'LM Studio',
 	'Microsoft Azure OpenAI',
+	'MiniMax',
 	'Mistral',
 	'Ollama',
 	'OpenAI',

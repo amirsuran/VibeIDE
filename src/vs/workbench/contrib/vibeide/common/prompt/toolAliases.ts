@@ -79,6 +79,15 @@ export const TOOL_NAME_ALIASES: { readonly [alias: string]: string } = {
 	'fetch': 'browse_url',
 	'webfetch': 'browse_url',
 	'web_fetch': 'browse_url',
+	// end-of-turn / completion (Cline/Roo/Kilo emit `attempt_completion`; others vary)
+	'attempt_completion': 'vibe_complete',
+	'complete_task': 'vibe_complete',
+	'task_complete': 'vibe_complete',
+	'mark_task_complete': 'vibe_complete',
+	'finish': 'vibe_complete',
+	'finish_task': 'vibe_complete',
+	'done': 'vibe_complete',
+	'complete': 'vibe_complete',
 	// Word-order-swapped concept anchors (observed: deepseek-v4-pro emitted
 	// `<file_read file="..." />` / `<FileRead .../>` instead of canonical
 	// `read_file`). These map the *word order* `file_<verb>` → canonical; the
@@ -175,6 +184,10 @@ export const PARAM_ALIASES_BY_TOOL: { readonly [canonicalToolName: string]: { re
 	},
 	browse_url: {
 		url: 'uri', link: 'uri', href: 'uri',
+	},
+	vibe_complete: {
+		// Cline/Roo `attempt_completion` carries the closing text in `result`; others vary.
+		result: 'summary', text: 'summary', message: 'summary', content: 'summary',
 	},
 };
 

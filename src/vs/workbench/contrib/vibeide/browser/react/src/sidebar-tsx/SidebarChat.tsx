@@ -2326,6 +2326,7 @@ const titleOfBuiltinToolName = {
 	'search_in_file': { done: 'Searched in file', proposed: 'Search in file', running: loadingTitleWrapper('Searching in file') },
 	'web_search': { done: 'Searched the web', proposed: 'Search the web', running: loadingTitleWrapper('Searching the web') },
 	'browse_url': { done: 'Fetched web page', proposed: 'Fetch web page', running: loadingTitleWrapper('Fetching web page') },
+	'vibe_complete': { done: 'Завершил ход', proposed: 'Завершить ход', running: loadingTitleWrapper('Завершает ход') },
 } as const satisfies Record<BuiltinToolName, { done: any, proposed: any, running: any }>
 
 

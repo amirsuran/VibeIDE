@@ -111,6 +111,7 @@ export const endsWithQuestion = (text: string): boolean => {
 	return last === '?' || last === '？';
 };
 
+
 /**
  * Budget-FILL tail selection for context truncation (roadmap F).
  *

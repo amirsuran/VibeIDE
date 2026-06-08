@@ -6237,6 +6237,27 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 					}
 				}
 
+				// Deterministic end-of-turn: the model explicitly called `vibe_complete`. Stop the
+				// run cleanly — no tool dispatch, no auto-continue nudge. A native tool call is an
+				// UNAMBIGUOUS completion intent, so this replaces brittle "Готово"-text matching:
+				// a thinking model can no longer get re-nudged into a loop after declaring done.
+				// Placed after the JSON-in-text parse so both native and JSON-shaped calls are caught.
+				if (chatMode === 'agent' && toolCall && (toolCall.name.toLowerCase() === 'vibe_complete' || TOOL_NAME_ALIASES[toolCall.name.toLowerCase()] === 'vibe_complete')) {
+					const rp: unknown = toolCall.rawParams
+					const summary = (rp && typeof rp === 'object' && typeof (rp as { summary?: unknown }).summary === 'string')
+						? String((rp as { summary?: unknown }).summary).trim()
+						: ''
+					const body = info.fullText.trim() || summary
+					this._addMessageToThread(threadId, {
+						role: 'assistant',
+						displayContent: body,
+						reasoning: info.fullReasoning || '',
+						anthropicReasoning: info.anthropicReasoning ?? null,
+					})
+					this._setStreamState(threadId, { isRunning: undefined })
+					return
+				}
+
 				// Track if we synthesized a tool and added a message (to prevent duplicate messages)
 				let toolSynthesizedAndMessageAdded = false
 
@@ -6494,7 +6515,7 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 							? '⚙️ Авто-продолжение (автопилот): ты завершил ход вопросом, но автопилот включён — пользователь в этом режиме не отвечает. Прими решение самостоятельно (выбери разумный вариант по умолчанию, зафиксируй его одной строкой) и продолжай работу инструментами. Не жди подтверждения.'
 							: info.fullText.trim().length === 0
 								? '⚙️ Авто-продолжение (автопилот): твой предыдущий ход пришёл ПУСТЫМ (ни текста, ни вызова инструмента) — вероятно, сбой доставки ответа. Продолжай выполнение задачи с того места, где остановился: вызови следующий нужный инструмент или дай финальный ответ.'
-								: '⚙️ Авто-продолжение (автопилот): ты завершил ход текстом без вызова инструмента. Если задача НЕ закончена — продолжай, вызвав нужный инструмент. Если задача выполнена — заверши явно. Если не хватает данных — прими разумное решение сам и продолжай.'
+								: '⚙️ Авто-продолжение (автопилот): ты завершил ход текстом без вызова инструмента. Если задача НЕ закончена — продолжай, вызвав нужный инструмент. Если задача ПОЛНОСТЬЮ выполнена — вызови инструмент `vibe_complete` (но сначала перепроверь, что всё действительно сделано: правки применены, сборка/тесты проходят, шагов не осталось). Не пиши «Готово» просто текстом — это завершит ход только через `vibe_complete`. Если не хватает данных — прими разумное решение сам и продолжай.'
 						this._addMessageToThread(threadId, { role: 'user', content: corrective, displayContent: corrective, selections: null, isSyntheticNudge: true, state: defaultMessageState })
 						shouldSendAnotherMessage = true
 						this._setStreamState(threadId, { isRunning: 'idle', interrupt: 'not_needed' })

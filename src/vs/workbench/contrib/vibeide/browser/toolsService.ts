@@ -709,6 +709,14 @@ export class ToolsService implements IToolsService {
 				return { url, refresh };
 			},
 
+			vibe_complete: (params: RawToolParamsObj) => {
+				// `summary` is best-effort — the call itself is the completion signal, so a
+				// missing/non-string summary must not reject the call (that would re-stall the loop).
+				const summaryUnknown = (params as { summary?: unknown }).summary;
+				const summary = typeof summaryUnknown === 'string' ? summaryUnknown : '';
+				return { summary };
+			},
+
 		}
 
 		// VibeIDE D.12: writing to a path that is an existing *directory* previously
@@ -2248,6 +2256,11 @@ export class ToolsService implements IToolsService {
 					throw new Error(`Failed to browse URL ${url}: ${errorMessage}. Please check the URL and your internet connection.`);
 				}
 			},
+			vibe_complete: async ({ summary }) => {
+				// No-op control signal: the agent loop short-circuits on this call and ends the
+				// run BEFORE dispatch reaches here. Implemented for type-completeness / safety.
+				return { result: { summary } };
+			},
 		}
 
 
@@ -2525,6 +2538,10 @@ export class ToolsService implements IToolsService {
 				const titleStr = result.title ? `Title: ${result.title}\n\n` : '';
 				const metadataStr = result.metadata?.publishedDate ? `Published: ${result.metadata.publishedDate}\n\n` : '';
 				return `${titleStr}${metadataStr}Content from ${result.url}:\n\n${result.content.substring(0, 10000)}${result.content.length > 10000 ? '\n\n... (content truncated)' : ''}`;
+			},
+			vibe_complete: (_params, result) => {
+				// Normally unreached (loop short-circuits before dispatch); harmless otherwise.
+				return result.summary ? `Ход завершён. Итог: ${result.summary}` : 'Ход завершён.';
 			},
 		}
 

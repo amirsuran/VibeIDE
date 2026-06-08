@@ -38,7 +38,7 @@ export const nonlocalProviderNames = providerNames.filter((name) => !(localProvi
  * provider = add the name HERE (and to defaultProviderSettings); the four
  * callers automatically pick it up.
  */
-export const autoModelFallbackProviderOrder = ['anthropic', 'openAI', 'gemini', 'xAI', 'mistral', 'deepseek', 'groq', 'ollama', 'vLLM', 'lmStudio', 'openAICompatible', 'openRouter', 'liteLLM', 'pollinations', 'openCodeZen', 'openCode'] satisfies ProviderName[];
+export const autoModelFallbackProviderOrder = ['anthropic', 'openAI', 'gemini', 'xAI', 'mistral', 'deepseek', 'groq', 'ollama', 'vLLM', 'lmStudio', 'openAICompatible', 'openRouter', 'liteLLM', 'pollinations', 'openCodeZen', 'openCode', 'minimax'] satisfies ProviderName[];
 
 type CustomSettingName = UnionOfKeys<typeof defaultProviderSettings[ProviderName]>
 type CustomProviderSettings<providerName extends ProviderName> = {
@@ -136,6 +136,9 @@ export const displayInfoOfProviderName = (providerName: ProviderName): DisplayIn
 	else if (providerName === 'openCode') {
 		return { title: 'OpenCode Go', }
 	}
+	else if (providerName === 'minimax') {
+		return { title: 'MiniMax', }
+	}
 	else if (providerName === 'lmRoute') {
 		return { title: 'LM Router', }
 	}
@@ -165,6 +168,7 @@ export const subTextMdOfProviderName = (providerName: ProviderName): string => {
 	if (providerName === 'pollinations') return '[Ключ API](https://enter.pollinations.ai/). [Документация API](https://enter.pollinations.ai/api/docs).'
 	if (providerName === 'openCodeZen') return 'Ключ на [opencode.ai/zen](https://opencode.ai/zen). Бесплатные модели: MiniMax M2.5 Free, Ling 2.6 Flash и др. ([документация Zen](https://opencode.ai/docs/zen)).'
 	if (providerName === 'openCode') return 'Подписка OpenCode Go — тот же аккаунт Zen. [Модели Go](https://dev.opencode.ai/docs/go) на opencode.ai/zen/go (Qwen, DeepSeek V4, …).'
+	if (providerName === 'minimax') return '[Ключ API](https://platform.minimax.io/user-center/basic-information/interface-key). OpenAI-совместимый API. Модели: MiniMax-M3 (контекст 1M, мультимодальная, thinking переключается), MiniMax-M2.'
 
 	throw new Error(`subTextMdOfProviderName: Unknown provider name: "${providerName}"`)
 }
@@ -196,6 +200,7 @@ export const displayInfoOfSettingName = (providerName: ProviderName, settingName
 															providerName === 'pollinations' ? 'sk-... or pk-...' :
 															providerName === 'openCodeZen' ? 'opencode-key...' :
 															providerName === 'openCode' ? 'opencode-key...' :
+															providerName === 'minimax' ? 'eyJ...' :
 															providerName === 'lmRoute' ? 'lmrouter-key...' :
 																'',
 
@@ -419,6 +424,12 @@ export const defaultSettingsOfProvider: SettingsOfProvider = {
 		...defaultCustomSettings,
 		...defaultProviderSettings.openCode,
 		...modelInfoOfDefaultModelNames(defaultModelsOfProvider.openCode),
+		_didFillInProviderSettings: undefined,
+	},
+	minimax: {
+		...defaultCustomSettings,
+		...defaultProviderSettings.minimax,
+		...modelInfoOfDefaultModelNames(defaultModelsOfProvider.minimax),
 		_didFillInProviderSettings: undefined,
 	},
 	lmRoute: {

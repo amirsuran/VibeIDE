@@ -107,3 +107,18 @@ interface ModelQuirksRule {
 **Открытое расхождение (data-point для #009/#014):** наш `minimax` имеет `forceEmptyReasoning:true` (добавлен по #009), а opencode минимаксу пустой слот НЕ ставит — и у них minimax работает. Значит либо (a) наш AI-SDK-путь отличается от opencode и слот реально нужен, либо (b) #009-фикс был шире необходимого. **НЕ править без данных** (#009 у пользователя закрыт; смена = регресс-риск). Проверять при разборе #009/#014 через `vibeide.debug.dumpFullPrompt`.
 
 **Применение:** прежде чем добавлять `forceEmptyReasoning` новой модели — убедиться, что её id-семейство реально deepseek (или есть подтверждённый репорт HTTP-400/empty-stream без reasoning-слота). Mirror — ставить по факту interleaved-reasoning (thinking-модель).
+
+---
+
+## [квирки] MiniMax-M3 — двойной reasoning-канал + игнор effort/off (проверено 2026-06-08)
+
+**Контекст:** интеграция прямого провайдера `minimax` (OpenAI-совместимый, `https://api.minimax.io/v1`). Тестовая модель — `MiniMax-M3` (контекст 1M, MSA-архитектура, мультимодальная). Диагностика — через временный debug-лог сырого AI-SDK стрима (`aiSdkAdapter`, fullStream parts + finishReason).
+
+**Суть (эмпирически, по debug-логу 152 ходов + 3 прогона high/low/off):**
+1. **Дублирует chain-of-thought в ДВУХ каналах одновременно:** нативный `reasoning-delta` (= `reasoning_content` delta) И тот же текст inline в `content` как `<think>…</think>`. То есть мысль приходит дважды.
+2. Старая `extractReasoningWrapper` (для `openSourceThinkTags`) на этом интерливе **ломалась**: перезаписывала нативный reasoning своим разбором, а на финале (`getOnFinalMessageParams`), если `</think>` не попал в её аккумулятор, сваливала ВЕСЬ текст в reasoning → **тело ответа пустело, а reasoning терялся в пайплайне** (в экспорте не было ни `<think>`, ни `🧠 Размышления`).
+3. **Игнорирует управление reasoning:** ни `reasoning_effort: low|high`, ни `thinking:{type:disabled}` не действуют (off всё равно даёт reasoning-блоки; low даёт рассуждение не короче high — шум). Совпадает с их баг-трекером (issues #68/#121 «how to disable thinking», oh-my-pi #626). Это **вендорная сторона** — payload мы шлём корректно (см. [[ai-sdk-migration-wip]]).
+
+**Решение (v0.19.x):** новое поле `reasoningCapabilities.stripThinkTagsFromContent: [open, close]` + `stripThinkTagsWrapper` (extractGrammar.ts) — STRIP-ONLY: вырезает дубль `<think>…</think>` из тела (и прячет незакрытый хвост при стриминге), **`fullReasoning` не трогает** → нативный `reasoning-delta` остаётся источником для фолда/экспорта. У MiniMax профиль использует `stripThinkTagsFromContent` (НЕ `openSourceThinkTags`) + `output.nameOfFieldInDelta: 'reasoning_content'`. `openSourceThinkTags` оставлен для моделей БЕЗ нативного канала (ollama/deepseek-R1 через aggregator).
+
+**Применение:** для любой модели, которая шлёт нативный reasoning И дублирует его inline-тегами — использовать `stripThinkTagsFromContent`, а НЕ `openSourceThinkTags` (последний перезаписывает/теряет нативный reasoning). Если у MiniMax однажды заработает off/effort — это починка на их сервере, наших правок не требует (payload уже уходит). Слайдер/тумблер у minimax оставлены намеренно (на случай серверного фикса).

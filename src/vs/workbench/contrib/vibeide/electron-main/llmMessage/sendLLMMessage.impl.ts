@@ -326,6 +326,10 @@ const newOpenAICompatibleSDK = async ({ settingsOfProvider, providerName, includ
 		const thisConfig = settingsOfProvider[providerName]
 		return new OpenAI({ baseURL: 'https://api.deepseek.com/v1', apiKey: thisConfig.apiKey, ...commonPayloadOpts })
 	}
+	else if (providerName === 'minimax') {
+		const thisConfig = settingsOfProvider[providerName]
+		return new OpenAI({ baseURL: 'https://api.minimax.io/v1', apiKey: thisConfig.apiKey, ...commonPayloadOpts })
+	}
 	else if (providerName === 'openAICompatible') {
 		const thisConfig = settingsOfProvider[providerName]
 		const headers = parseHeadersJSON(thisConfig.headersJSON)
@@ -1779,6 +1783,11 @@ export const sendLLMMessageToProviderImplementation = {
 		list: null,
 	},
 	openCode: {
+		sendChat: (params) => sendViaAISdk(params),
+		sendFIM: null,
+		list: null,
+	},
+	minimax: {
 		sendChat: (params) => sendViaAISdk(params),
 		sendFIM: null,
 		list: null,

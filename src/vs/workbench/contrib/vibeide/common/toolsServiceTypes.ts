@@ -79,6 +79,8 @@ export type BuiltinToolCallParams = {
 	// ---
 	'web_search': { query: string, k?: number, refresh?: boolean },
 	'browse_url': { url: string, refresh?: boolean },
+	// ---
+	'vibe_complete': { summary: string },
 }
 
 // RESULT OF TOOL CALL
@@ -116,6 +118,8 @@ export type BuiltinToolResultType = {
 	// ---
 	'web_search': { results: Array<{ title: string, snippet: string, url: string }> },
 	'browse_url': { content: string, title?: string, url: string, metadata?: { publishedDate?: string } },
+	// ---
+	'vibe_complete': { summary: string },
 }
 
 

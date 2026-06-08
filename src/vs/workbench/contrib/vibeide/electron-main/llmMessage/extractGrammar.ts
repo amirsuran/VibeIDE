@@ -141,6 +141,49 @@ export const extractReasoningWrapper = (
 }
 
 
+/**
+ * Remove every complete `<open>…<close>` block from `raw`. A trailing UNCLOSED `<open>` (its
+ * `<close>` hasn't streamed yet) hides everything from that open onward, so a half-streamed
+ * think block never flashes in the UI. Pure / deterministic.
+ */
+const stripThinkBlocks = (raw: string, open: string, close: string): string => {
+	let out = '';
+	let i = 0;
+	while (i < raw.length) {
+		const openIdx = raw.indexOf(open, i);
+		if (openIdx === -1) { out += raw.slice(i); break; }
+		out += raw.slice(i, openIdx);
+		const closeIdx = raw.indexOf(close, openIdx + open.length);
+		if (closeIdx === -1) { break; } // unclosed (still streaming) → hide the tail
+		i = closeIdx + close.length;
+	}
+	return out;
+}
+
+/**
+ * STRIP-ONLY think-tag handler for models that emit a NATIVE reasoning channel AND duplicate
+ * the same chain-of-thought as inline `<think>…</think>` in the content (observed: MiniMax-M3).
+ *
+ * Unlike {@link extractReasoningWrapper}, this NEVER touches `fullReasoning` — the native
+ * `reasoning-delta` is authoritative and must survive to the saved message (fold + export).
+ * It only removes the duplicate tags from `fullText` so they don't leak into the answer body.
+ * (extractReasoningWrapper would re-derive — and on interleave with native deltas, clobber —
+ * the reasoning, which dropped both the reasoning and the post-tag answer; see model-quirks.)
+ */
+export const stripThinkTagsWrapper = (
+	onText: OnText, onFinalMessage: OnFinalMessage, thinkTags: [string, string]
+): { newOnText: OnText, newOnFinalMessage: OnFinalMessage } => {
+	const [open, close] = thinkTags
+	const newOnText: OnText = ({ fullText, ...p }) => {
+		onText({ ...p, fullText: stripThinkBlocks(fullText, open, close) })
+	}
+	const newOnFinalMessage: OnFinalMessage = ({ fullText, ...p }) => {
+		onFinalMessage({ ...p, fullText: stripThinkBlocks(fullText, open, close) })
+	}
+	return { newOnText, newOnFinalMessage }
+}
+
+
 // =============== tools (XML) ===============
 
 // All pure XML-normalization helpers (STRIP_WRAPPERS_RE, DSML_MARKER_STRIP_RE,

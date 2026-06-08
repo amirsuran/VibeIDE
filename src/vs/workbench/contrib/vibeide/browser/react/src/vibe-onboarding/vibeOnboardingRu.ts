@@ -76,6 +76,8 @@ export const onboardingS = {
 				return 'OpenCode Zen: отобранные модели через opencode.ai/zen; бесплатные модели указаны в документации (MiniMax M2.5 Free, Ling 2.6 Flash и др.).';
 			case 'openCode':
 				return 'OpenCode Go: подписка Go на том же аккаунте Zen; модели и endpoint /zen/go — см. dev.opencode.ai/docs/go.';
+			case 'minimax':
+				return 'MiniMax: прямой OpenAI-совместимый API. Флагман MiniMax-M3 (контекст 1M, мультимодальная, thinking переключается). Ключ на platform.minimax.io.';
 			case 'gemini':
 				return 'Gemini 2.5 Pro — до 25 бесплатных чатов в день, Flash — около 500. При нехватке кредитов можно перейти на платный тариф.';
 			case 'openRouter':
