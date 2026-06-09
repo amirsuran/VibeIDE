@@ -205,6 +205,18 @@ suite('ModelQuirks — validateCatalog', () => {
 		assert.strictEqual(cat.rules[0].forceToolCallFormat, 'xml');
 		assert.strictEqual(cat.rules[1].forceToolCallFormat, undefined);
 	});
+
+	test('forcedToolChoiceUnsupported bool validation', () => {
+		const cat = validateCatalog({
+			version: 1,
+			rules: [
+				{ match: 'a', forcedToolChoiceUnsupported: true },
+				{ match: 'b', forcedToolChoiceUnsupported: 'yes' }, // non-bool → drop
+			],
+		});
+		assert.strictEqual(cat.rules[0].forcedToolChoiceUnsupported, true);
+		assert.strictEqual(cat.rules[1].forcedToolChoiceUnsupported, undefined);
+	});
 });
 
 suite('ModelQuirks — applyUserOverride', () => {

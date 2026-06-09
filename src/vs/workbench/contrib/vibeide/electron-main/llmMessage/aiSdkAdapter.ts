@@ -1146,7 +1146,7 @@ export const sendViaAISdk = async (params: SendChatParams_Internal): Promise<voi
 			messages: modelMessages,
 			tools,
 			activeTools,
-			toolChoice: runtimeOptions?.forceToolUse && tools ? 'required' : (tools ? 'auto' : undefined),
+			toolChoice: runtimeOptions?.forceToolUse && tools && !quirks.forcedToolChoiceUnsupported ? 'required' : (tools ? 'auto' : undefined),
 			abortSignal: abortController.signal,
 			...modelParams,
 			// AI SDK default maxRetries=2 (3 attempts total) is too aggressive for

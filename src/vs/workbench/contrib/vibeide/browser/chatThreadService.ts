@@ -2507,6 +2507,44 @@ class ChatThreadService extends Disposable implements IChatThreadService {
 		}
 	}
 
+	/**
+	 * Finalize the thread's plan IF it is executing and every step is done: mark it completed,
+	 * clear the execution lease, unregister the binding, write the FINAL status to the .plan.md,
+	 * and emit the review. Idempotent and safe to call from EVERY run-end path (natural loop exit,
+	 * `vibe_complete`, implicit-completion). Previously only the natural exit reached this, so a run
+	 * that ended via `vibe_complete`/prose left the plan (and its lease + .plan.md) stuck
+	 * "executing/running" — which kept re-triggering the startup "Continue Plan" notice. No-op when
+	 * there is no executing+complete plan.
+	 */
+	private _finalizePlanIfComplete(threadId: string): void {
+		this._planCache.delete(threadId)
+		const refreshedPlanInfo = this._getCurrentPlan(threadId, true)
+		if (!refreshedPlanInfo) { return }
+		const allStepsComplete = refreshedPlanInfo.plan.steps.every(s =>
+			s.disabled || s.status === 'succeeded' || s.status === 'failed' || s.status === 'skipped'
+		)
+		if (!(allStepsComplete && refreshedPlanInfo.plan.approvalState === 'executing')) { return }
+		const updatedPlan: PlanMessage = { ...refreshedPlanInfo.plan, approvalState: 'completed' }
+		this._editMessageInThread(threadId, refreshedPlanInfo.planIdx, updatedPlan)
+		this._clearPersistedExecutionLease(updatedPlan.persistedPlanId)
+		const wfDone = this._primaryWorkspaceFolderUri()
+		if (wfDone && updatedPlan.persistedPlanId) {
+			this._planBindingRegistry.unregister(wfDone, updatedPlan.persistedPlanId, threadId)
+			// Persist FINAL status to the .plan.md (running → completed/failed): clears the
+			// perpetual startup "Continue Plan" resume notice for a finished plan.
+			const anyFailed = updatedPlan.steps.some(s => !s.disabled && s.status === 'failed')
+			void this._persistedPlanService.updatePersistedPlanProgress({
+				workspaceFolder: wfDone,
+				planId: updatedPlan.persistedPlanId,
+				plan: updatedPlan,
+				status: anyFailed ? 'failed' : 'completed',
+			})
+		}
+		this._taskDecompositionService.clearPersistedPlanTask(threadId)
+		this._planCache.delete(threadId)
+		this._generateReviewMessage(threadId, updatedPlan)
+	}
+
 	private _markStepCompletedInternal(threadId: string, currentStep: { plan: PlanMessage, planIdx: number, step: PlanStep, stepIdx: number }, succeeded: boolean, error?: string): { plan: PlanMessage, planIdx: number, step: PlanStep, stepIdx: number } | undefined {
 		const { planIdx, stepIdx } = currentStep
 
@@ -6339,6 +6377,9 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 						reasoning: info.fullReasoning || '',
 						anthropicReasoning: info.anthropicReasoning ?? null,
 					})
+					// Run-end via explicit completion: finalize the plan (status/lease/.plan.md) so an
+					// executing plan doesn't stay stuck after the model declares done.
+					this._finalizePlanIfComplete(threadId)
 					this._setStreamState(threadId, { isRunning: undefined })
 					return
 				}
@@ -6620,6 +6661,8 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 						&& this._configurationService.getValue<boolean>('vibeide.agent.implicitCompleteOnExhaustedNudge') !== false
 						&& looksLikeCompletionText(info.fullText)) {
 						vibeLog.warn('chatThread', `[autopilot] implicit vibe_complete: model declared completion in prose after ${autoContinueOnTextCount} exhausted nudge(s) — ending run cleanly instead of «Продолжить».`)
+						// Same as the explicit vibe_complete path: finalize an executing plan on this exit.
+						this._finalizePlanIfComplete(threadId)
 						this._setStreamState(threadId, { isRunning: undefined })
 						return
 					}
@@ -7098,44 +7141,11 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 
 		// add checkpoint before the next user message
 		if (!isRunningWhenEnd) {
-			// PERFORMANCE: Only check plan completion if we were tracking a plan
-			if (activePlanTracking) {
-				// CRITICAL: Refresh plan to get latest step states before checking completion
-				this._planCache.delete(threadId)
-				const refreshedPlanInfo = this._getCurrentPlan(threadId, true)
-				if (refreshedPlanInfo) {
-					const allStepsComplete = refreshedPlanInfo.plan.steps.every(s =>
-						s.disabled || s.status === 'succeeded' || s.status === 'failed' || s.status === 'skipped'
-					)
-					if (allStepsComplete && refreshedPlanInfo.plan.approvalState === 'executing') {
-						// Mark plan as completed
-						const updatedPlan: PlanMessage = {
-							...refreshedPlanInfo.plan,
-							approvalState: 'completed'
-						}
-						this._editMessageInThread(threadId, refreshedPlanInfo.planIdx, updatedPlan)
-						this._clearPersistedExecutionLease(updatedPlan.persistedPlanId)
-						const wfDone = this._primaryWorkspaceFolderUri()
-						if (wfDone && updatedPlan.persistedPlanId) {
-							this._planBindingRegistry.unregister(wfDone, updatedPlan.persistedPlanId, threadId)
-							// Persist FINAL status to the .plan.md (running → completed/failed). This is what
-							// clears the perpetual startup "Continue Plan" resume notice for a finished plan.
-							const anyFailed = updatedPlan.steps.some(s => !s.disabled && s.status === 'failed')
-							void this._persistedPlanService.updatePersistedPlanProgress({
-								workspaceFolder: wfDone,
-								planId: updatedPlan.persistedPlanId,
-								plan: updatedPlan,
-								status: anyFailed ? 'failed' : 'completed',
-							})
-						}
-						this._taskDecompositionService.clearPersistedPlanTask(threadId)
-						// Invalidate cache after update
-						this._planCache.delete(threadId)
-						// Generate ReviewMessage with summary (use refreshed plan with latest data)
-						this._generateReviewMessage(threadId, updatedPlan)
-					}
-				}
-			}
+			// Finalize an executing+complete plan on the natural loop exit. Extracted into a helper
+			// so the `vibe_complete` and implicit-completion early-exits finalize IDENTICALLY (they
+			// used to skip this block, leaving the plan + lease + .plan.md stuck). Self-guards: no-op
+			// when there is no executing+complete plan, so the old `activePlanTracking` gate is moot.
+			this._finalizePlanIfComplete(threadId)
 			await this._addUserCheckpoint({ threadId })
 		}
 

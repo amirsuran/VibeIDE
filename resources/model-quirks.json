@@ -1,6 +1,6 @@
 {
 	"version": 1,
-	"date": "2026-05-26",
+	"date": "2026-06-10",
 	"description": "VibeIDE model behaviour quirks. Source of truth — see README.md section 'Model behaviour quirks'. PRs welcome. Schema: ./src/vs/workbench/contrib/vibeide/common/modelQuirks/modelQuirksTypes.ts.",
 	"docs": "https://github.com/VibeIDETeam/VibeIDE#model-behaviour-quirks",
 	"rules": [
@@ -17,8 +17,8 @@
 		{ "match": "minimax-m2.5", "temperature": 1.0, "topP": 0.95, "topK": 40, "forceEmptyReasoning": true, "mirrorReasoningContent": true },
 		{ "match": "minimax-m2", "temperature": 1.0, "topP": 0.95, "topK": 20, "forceEmptyReasoning": true, "mirrorReasoningContent": true,
 		  "note": "Base minimax-m2 — opencode upstream uses topK=20; m2.x variants prefer topK=40. Interleaved-reasoning family: needs empty-reasoning slot + mirrored reasoning_content roundtrip on every assistant turn, else openCode closes the stream with an empty body → 'Empty response (reason: unknown)' (model-stalls #001/#009)." },
-		{ "match": "minimax", "temperature": 1.0, "topP": 0.95, "topK": 40, "forceEmptyReasoning": true, "mirrorReasoningContent": true,
-		  "note": "Future minimax versions — higher topK + reasoning-roundtrip (interleaved-reasoning family)" },
+		{ "match": "minimax", "temperature": 1.0, "topP": 0.95, "topK": 40, "forceEmptyReasoning": true, "mirrorReasoningContent": true, "forcedToolChoiceUnsupported": true,
+		  "note": "Future minimax versions — higher topK + reasoning-roundtrip (interleaved-reasoning family). forcedToolChoiceUnsupported: minimax OpenAI-compatible API ignores tool_choice:'required' (returns prose), so the agent loop skips the forced nudge and leans on the implicit-completion net. Covers all minimax-* via field-merge." },
 
 		{ "match": "kimi", "provider": "openCode", "temperature": 1.0, "topP": 0.95, "forceToolCallFormat": "auto",
 		  "note": "kimi via openCode — native FC (auto = native-first + auto-downgrade safety net). XML fallback was forced because native FC was unreliable, but XML itself proved broken for openCode aggregator models (tags leak / model stalls / hallucinates, 0.13.17-19). arg-repair (0.13.18) + invalid-routing now handle native arg confusion; auto-downgrade reverts to XML only if native genuinely keeps failing. Revert to xml if native stalls." },

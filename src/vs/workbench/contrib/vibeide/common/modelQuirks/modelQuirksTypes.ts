@@ -72,6 +72,15 @@ export interface ModelQuirksRule {
 	 */
 	readonly forceToolCallFormat?: ToolCallFormat
 
+	/**
+	 * When true, this model's API ignores or rejects `tool_choice: 'required'` (observed: MiniMax
+	 * via its OpenAI-compatible endpoint silently returns prose instead of forcing a tool call).
+	 * The agent loop then SKIPS the forced tool choice on corrective autopilot nudges and relies on
+	 * the provider-independent implicit-completion safety net instead. Default (undefined) =
+	 * supported (send `required` when the loop asks to force a tool).
+	 */
+	readonly forcedToolChoiceUnsupported?: boolean
+
 	// ---------- Metadata ----------
 	/** Free-text note for catalog contributors. Not consumed at runtime. */
 	readonly note?: string
@@ -203,6 +212,7 @@ export function validateCatalog(raw: unknown): ModelQuirksCatalog {
 			...readBool(rr, 'forceEmptyReasoning'),
 			...readBool(rr, 'mirrorReasoningContent'),
 			...readEnum(rr, 'forceToolCallFormat', ['native', 'xml', 'auto']),
+			...readBool(rr, 'forcedToolChoiceUnsupported'),
 			...readString(rr, 'note'),
 		}
 		rules.push(rule)
@@ -275,6 +285,7 @@ export function applyUserOverride(catalogQuirks: ResolvedModelQuirks, userOverri
 		...readBool(oo, 'forceEmptyReasoning'),
 		...readBool(oo, 'mirrorReasoningContent'),
 		...readEnum(oo, 'forceToolCallFormat', ['native', 'xml', 'auto']),
+		...readBool(oo, 'forcedToolChoiceUnsupported'),
 	}
 	return sanitized
 }
