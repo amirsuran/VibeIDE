@@ -14,7 +14,7 @@ import { joinPath } from '../../../../base/common/resources.js';
 import { VSBuffer } from '../../../../base/common/buffer.js';
 import { timeout } from '../../../../base/common/async.js';
 import { generateUuid } from '../../../../base/common/uuid.js';
-import type { PlanMessage } from './chatThreadServiceTypes.js';
+import type { PlanMessage, PlanStep } from './chatThreadServiceTypes.js';
 import { ISecretDetectionService } from './secretDetectionService.js';
 import { IVibePlanEventJournalService } from './vibePlanEventJournalService.js';
 
@@ -35,6 +35,90 @@ export interface IVibePersistedPlanExecutionLease {
 export type AcquireExecutionLeaseResult =
 	| { readonly ok: true }
 	| { readonly ok: false; readonly holderThreadId: string };
+
+/** Lifecycle status written into the persisted plan file (frontmatter + JSON canonical). */
+export type PersistedPlanStatus = 'running' | 'completed' | 'failed' | 'paused';
+
+interface PlanFileMeta {
+	readonly planId: string;
+	readonly threadId: string;
+	readonly messageIdx: number;
+	readonly createdAt: string;
+	readonly workspaceRootUri?: string;
+}
+
+/**
+ * Pure serializer for an agent plan file (frontmatter + human-readable steps + JSON canonical).
+ * Step statuses are reflected in BOTH the markdown checkboxes (`[x]` succeeded, `[ ]` pending,
+ * `_(failed)_`, `~~skipped~~`) and `steps[].status` in the JSON block, and the top-level `status`
+ * is the caller-supplied lifecycle state. So a finished plan writes `[x]` + `status: completed`
+ * instead of a frozen `[ ]` + `running` snapshot. Used at creation (status='running') and on every
+ * progress/finalization update.
+ */
+export function serializePlanMarkdown(plan: PlanMessage, meta: PlanFileMeta, status: PersistedPlanStatus): string {
+	const machine = {
+		planKind: 'vibeide.agent-plan',
+		vibeVersion: '1',
+		planId: meta.planId,
+		status,
+		createdAt: meta.createdAt,
+		workspaceRootUri: meta.workspaceRootUri,
+		boundThreadId: meta.threadId,
+		planMessageIdx: meta.messageIdx,
+		steps: plan.steps.map(s => ({
+			stepNumber: s.stepNumber,
+			description: s.description,
+			tools: s.tools,
+			files: s.files,
+			status: s.disabled ? 'skipped' : (s.status ?? 'queued'),
+			disabled: !!s.disabled,
+			checkpointIdx: s.checkpointIdx ?? undefined,
+			worktreeBranch: s.worktreeBranch,
+			explorationId: s.explorationId,
+		})),
+	};
+	// Drop the undefined placeholder so we don't emit `"workspaceRootUri": null`.
+	if (machine.workspaceRootUri === undefined) { delete (machine as { workspaceRootUri?: string }).workspaceRootUri; }
+
+	const stepLine = (s: PlanStep): string => {
+		if (s.disabled || s.status === 'skipped') {
+			return `- ~~Step ${s.stepNumber}:~~ ${s.description} _(skipped)_`;
+		}
+		if (s.status === 'succeeded') {
+			return `- [x] Step ${s.stepNumber}: ${s.description}`;
+		}
+		if (s.status === 'failed') {
+			return `- [ ] Step ${s.stepNumber}: ${s.description} _(failed)_`;
+		}
+		return `- [ ] Step ${s.stepNumber}: ${s.description}`;
+	};
+	const stepsMd = plan.steps.map(stepLine).join('\n');
+
+	return [
+		'---',
+		`planId: "${meta.planId}"`,
+		'vibeVersion: "1"',
+		`status: ${status}`,
+		`createdAt: "${meta.createdAt}"`,
+		`boundThreadId: "${meta.threadId}"`,
+		`planMessageIdx: ${meta.messageIdx}`,
+		'---',
+		'',
+		`## Summary`,
+		'',
+		plan.summary.trim() || '(no summary)',
+		'',
+		`## Steps`,
+		'',
+		stepsMd || '_(none)_',
+		'',
+		'<!-- vibe-plan-machine-context: JSON canonical for tooling / resume (Phase 3) -->',
+		'```json',
+		JSON.stringify(machine, null, 2),
+		'```',
+		'',
+	].join('\n');
+}
 
 export interface IVibePersistedPlanService {
 	readonly _serviceBrand: undefined;
@@ -70,6 +154,20 @@ export interface IVibePersistedPlanService {
 	}): Promise<{ planId: string; uri: URI } | undefined>;
 
 	writePlanMarkdown(uri: URI, content: string): Promise<void>;
+
+	/**
+	 * Re-write an EXISTING plan file to reflect current step statuses + lifecycle `status`
+	 * (running → completed/failed) WITHOUT minting a new planId/file. Resolves the file by globbing
+	 * `agent-plan-<planId-prefix>-*.plan.md`, preserves `createdAt`/`boundThreadId`/`planMessageIdx`
+	 * from the existing file. No-op (logged) if the file is missing/unparseable — progress
+	 * persistence must never break execution.
+	 */
+	updatePersistedPlanProgress(params: {
+		workspaceFolder: URI;
+		planId: string;
+		plan: PlanMessage;
+		status: PersistedPlanStatus;
+	}): Promise<void>;
 }
 
 class VibePersistedPlanService extends Disposable implements IVibePersistedPlanService {
@@ -186,60 +284,11 @@ class VibePersistedPlanService extends Disposable implements IVibePersistedPlanS
 		const fileName = `agent-plan-${planId.slice(0, 8)}-${stamp}.plan.md`;
 		const uri = joinPath(plansDir, fileName);
 
-		const machine = {
-			planKind: 'vibeide.agent-plan',
-			vibeVersion: '1',
-			planId,
-			status: 'running',
-			createdAt,
-			workspaceRootUri: params.workspaceFolder.toString(true),
-			boundThreadId: params.threadId,
-			planMessageIdx: params.messageIdx,
-			steps: params.plan.steps.map(s => ({
-				stepNumber: s.stepNumber,
-				description: s.description,
-				tools: s.tools,
-				files: s.files,
-				status: s.disabled ? 'skipped' : (s.status ?? 'queued'),
-				disabled: !!s.disabled,
-				checkpointIdx: s.checkpointIdx ?? undefined,
-				worktreeBranch: s.worktreeBranch,
-				explorationId: s.explorationId,
-			})),
-		};
-
-		const stepsMd = params.plan.steps
-			.map(s =>
-				s.disabled
-					? `- ~~Step ${s.stepNumber}:~~ ${s.description} _(skipped)_`
-					: `- [ ] Step ${s.stepNumber}: ${s.description}`
-			)
-			.join('\n');
-
-		const text = [
-			'---',
-			`planId: "${planId}"`,
-			'vibeVersion: "1"',
-			`status: running`,
-			`createdAt: "${createdAt}"`,
-			`boundThreadId: "${params.threadId}"`,
-			`planMessageIdx: ${params.messageIdx}`,
-			'---',
-			'',
-			`## Summary`,
-			'',
-			params.plan.summary.trim() || '(no summary)',
-			'',
-			`## Steps`,
-			'',
-			stepsMd || '_(none)_',
-			'',
-			'<!-- vibe-plan-machine-context: JSON canonical for tooling / resume (Phase 3) -->',
-			'```json',
-			JSON.stringify(machine, null, 2),
-			'```',
-			'',
-		].join('\n');
+		const text = serializePlanMarkdown(
+			params.plan,
+			{ planId, threadId: params.threadId, messageIdx: params.messageIdx, createdAt, workspaceRootUri: params.workspaceFolder.toString(true) },
+			'running',
+		);
 
 		let outText = text;
 		const secCfg = this._secretDetection.getConfig();
@@ -265,6 +314,72 @@ class VibePersistedPlanService extends Disposable implements IVibePersistedPlanS
 			artifactUri: uri.toString(true),
 		});
 		return { planId, uri };
+	}
+
+	async updatePersistedPlanProgress(params: {
+		workspaceFolder: URI;
+		planId: string;
+		plan: PlanMessage;
+		status: PersistedPlanStatus;
+	}): Promise<void> {
+		try {
+			const uri = await this._resolvePlanFileUri(params.workspaceFolder, params.planId);
+			if (!uri) {
+				vibeLog.warn('vibePersistedPlan', `[VibePersistedPlan] updateProgress: plan file not found for ${params.planId} — skipping.`);
+				return;
+			}
+			// Preserve createdAt / threadId / messageIdx / workspaceRootUri from the existing file so
+			// the update is a faithful re-write, not a metadata reset.
+			const existing = await this._fileService.readFile(uri);
+			const meta = this._parsePlanFileMeta(existing.value.toString(), params.planId);
+			if (!meta) {
+				vibeLog.warn('vibePersistedPlan', `[VibePersistedPlan] updateProgress: could not parse meta for ${uri.fsPath} — skipping.`);
+				return;
+			}
+			const text = serializePlanMarkdown(params.plan, meta, params.status);
+			let outText = text;
+			const secCfg = this._secretDetection.getConfig();
+			if (secCfg.enabled) {
+				const det = this._secretDetection.detectSecrets(text);
+				if (det.hasSecrets) {
+					if (secCfg.mode === 'block') {
+						vibeLog.warn('vibePersistedPlan', '[VibePersistedPlan] updateProgress: secret detected (block mode) — skipping write.');
+						return;
+					}
+					outText = det.redactedText;
+				}
+			}
+			await this.writePlanMarkdown(uri, outText);
+			vibeLog.info('vibePersistedPlan', `[VibePersistedPlan] updated plan progress: ${uri.fsPath} → status=${params.status}`);
+		} catch (e) {
+			vibeLog.warn('vibePersistedPlan', `[VibePersistedPlan] updateProgress failed for ${params.planId}`, e);
+		}
+	}
+
+	/** Find the on-disk plan file for a planId by its filename prefix. Undefined if absent. */
+	private async _resolvePlanFileUri(workspaceFolder: URI, planId: string): Promise<URI | undefined> {
+		try {
+			const dir = this.plansDirectoryUri(workspaceFolder);
+			const stat = await this._fileService.resolve(dir);
+			const prefix = `agent-plan-${planId.slice(0, 8)}-`;
+			const match = stat.children?.find(c => !c.isDirectory && c.name.startsWith(prefix) && c.name.endsWith('.plan.md'));
+			return match?.resource;
+		} catch {
+			return undefined;
+		}
+	}
+
+	/** Parse authoritative metadata from the JSON canonical block of a plan file. */
+	private _parsePlanFileMeta(content: string, planId: string): PlanFileMeta | undefined {
+		const jsonMatch = content.match(/```json\s*([\s\S]*?)```/);
+		if (!jsonMatch) { return undefined; }
+		try {
+			const m = JSON.parse(jsonMatch[1]) as { planId?: string; createdAt?: string; boundThreadId?: string; planMessageIdx?: number; workspaceRootUri?: string };
+			if (typeof m.createdAt === 'string' && typeof m.boundThreadId === 'string' && typeof m.planMessageIdx === 'number') {
+				return { planId: m.planId ?? planId, threadId: m.boundThreadId, messageIdx: m.planMessageIdx, createdAt: m.createdAt, workspaceRootUri: m.workspaceRootUri };
+			}
+		} catch { /* fall through */ }
+		return undefined;
 	}
 
 	async writePlanMarkdown(uri: URI, content: string): Promise<void> {

@@ -2538,9 +2538,21 @@ class ChatThreadService extends Disposable implements IChatThreadService {
 			});
 		}
 
-		const progPlanInfo = this._getCurrentPlan(threadId, false)
+		const progPlanInfo = this._getCurrentPlan(threadId, true)
 		if (progPlanInfo?.plan.persistedPlanId) {
 			this._taskDecompositionService.advancePersistedPlanStep(threadId, succeeded ? 'done' : 'failed')
+			// Persist step progress to the .plan.md so completed steps are reflected on disk (the
+			// frozen "all queued / status: running" snapshot was why finished plans still triggered
+			// the startup "Continue Plan" resume notice). Fire-and-forget; the service logs failures
+			// and never throws into execution.
+			if (wf) {
+				void this._persistedPlanService.updatePersistedPlanProgress({
+					workspaceFolder: wf,
+					planId: progPlanInfo.plan.persistedPlanId,
+					plan: progPlanInfo.plan,
+					status: 'running',
+				})
+			}
 		}
 
 		// PERFORMANCE: Return updated step info to avoid re-lookup
@@ -7106,6 +7118,15 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 						const wfDone = this._primaryWorkspaceFolderUri()
 						if (wfDone && updatedPlan.persistedPlanId) {
 							this._planBindingRegistry.unregister(wfDone, updatedPlan.persistedPlanId, threadId)
+							// Persist FINAL status to the .plan.md (running → completed/failed). This is what
+							// clears the perpetual startup "Continue Plan" resume notice for a finished plan.
+							const anyFailed = updatedPlan.steps.some(s => !s.disabled && s.status === 'failed')
+							void this._persistedPlanService.updatePersistedPlanProgress({
+								workspaceFolder: wfDone,
+								planId: updatedPlan.persistedPlanId,
+								plan: updatedPlan,
+								status: anyFailed ? 'failed' : 'completed',
+							})
 						}
 						this._taskDecompositionService.clearPersistedPlanTask(threadId)
 						// Invalidate cache after update
