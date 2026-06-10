@@ -10,7 +10,7 @@ import { remoteCatalogCapableProviderNames } from '../../../../common/remoteCata
 import ErrorBoundary from '../sidebar-tsx/ErrorBoundary.js'
 import { VibeButtonBgDarken, VibeCustomDropdownBox, VibeInputBox2, VibeSimpleInputBox, VibeSwitch } from '../util/inputs.js'
 import { useAccessor, useIsDark, useIsOptedOut, useRefreshModelListener, useRefreshModelState, useSettingsState } from '../util/services.js'
-import { X, RefreshCw, Loader2, Check, Asterisk, Plus, ChevronRight, ChevronDown, ImageOff } from 'lucide-react'
+import { X, RefreshCw, Loader2, Check, Asterisk, Plus, ChevronRight, ChevronDown, ImageOff, Image } from 'lucide-react'
 import { joinPath } from '../../../../../../../base/common/resources.js'
 import { ModelDropdown } from './ModelDropdown.js'
 import { VibeWorkspaceFormsPanel } from './VibeWorkspaceForms.js'
@@ -651,11 +651,17 @@ export const ModelDump = ({ filteredProviders }: { filteredProviders?: ProviderN
 		const overrides = settingsState.overridesOfModel?.[providerName]?.[modelName];
 		const hasOverrides = !!overrides;
 		const modality = typeof overrides?.modality === 'string' ? overrides.modality : undefined;
-		const imagesBlocked = overrides?.supportsVision === false;
-		const onToggleImagesBlocked = async () => {
+		// Tri-state vision override: undefined = auto (heuristic/catalog), true = forced on, false = forced off.
+		const visionOverride: boolean | undefined = typeof overrides?.supportsVision === 'boolean' ? overrides.supportsVision : undefined;
+		const cycleVisionOverride = async () => {
 			const cur = settingsState.overridesOfModel?.[providerName]?.[modelName];
-			if (cur?.supportsVision === false) {
-				// Unblock: rebuild override without supportsVision; if nothing remains, clear it.
+			const curVision = cur?.supportsVision;
+			// Cycle auto -> forced-on -> forced-off -> auto. Forced-on lets the user enable a brand-new
+			// vision model (any provider) the name-heuristic doesn't know yet without waiting for a release;
+			// forced-off blocks a model that fakes vision support and silently drops images.
+			const nextVision: boolean | undefined = curVision === undefined ? true : curVision === true ? false : undefined;
+			if (nextVision === undefined) {
+				// Back to auto: rebuild override without supportsVision; if nothing remains, clear it.
 				const next: Partial<ModelOverrides> = { ...cur };
 				delete (next as { supportsVision?: boolean }).supportsVision;
 				const stillHasFields = Object.keys(next).length > 0;
@@ -665,7 +671,7 @@ export const ModelDump = ({ filteredProviders }: { filteredProviders?: ProviderN
 					await settingsStateService.setOverridesOfModel(providerName, modelName, next);
 				}
 			} else {
-				await settingsStateService.setOverridesOfModel(providerName, modelName, { supportsVision: false });
+				await settingsStateService.setOverridesOfModel(providerName, modelName, { supportsVision: nextVision });
 			}
 		};
 		return <div key={`${modelName}${providerName}`}
@@ -691,13 +697,15 @@ export const ModelDump = ({ filteredProviders }: { filteredProviders?: ProviderN
 			<div className="flex items-center gap-2 w-fit">
 				<div className="w-5 flex items-center justify-center">
 					<button
-						onClick={onToggleImagesBlocked}
+						onClick={cycleVisionOverride}
 						data-tooltip-id='vibe-tooltip'
 						data-tooltip-place='right'
-						data-tooltip-content={imagesBlocked ? modelsS.tooltipBlockImagesDisable : modelsS.tooltipBlockImagesEnable}
-						className={`${imagesBlocked ? '' : 'opacity-0 group-hover:opacity-100'} transition-opacity`}
+						data-tooltip-content={visionOverride === true ? modelsS.tooltipVisionForcedOn : visionOverride === false ? modelsS.tooltipVisionForcedOff : modelsS.tooltipVisionAuto}
+						className={`${visionOverride === undefined ? 'opacity-0 group-hover:opacity-100' : ''} transition-opacity`}
 					>
-						<ImageOff size={12} className={imagesBlocked ? 'text-[var(--vscode-errorForeground)]' : 'text-vibe-fg-3 opacity-50'} />
+						{visionOverride === false
+							? <ImageOff size={12} className='text-[var(--vscode-errorForeground)]' />
+							: <Image size={12} className={visionOverride === true ? 'text-[var(--vscode-charts-green)]' : 'text-vibe-fg-3 opacity-50'} />}
 					</button>
 				</div>
 				<div className="w-5 flex items-center justify-center">

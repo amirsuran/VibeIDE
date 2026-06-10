@@ -18,7 +18,9 @@ const VISION_PROVIDERS: ProviderName[] = ['anthropic', 'openAI', 'gemini', 'poll
 /**
  * Aggregator providers — vision capability is per-model, decided by catalog override or model-name heuristic.
  */
-const AGGREGATOR_PROVIDERS: ProviderName[] = ['openRouter', 'openCode', 'openCodeZen', 'openAICompatible', 'liteLLM'];
+// `minimax` is the native (OpenAI-compatible) endpoint serving both text-only and multimodal
+// models, so vision is per-model — treat it like an aggregator and decide by name heuristic.
+const AGGREGATOR_PROVIDERS: ProviderName[] = ['openRouter', 'openCode', 'openCodeZen', 'openAICompatible', 'liteLLM', 'minimax'];
 
 const heuristicWarnedSet = new Set<string>();
 

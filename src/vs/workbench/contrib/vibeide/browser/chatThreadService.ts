@@ -1400,7 +1400,9 @@ class ChatThreadService extends Disposable implements IChatThreadService {
 		// substring whitelist (single source of truth in common/modelVisionHeuristics.ts).
 		// Conservative: only well-known vision markers — anything else stays false to avoid
 		// sending images into a text-only model and getting hallucinated descriptions.
-		if (provider === 'openrouter' || provider === 'opencode' || provider === 'opencodezen' || provider === 'openaicompatible' || provider === 'litellm' || provider === 'pollinations') {
+		// `minimax` is the native (OpenAI-compatible) endpoint serving both text-only (M2) and
+		// multimodal (M3) models, so vision is per-model just like an aggregator.
+		if (provider === 'openrouter' || provider === 'opencode' || provider === 'opencodezen' || provider === 'openaicompatible' || provider === 'litellm' || provider === 'pollinations' || provider === 'minimax') {
 			if (isVisionByNameHeuristic(modelSelection.modelName)) return true;
 		}
 

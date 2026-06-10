@@ -23,7 +23,9 @@ export const VISION_NAME_SUBSTRINGS: readonly string[] = [
 	// many "omni" models (e.g. nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free) advertise multimodality
 	// in OpenRouter's catalog but in practice do not accept image input on the free tier, leading to
 	// silent text-only execution and hallucinated descriptions of the system prompt.
-	'minimax-vl',
+	// MiniMax: VL series (legacy vision) + M3 (native multimodal — text/image/video in).
+	// M1/M2/M2.x are text-only — do NOT add them.
+	'minimax-vl', 'minimax-m3',
 	'glm-4v', 'glm-4.5v',
 	'kimi-vl',
 	'internvl', 'cogvlm',
