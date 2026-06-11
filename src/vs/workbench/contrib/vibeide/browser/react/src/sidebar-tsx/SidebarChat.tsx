@@ -505,6 +505,46 @@ const ChatAgentAutopilotToggle = ({ className }: { className?: string }) => {
 	)
 }
 
+const PROJECT_RULES_RESOLVE_LINKS_KEY = 'vibeide.projectRules.resolveLinks'
+const PROJECT_RULES_RESOLVE_LINKS_RECURSIVE_KEY = 'vibeide.projectRules.resolveLinksRecursive'
+
+/** Toolbar mirror of `vibeide.projectRules.resolveLinksRecursive` — recursive following of links in
+ *  project rules. Pure duplicate of the setting (config is the source of truth). Hidden when link
+ *  resolution itself (`resolveLinks`) is off, since recursion is then moot. */
+const ChatRuleLinksRecursiveToggle = ({ className }: { className?: string }) => {
+	const accessor = useAccessor()
+	const configurationService = accessor.get('IConfigurationService')
+
+	const readValue = useCallback((): boolean => configurationService.getValue<boolean>(PROJECT_RULES_RESOLVE_LINKS_RECURSIVE_KEY) === true, [configurationService])
+	const readEnabled = useCallback((): boolean => (configurationService.getValue<boolean>(PROJECT_RULES_RESOLVE_LINKS_KEY) ?? true) === true, [configurationService])
+
+	const [value, setValue] = useState<boolean>(readValue)
+	const [enabled, setEnabled] = useState<boolean>(readEnabled)
+	useEffect(() => {
+		const d = configurationService.onDidChangeConfiguration(e => {
+			if (e.affectsConfiguration(PROJECT_RULES_RESOLVE_LINKS_RECURSIVE_KEY)) { setValue(readValue()) }
+			if (e.affectsConfiguration(PROJECT_RULES_RESOLVE_LINKS_KEY)) { setEnabled(readEnabled()) }
+		})
+		return () => d.dispose()
+	}, [configurationService, readValue, readEnabled])
+
+	const onChange = useCallback((v: boolean) => {
+		configurationService.updateValue(PROJECT_RULES_RESOLVE_LINKS_RECURSIVE_KEY, v)
+	}, [configurationService])
+
+	if (!enabled) { return null }
+
+	return (
+		<div
+			className={`@@vibe-toolbar-pill flex items-center gap-1 flex-shrink-0 rounded-xl py-0.5 px-1.5 ${className ?? ''}`}
+			title={chatS.rulesLinksRecursiveTitle}
+		>
+			<VibeSwitch size='xs' value={value} onChange={onChange} />
+			<span className='text-vibe-fg-3 text-xs whitespace-nowrap select-none pointer-events-none'>{chatS.rulesLinksRecursiveLabel}</span>
+		</div>
+	)
+}
+
 
 /**
  * Toolbar quick-reset for the SESSION token counter (same `vibeide.tokenBudget.reset` command as
@@ -1162,6 +1202,7 @@ export const VibeChatArea: React.FC<VibeideChatAreaProps> = ({
 						<ChatModelHealthDropdown featureName={featureName} className='text-xs text-vibe-fg-3 @@vibe-toolbar-pill rounded-xl overflow-hidden py-0.5 px-1.5' />
 						{featureName === 'Chat' && <ChatTrainingPolicyBadge />}
 						{featureName === 'Chat' && <ChatAgentAutopilotToggle />}
+						{featureName === 'Chat' && <ChatRuleLinksRecursiveToggle />}
 						{featureName === 'Chat' && <ChatSessionResetButton />}
 						{featureName === 'Chat' && <ChatAgentIterationsControl />}
 						{featureName === 'Chat' && <ChatAgentNudgesControl />}

@@ -37,6 +37,7 @@ import { INotificationService, Severity } from '../../../../platform/notificatio
 import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
 import { VSBuffer } from '../../../../base/common/buffer.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
+import { ITextModelService } from '../../../../editor/common/services/resolverService.js';
 import { parseRuleFrontmatter, isRuleFileName, parseAlwaysApply, parseTriggers, parseGlobs, decideRuleActivation, ruleNameFromPath } from '../common/prompt/ruleFrontmatter.js';
 import { IConfigurationService, ConfigurationTarget } from '../../../../platform/configuration/common/configuration.js';
 
@@ -78,6 +79,14 @@ export interface IVibeProjectRulesService {
 	/** Get list of loaded rule sources (for UI preview / settings panel) */
 	getLoadedSources(): LoadedRuleSource[];
 
+	/**
+	 * R.x — combined content of files REFERENCED by rule links (`[..](mdc:path)` / relative `.md`),
+	 * resolved within the workspace, secret-sanitized, each labeled `[Linked: path ← rule]`. This is
+	 * PASSIVE reference material (knowledge base etc.), injected separately from the binding rules.
+	 * Empty string when link resolution is off or nothing resolved. Gated by `vibeide.projectRules.resolveLinks`.
+	 */
+	getLinkedReferences(): string;
+
 	/** Look up a loaded rule by its short name (basename without extension) — for `@rule:NAME` (R.5). */
 	getRuleByName(name: string): LoadedRuleSource | undefined;
 
@@ -118,6 +127,33 @@ const normalizeRuleKey = (p: string): string => p.replace(/\\/g, '/').toLowerCas
 const MAX_FILES_KEY = 'vibeide.projectRules.maxFiles';
 const MAX_FOLDER_DEPTH_KEY = 'vibeide.projectRules.maxFolderDepth';
 const MAX_FILE_BYTES_KEY = 'vibeide.projectRules.maxFileBytes';
+// R.x — Cursor-style link resolution: pull files referenced by rule content into the prompt.
+const RESOLVE_LINKS_KEY = 'vibeide.projectRules.resolveLinks';
+const RESOLVE_LINKS_RECURSIVE_KEY = 'vibeide.projectRules.resolveLinksRecursive';
+const MAX_LINKED_FILES = 20;             // total referenced files cap (DoS guard)
+const MAX_LINKED_TOTAL_BYTES = 262144;   // 256KB cap on combined referenced content
+const MAX_LINK_RECURSION_DEPTH = 4;      // BFS depth when recursive following is enabled
+/** Extensions a rule link may reference. Restricted to text docs (security/perf): a rule must not be
+ *  able to pull binaries or, with the secret-guard as backstop, arbitrary config into the prompt. */
+const LINKABLE_EXT_RE = /\.(md|mdc|txt)$/i;
+
+/** Extract local file references from rule content: Cursor `[txt](mdc:path)` and relative markdown
+ *  links to text docs. Excludes URLs, anchors, mail, and non-doc extensions. */
+const extractRuleLinks = (content: string): string[] => {
+	const out: string[] = [];
+	const seen = new Set<string>();
+	const re = /\]\(\s*(?:mdc:)?([^)\s]+?)\s*\)/g;
+	let m: RegExpExecArray | null;
+	while ((m = re.exec(content)) !== null) {
+		const p = m[1];
+		if (!p || p.startsWith('#') || /^[a-z][\w+.-]*:(?:\/\/)?/i.test(p)) { continue; } // anchor / URL / scheme
+		if (!LINKABLE_EXT_RE.test(p)) { continue; }
+		if (seen.has(p)) { continue; }
+		seen.add(p);
+		out.push(p);
+	}
+	return out;
+};
 
 /** Scaffold for a freshly-created `.vibe/rules.md`. The project-intent guidance is HTML-commented
  *  so it never reaches the prompt (`_combineSources` strips comments) — it is authoring help, not a
@@ -145,6 +181,9 @@ class VibeProjectRulesService extends Disposable implements IVibeProjectRulesSer
 
 	private _cachedSources: LoadedRuleSource[] = [];
 	private _cachedCombined = '';
+	// R.x — combined linked-references block + the set of resolved file fsPaths (for watch invalidation).
+	private _cachedLinkedRefs = '';
+	private _linkedPaths = new Set<string>();
 
 	private readonly _onRulesChanged = this._register(new Emitter<void>());
 	readonly onRulesChanged: Event<void> = this._onRulesChanged.event;
@@ -191,7 +230,10 @@ class VibeProjectRulesService extends Disposable implements IVibeProjectRulesSer
 				}
 				return false;
 			});
-			if (relevantChange) {
+			// R.x — a change to any resolved linked file (e.g. docs/knowledge.md) must also invalidate.
+			const linkedChange = !relevantChange && this._linkedPaths.size > 0
+				&& [...this._linkedPaths].some(p => e.contains(URI.file(p)));
+			if (relevantChange || linkedChange) {
 				this._debouncer.schedule();
 			}
 		}));
@@ -318,7 +360,83 @@ class VibeProjectRulesService extends Disposable implements IVibeProjectRulesSer
 		// Cache the "inject all" combine for the no-activation callers (Settings / Ctrl+K / Autocomplete).
 		this._cachedCombined = this._combineSources(sources, undefined);
 
-		this._log.info(`[VibeProjectRules] Loaded ${sources.length} rule sources; combined ${this._cachedCombined.length} chars`);
+		// R.x — resolve links in rule content (Cursor-style) and cache the referenced-files block.
+		this._cachedLinkedRefs = '';
+		this._linkedPaths = new Set<string>();
+		const resolveLinks = this._config.getValue<boolean>(RESOLVE_LINKS_KEY) ?? true;
+		if (resolveLinks && sources.length > 0) {
+			const recursive = this._config.getValue<boolean>(RESOLVE_LINKS_RECURSIVE_KEY) ?? false;
+			this._cachedLinkedRefs = await this._collectLinkedReferences(folders, sources, recursive, maxBytes);
+		}
+
+		this._log.info(`[VibeProjectRules] Loaded ${sources.length} rule sources; combined ${this._cachedCombined.length} chars; linked refs ${this._linkedPaths.size} files / ${this._cachedLinkedRefs.length} chars`);
+	}
+
+	getLinkedReferences(): string {
+		return this._cachedLinkedRefs;
+	}
+
+	/** Resolve a relative rule-link target within `folderUri`; reject absolute paths and `..` escapes. */
+	private _resolveLinkTarget(folderUri: URI, rel: string): URI | null {
+		const target = joinPath(folderUri, ...rel.split(/[\\/]+/).filter(Boolean));
+		// Containment: the resolved path (joinPath normalizes `..`) must stay under the folder root.
+		const base = folderUri.path.endsWith('/') ? folderUri.path : folderUri.path + '/';
+		if (!(target.path + '/').startsWith(base)) { return null; }
+		return target;
+	}
+
+	/**
+	 * R.x — BFS over links found in rule content. Reads each referenced file (capped, secret-sanitized),
+	 * labels it, and (when `recursive`) follows links inside it up to MAX_LINK_RECURSION_DEPTH with a
+	 * visited-set cycle guard and global file/byte caps. Populates `_linkedPaths` for watch invalidation.
+	 */
+	private async _collectLinkedReferences(folders: readonly { uri: URI }[], sources: readonly LoadedRuleSource[], recursive: boolean, maxBytes: number): Promise<string> {
+		type Item = { folderUri: URI; rel: string; from: string; depth: number };
+		const queue: Item[] = [];
+		for (const folder of folders) {
+			for (const s of sources) {
+				for (const rel of extractRuleLinks(s.content)) {
+					queue.push({ folderUri: folder.uri, rel, from: s.relativePath, depth: 1 });
+				}
+			}
+		}
+		const visited = new Set<string>();
+		const blocks: string[] = [];
+		let totalBytes = 0;
+		const maxDepth = recursive ? MAX_LINK_RECURSION_DEPTH : 1;
+
+		while (queue.length > 0) {
+			if (blocks.length >= MAX_LINKED_FILES || totalBytes >= MAX_LINKED_TOTAL_BYTES) {
+				this._log.warn(`[VibeProjectRules] Linked-references cap hit (${blocks.length} files / ${totalBytes} bytes) — remaining links skipped`);
+				break;
+			}
+			const item = queue.shift()!;
+			const target = this._resolveLinkTarget(item.folderUri, item.rel);
+			if (!target) { continue; }
+			const key = normalizeRuleKey(target.path);
+			if (visited.has(key)) { continue; }
+			visited.add(key);
+			let raw: string;
+			try {
+				const stat = await this._fileService.stat(target);
+				if (stat.isDirectory) { continue; }
+				const file = await this._fileService.readFile(target);
+				raw = file.value.toString().slice(0, maxBytes);
+			} catch { continue; } // missing / unreadable — expected, silent
+			const guard = this._guard.sanitizeFileContent(raw, item.rel);
+			const body = guard.sanitized.trim();
+			if (body.length === 0) { continue; }
+			const relPath = relativePath(item.folderUri, target) ?? item.rel;
+			this._linkedPaths.add(target.fsPath);
+			blocks.push(`[Linked: ${relPath} ← ${item.from}${guard.sanitized !== raw ? ' (secrets redacted)' : ''}]\n${body}`);
+			totalBytes += body.length;
+			if (item.depth < maxDepth) {
+				for (const rel of extractRuleLinks(body)) {
+					queue.push({ folderUri: item.folderUri, rel, from: relPath, depth: item.depth + 1 });
+				}
+			}
+		}
+		return blocks.join('\n\n');
 	}
 
 	private async _tryLoadRuleFile(uri: URI, relativePath: string, maxBytes: number): Promise<LoadedRuleSource | null> {
@@ -493,24 +611,28 @@ registerAction2(class extends Action2 {
 	}
 
 	async run(accessor: ServicesAccessor): Promise<void> {
+		// Capture every service synchronously BEFORE any `await`. A ServicesAccessor is valid
+		// only during the synchronous portion of the command; calling accessor.get() after an
+		// await throws "Illegal state: service accessor is only valid during the invocation of
+		// its target method". (Was broken: ITextModelService/IEditorService were fetched after
+		// `await reloadRules()` + `await import(...)`.)
 		const rulesSvc = accessor.get(IVibeProjectRulesService);
+		const modelSvc = accessor.get(ITextModelService);
+		const editorService = accessor.get(IEditorService);
+
 		if (rulesSvc.getLoadedSources().length === 0) {
 			await rulesSvc.reloadRules();
 		}
 		const sources = rulesSvc.getLoadedSources();
-		const { IEditorService } = await import('../../../services/editor/common/editorService.js');
-		const { URI: URI_ } = await import('../../../../base/common/uri.js');
-		const { ITextModelService } = await import('../../../../editor/common/services/resolverService.js');
 
 		const content = sources.length === 0
 			? '// No project rules files found.\n// Create: .vibe/rules.md | AGENTS.md | .vibe/rules/*.md(c)'
 			: sources.map(s => `// ${s.relativePath} (${s.sizeBytes} bytes${s.wasRedacted ? ', secrets redacted' : ''})\n${s.content}`).join('\n\n---\n\n');
 
-		const uri = URI_.parse(`untitled://project-rules-sources-${Date.now()}.md`);
-		const modelSvc = accessor.get(ITextModelService);
+		const uri = URI.parse(`untitled://project-rules-sources-${Date.now()}.md`);
 		const ref = await modelSvc.createModelReference(uri);
 		ref.object.textEditorModel?.setValue(content);
 		ref.dispose();
-		await accessor.get(IEditorService).openEditor({ resource: uri });
+		await editorService.openEditor({ resource: uri });
 	}
 });

@@ -67,6 +67,7 @@
 | [template-and-rules.md](vibe-dotfolder/template-and-rules.md) | `vibeConfigInitService`, README, GUIDELINES + `VIBE_DOTVIBE_AGENT_PLAYBOOK` |
 | [workspace-forms.md](vibe-dotfolder/workspace-forms.md) | Форма Workspace в настройках + рантайм корневых JSON |
 | [settings-stack.md](vibe-dotfolder/settings-stack.md) | Приоритетный стек, `constraints.json` enforcement, CortexIDE как стартовая точка |
+| [rule-link-resolution.md](vibe-dotfolder/rule-link-resolution.md) | Cursor-style резолюция ссылок в правилах (`mdc:`/относительные `.md`) → пассивный блок `<referenced_files>`; рекурсия по настройке/тоглу, within-tree + секрет-санитайз, лимиты |
 
 ### [i18n/](i18n/) — локализация
 

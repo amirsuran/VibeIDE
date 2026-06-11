@@ -76,6 +76,16 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 			maximum: 5242880,
 			description: localize('vibeide.projectRules.maxFileBytes', 'Максимальный размер одного файла правил (байты); большее обрезается.'),
 		},
+		'vibeide.projectRules.resolveLinks': {
+			type: 'boolean',
+			default: true,
+			description: localize('vibeide.projectRules.resolveLinks', 'Разрешать ссылки в правилах проекта (Cursor-style `[..](mdc:path)` и относительные `.md`-ссылки): содержимое связанных файлов подтягивается в AI-контекст отдельным пассивным блоком. Резолв только внутри рабочей области.'),
+		},
+		'vibeide.projectRules.resolveLinksRecursive': {
+			type: 'boolean',
+			default: false,
+			description: localize('vibeide.projectRules.resolveLinksRecursive', 'Рекурсивно следовать по ссылкам внутри уже подтянутых файлов (с защитой от циклов и общими лимитами). Выкл — только один уровень. Требует включённой `vibeide.projectRules.resolveLinks`.'),
+		},
 	},
 });
 
@@ -89,10 +99,13 @@ class VibeProjectRulesSettingsContribution extends Disposable {
 		@IVibeProjectRulesService private readonly _rulesSvc: IVibeProjectRulesService,
 	) {
 		super();
-		// Reload rules when disabled sources setting changes
+		// Reload rules when disabled sources OR link-resolution settings change. Link toggles
+		// affect which referenced files get pulled in, so a full reload re-resolves them.
 		this._register(this._config.onDidChangeConfiguration(e => {
-			if (e.affectsConfiguration('vibeide.projectRules.disabledSources')) {
-				this._log.info('[VibeProjectRules] Disabled sources changed — reloading rules');
+			if (e.affectsConfiguration('vibeide.projectRules.disabledSources')
+				|| e.affectsConfiguration('vibeide.projectRules.resolveLinks')
+				|| e.affectsConfiguration('vibeide.projectRules.resolveLinksRecursive')) {
+				this._log.info('[VibeProjectRules] Rules/link settings changed — reloading rules');
 				void this._rulesSvc.reloadRules();
 			}
 		}));

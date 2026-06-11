@@ -82,6 +82,9 @@ export const chatS = {
 	autopilotLabel: 'Автопилот',
 	autopilotTitle:
 		'Автопилот (вкл. по умолчанию): запускать инструменты (правки, удаление, терминал, MCP) без подтверждения. Выключите — подтверждать каждый шаг.',
+	rulesLinksRecursiveLabel: 'Ссылки↻',
+	rulesLinksRecursiveTitle:
+		'Рекурсия по ссылкам в правилах проекта. Вкл — следовать по ссылкам внутри уже подтянутых файлов (с лимитами и защитой от циклов); выкл — только один уровень. Дубль настройки vibeide.projectRules.resolveLinksRecursive.',
 	maxLoopIterationsLabel: 'итер.',
 	maxLoopIterationsOffLabel: '∞ итер.',
 	maxLoopIterationsOffHint: 'лимит снят',

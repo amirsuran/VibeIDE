@@ -1479,12 +1479,21 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 		if (this.workspaceContextService.getWorkspace().folders.length > 0) {
 			ans.push(VIBE_DOTVIBE_AGENT_PLAYBOOK)
 		}
-		// Inject current .vibe/goals.md as passive context: the model SEES the file
-		// exists and its content, so it updates the root file instead of inventing a
-		// new goals file/subfolder. Empty/template goals.md contributes nothing.
+		// Inject current .vibe/goals.md with medium-strength framing: the model should actively work
+		// toward the goals and self-check against them, but they are NOT a hard contract — the user's
+		// live request and <project_rules> take precedence (goals can be stale/aspirational). Keeps the
+		// original "write to the ROOT file, no subfolders" instruction that fixed the invent-a-new-goals-
+		// file incident. Empty/template goals.md contributes nothing.
 		const sessionGoals = this._getVibeGoalsFileContent()
 		if (sessionGoals) {
-			ans.push(`<session_goals source=".vibe/goals.md">\nТекущие цели сессии. Когда нужно записать или обновить цели — пиши ИМЕННО в корневой .vibe/goals.md (НЕ создавай подпапки .vibe/goals/… и не заводи отдельные файлы целей).\n\n${sessionGoals}\n</session_goals>`)
+			ans.push(`<session_goals source=".vibe/goals.md">\nАктивные цели этой сессии — держи их в фокусе и веди работу к ним; перед завершением хода сверяйся, приблизил ли ты их. НО приоритет: живой запрос пользователя и <project_rules> важнее — если новая просьба противоречит целям, следуй просьбе и предложи обновить цели. Записывать или обновлять цели — ИМЕННО в корневой .vibe/goals.md (НЕ создавай подпапки .vibe/goals/… и не заводи отдельные файлы целей).\n\n${sessionGoals}\n</session_goals>`)
+		}
+		// R.x — passive referenced-files block: content of files LINKED from project rules
+		// (Cursor-style `mdc:`/relative links), e.g. docs/knowledge.md. Reference material, NOT
+		// directives — deliberately kept OUT of the binding <project_rules> envelope.
+		const linkedRefs = this.projectRulesService.getLinkedReferences()
+		if (linkedRefs) {
+			ans.push(`<referenced_files>\nФайлы, на которые ссылаются правила проекта (база знаний и т.п.). Это СПРАВОЧНЫЙ материал — используй его при формировании ответов, но это НЕ обязательные директивы (в отличие от <project_rules>).\n\n${linkedRefs}\n</referenced_files>`)
 		}
 		return ans.join('\n\n')
 	}
