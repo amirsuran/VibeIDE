@@ -8,7 +8,6 @@ import { ILogService } from '../../../../platform/log/common/log.js';
 import { ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
 import { ConfigurationTarget, IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { IVibeTokenBudgetService } from '../common/vibeTokenBudgetService.js';
-import { IVibeContextGuardService } from './vibeContextGuardService.js';
 import { IVibeAgentHistoryService } from '../common/vibeAgentHistoryService.js';
 import { IVibeMemoryDecayService } from '../common/vibeMemoryDecayService.js';
 import { IVibeSemanticSearchService } from '../common/vibeSemanticSearchService.js';
@@ -25,7 +24,9 @@ import { generateUuid } from '../../../../base/common/uuid.js';
 import { URI } from '../../../../base/common/uri.js';
 import { IQuickInputService, IQuickPickItem } from '../../../../platform/quickinput/common/quickInput.js';
 import { IVibeSkillsLibraryService } from '../common/vibeSkillsLibraryService.js';
-import { IFileDialogService } from '../../../../platform/dialogs/common/dialogs.js';
+import { IFileDialogService, IDialogService } from '../../../../platform/dialogs/common/dialogs.js';
+import { ITerminalService } from '../../../contrib/terminal/browser/terminal.js';
+import { TerminalLocation } from '../../../../platform/terminal/common/terminal.js';
 import { ILanguageService } from '../../../../editor/common/languages/language.js';
 import { IViewsService } from '../../../services/views/common/viewsService.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
@@ -58,6 +59,18 @@ function assertJsonRecord(json: unknown): asserts json is Record<string, unknown
 }
 
 type ParsedCommunityManifest = { skillId: string; skillMarkdown: string };
+
+/**
+ * Run a maintenance script in a dedicated integrated terminal (Panel). Replaces the old
+ * `require('child_process').execSync(...)` calls that throw in the renderer process. Output is
+ * visible to the user; cwd is the workspace folder (these scripts assume the VibeIDE repo).
+ */
+async function runInVibeTerminal(terminal: ITerminalService, name: string, cmd: string): Promise<void> {
+	const t = await terminal.createTerminal({ location: TerminalLocation.Panel, config: { name } });
+	await terminal.setActiveInstance(t);
+	await terminal.focusActiveInstance();
+	await t.sendText(cmd, true);
+}
 
 function parseCommunitySkillManifest(json: unknown): ParsedCommunityManifest {
 	assertJsonRecord(json);
@@ -193,29 +206,39 @@ CommandsRegistry.registerCommand('vibeide.trustScore.toggle', async (accessor: S
 	log.info(`[VibeIDE] Trust Score: ${current} → ${next}`);
 });
 
-CommandsRegistry.registerCommand('vibeide.trustScore.setManual', (_accessor: ServicesAccessor) => {
-	// Phase 2: update Trust Score state to Manual
-});
-
-CommandsRegistry.registerCommand('vibeide.trustScore.setSupervised', (_accessor: ServicesAccessor) => {
-	// Phase 2: update Trust Score state to Supervised
-});
-
-CommandsRegistry.registerCommand('vibeide.trustScore.setAuto', (_accessor: ServicesAccessor) => {
-	// Phase 2: update Trust Score state to Auto
-});
+// Direct Trust Score level setters (bound to Ctrl+Shift+1/2/3). Were empty stubs — now they
+// actually write `vibeide.trustScore.level` and confirm with a toast (mirrors trustScore.toggle).
+for (const { id, level, label } of [
+	{ id: 'vibeide.trustScore.setManual', level: 'manual', label: localize('vibeide.trustScore.manual', 'Ручной (Manual) 🟢') },
+	{ id: 'vibeide.trustScore.setSupervised', level: 'supervised', label: localize('vibeide.trustScore.supervised', 'Под наблюдением (Supervised) 🟡') },
+	{ id: 'vibeide.trustScore.setAuto', level: 'auto', label: localize('vibeide.trustScore.auto', 'Авто (Auto) 🔴') },
+] as const) {
+	CommandsRegistry.registerCommand(id, async (accessor: ServicesAccessor) => {
+		const config = accessor.get(IConfigurationService);
+		const notifications = accessor.get(INotificationService);
+		await config.updateValue('vibeide.trustScore.level', level, ConfigurationTarget.USER);
+		notifications.notify({ severity: Severity.Info, message: localize('vibeide.trustScore.setDone', 'Trust Score: режим — {0}.', label) });
+	});
+}
 
 // Token budget
 CommandsRegistry.registerCommand('vibeide.tokenBudget.reset', (accessor: ServicesAccessor) => {
 	const budget = accessor.get(IVibeTokenBudgetService);
+	const notifications = accessor.get(INotificationService);
 	budget.resetSession();
+	notifications.notify({ severity: Severity.Info, message: localize('vibeide.tokenBudget.resetDone', 'Бюджет токенов сессии сброшен.') });
 });
 
+// Wired to the provider status bar (click). Was log-only → invisible. Now shows a toast.
 CommandsRegistry.registerCommand('vibeide.tokenBudget.status', (accessor: ServicesAccessor) => {
 	const budget = accessor.get(IVibeTokenBudgetService);
+	const notifications = accessor.get(INotificationService);
 	const status = budget.getStatus();
-	const log = accessor.get(ILogService);
-	log.info(`[VibeIDE] Token budget: ${status.sessionTokensUsed.toLocaleString()}/${status.sessionTokensLimit.toLocaleString()} (${status.percentUsed.toFixed(0)}%)`);
+	notifications.notify({
+		severity: Severity.Info,
+		message: localize('vibeide.tokenBudget.statusMsg', 'Бюджет токенов: {0}/{1} ({2}%) за сессию.',
+			status.sessionTokensUsed.toLocaleString(), status.sessionTokensLimit.toLocaleString(), status.percentUsed.toFixed(0)),
+	});
 });
 
 CommandsRegistry.registerCommand('vibeide.emergencyStopAllAgents', async (accessor: ServicesAccessor) => {
@@ -280,89 +303,98 @@ CommandsRegistry.registerCommand('vibeide.emergencyStopAllAgents', async (access
 	});
 });
 
-// Dead man's switch
-CommandsRegistry.registerCommand('vibeide.dms.stop', (accessor: ServicesAccessor) => {
-	// Phase 2: stop current DMS
-	const log = accessor.get(ILogService);
-	log.info('[VibeIDE] Dead man\'s switch stopped');
-});
-
-// Loop detector
-CommandsRegistry.registerCommand('vibeide.loopDetector.reset', (accessor: ServicesAccessor) => {
-	// Phase 2: reset current session loop detector
-	const log = accessor.get(ILogService);
-	log.info('[VibeIDE] Loop detector reset');
-});
+// Removed: `vibeide.dms.stop` and `vibeide.loopDetector.reset` — Phase-2 stubs that only logged,
+// never implemented, and referenced nowhere (no keybinding / status bar / menu). Dead code.
 
 // Context guard
-CommandsRegistry.registerCommand('vibeide.context.status', (accessor: ServicesAccessor) => {
-	const guard = accessor.get(IVibeContextGuardService);
-	const status = guard.getStatus();
-	const log = accessor.get(ILogService);
-	log.info(`[VibeIDE] Context: ${status.percentUsed.toFixed(0)}% (${status.currentTokens.toLocaleString()}/${status.maxTokens.toLocaleString()} tokens)`);
-});
+// `vibeide.context.status` moved to vibeContextReportContribution.ts — it now opens a full
+// context-composition report (gauge + per-segment table) instead of logging one line.
 
 // Agent history
 CommandsRegistry.registerCommand('vibeide.agentHistory.show', (accessor: ServicesAccessor) => {
 	const history = accessor.get(IVibeAgentHistoryService);
+	const notifications = accessor.get(INotificationService);
 	const entries = history.getCurrentSessionHistory();
-	const log = accessor.get(ILogService);
-	log.info(`[VibeIDE] Agent history: ${entries.length} actions in current session`);
-	entries.slice(-5).forEach((e, i) => log.info(`  ${i + 1}. ${e.action}: ${e.description.slice(0, 60)}`));
+	if (entries.length === 0) {
+		notifications.notify({ severity: Severity.Info, message: localize('vibeide.agentHistory.empty', 'История действий агента в этой сессии пуста.') });
+		return;
+	}
+	const tail = entries.slice(-5).map(e => `• ${e.action}: ${e.description.slice(0, 80)}`).join('\n');
+	notifications.notify({
+		severity: Severity.Info,
+		message: localize('vibeide.agentHistory.msg', 'Действий агента за сессию: {0}. Последние:\n{1}', entries.length, tail),
+	});
 });
 
 // Memory decay
 CommandsRegistry.registerCommand('vibeide.memory.persist', (accessor: ServicesAccessor) => {
 	const memory = accessor.get(IVibeMemoryDecayService);
+	const notifications = accessor.get(INotificationService);
 	memory.persist();
+	notifications.notify({ severity: Severity.Info, message: localize('vibeide.memory.persistDone', 'Память агента сохранена на диск.') });
 });
 
-// Semantic search
-CommandsRegistry.registerCommand('vibeide.search.semantic', async (accessor: ServicesAccessor, query: string) => {
+// Semantic search — when invoked without a query (palette/keybinding), prompt for one, then show
+// hits in a quick pick that opens the chosen file. Was log-only (invisible) and unusable from the UI.
+CommandsRegistry.registerCommand('vibeide.search.semantic', async (accessor: ServicesAccessor, query?: string) => {
 	const search = accessor.get(IVibeSemanticSearchService);
-	const log = accessor.get(ILogService);
+	const notifications = accessor.get(INotificationService);
+	const quickInput = accessor.get(IQuickInputService);
+	const editorService = accessor.get(IEditorService);
 	if (!search.isReady()) {
-		log.warn('[VibeIDE] Semantic search not ready. Enable RAG in settings.');
+		notifications.notify({ severity: Severity.Warning, message: localize('vibeide.search.notReady', 'Семантический поиск не готов — включите RAG в настройках VibeIDE.') });
 		return;
 	}
-	const results = await search.search(query, 5);
-	log.info(`[VibeIDE] Search results for "${query}":`);
-	results.forEach((r, i) => log.info(`  ${i + 1}. ${r.filePath} (score: ${r.score.toFixed(2)}): ${r.snippet.slice(0, 60)}`));
+	const q = (query ?? '').trim() || (await quickInput.input({ prompt: localize('vibeide.search.prompt', 'Семантический поиск по кодовой базе') }))?.trim();
+	if (!q) { return; }
+	const results = await search.search(q, 10);
+	if (results.length === 0) {
+		notifications.notify({ severity: Severity.Info, message: localize('vibeide.search.none', 'Ничего не найдено по запросу «{0}».', q) });
+		return;
+	}
+	const picked = await quickInput.pick(
+		results.map(r => ({ label: r.filePath, description: `${(r.score).toFixed(2)}`, detail: r.snippet.slice(0, 120), filePath: r.filePath })),
+		{ placeHolder: localize('vibeide.search.results', 'Результаты для «{0}» — выберите файл', q) },
+	);
+	if (picked) { await editorService.openEditor({ resource: URI.file((picked as { filePath: string }).filePath) }); }
 });
 
-// Diff preview
+// Diff preview hint — informational. Was log-only; now a visible toast.
 CommandsRegistry.registerCommand('vibeide.diff.showComplexity', (accessor: ServicesAccessor) => {
-	const log = accessor.get(ILogService);
-	log.info('[VibeIDE] Diff complexity: open diff panel to see indicator');
+	const notifications = accessor.get(INotificationService);
+	notifications.notify({ severity: Severity.Info, message: localize('vibeide.diff.complexityHint', 'Индикатор сложности диффа отображается на панели diff при открытом сравнении.') });
 });
 
-// Checkpoint prune
-CommandsRegistry.registerCommand('vibeide.checkpoint.prune', (_accessor: ServicesAccessor) => {
-	const { execSync } = require('child_process');
-	execSync('node scripts/vibe-checkpoint-prune.js --keep-last 50', { stdio: 'inherit' });
+// Checkpoint prune — run the maintenance script in a terminal (renderer execSync threw).
+CommandsRegistry.registerCommand('vibeide.checkpoint.prune', async (accessor: ServicesAccessor) => {
+	await runInVibeTerminal(accessor.get(ITerminalService), 'VibeIDE Checkpoint Prune', 'node scripts/vibe-checkpoint-prune.js --keep-last 50');
 });
 
 // Vibe doctor
-CommandsRegistry.registerCommand('vibeide.doctor.run', (_accessor: ServicesAccessor) => {
-	const { execSync } = require('child_process');
-	execSync('node scripts/vibe-doctor.js', { stdio: 'inherit' });
+CommandsRegistry.registerCommand('vibeide.doctor.run', async (accessor: ServicesAccessor) => {
+	await runInVibeTerminal(accessor.get(ITerminalService), 'VibeIDE Doctor', 'node scripts/vibe-doctor.js');
 });
 
 // Export audit log (GDPR)
-CommandsRegistry.registerCommand('vibeide.audit.export', (_accessor: ServicesAccessor) => {
-	const { execSync } = require('child_process');
-	execSync('node scripts/vibe-session-export.js --all --output vibe-audit-export.json', { stdio: 'inherit' });
+CommandsRegistry.registerCommand('vibeide.audit.export', async (accessor: ServicesAccessor) => {
+	await runInVibeTerminal(accessor.get(ITerminalService), 'VibeIDE Audit Export', 'node scripts/vibe-session-export.js --all --output vibe-audit-export.json');
 });
 
-CommandsRegistry.registerCommand('vibeide.audit.deleteAll', (_accessor: ServicesAccessor) => {
-	const { execSync } = require('child_process');
-	execSync('node scripts/vibe-session-export.js --delete-all', { stdio: 'inherit' });
+CommandsRegistry.registerCommand('vibeide.audit.deleteAll', async (accessor: ServicesAccessor) => {
+	const dialog = accessor.get(IDialogService);
+	const terminal = accessor.get(ITerminalService);
+	const confirmed = await dialog.confirm({
+		message: localize('vibeide.audit.deleteAll.confirm', 'Удалить все данные аудита/сессий VibeIDE?'),
+		detail: localize('vibeide.audit.deleteAll.detail', 'Операция необратима. Скрипт удаления запустится в терминале.'),
+		primaryButton: localize('vibeide.audit.deleteAll.primary', 'Удалить'),
+	});
+	if (!confirmed.confirmed) { return; }
+	await runInVibeTerminal(terminal, 'VibeIDE Audit Delete', 'node scripts/vibe-session-export.js --delete-all');
 });
 
 // Transparency dashboard
-CommandsRegistry.registerCommand('vibeide.transparency.show', (_accessor: ServicesAccessor) => {
-	const { execSync } = require('child_process');
-	execSync('node scripts/vibe-transparency-dashboard.js --markdown', { stdio: 'inherit' });
+CommandsRegistry.registerCommand('vibeide.transparency.show', async (accessor: ServicesAccessor) => {
+	await runInVibeTerminal(accessor.get(ITerminalService), 'VibeIDE Transparency', 'node scripts/vibe-transparency-dashboard.js --markdown');
 });
 
 // --- Plan Mode commands ---

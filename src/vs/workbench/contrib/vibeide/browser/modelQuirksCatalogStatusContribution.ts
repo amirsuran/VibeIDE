@@ -10,6 +10,9 @@ import { IModelQuirksCatalogStatusService } from '../common/modelQuirksCatalogSt
 import { localize, localize2 } from '../../../../nls.js';
 import { Action2, registerAction2 } from '../../../../platform/actions/common/actions.js';
 import { ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
+import { ICommandService } from '../../../../platform/commands/common/commands.js';
+import { URI } from '../../../../base/common/uri.js';
+import { toAction } from '../../../../base/common/actions.js';
 
 /**
  * Once per VibeIDE startup: query main-process for the model-quirks catalog status and,
@@ -77,7 +80,7 @@ registerAction2(class extends Action2 {
 	constructor() {
 		super({
 			id: 'vibeide.modelQuirks.refresh',
-			title: localize2('vibeide.modelQuirks.refresh', 'VibeIDE: Обновить каталог квирков моделей (model-quirks) с CDN'),
+			title: localize2('vibeide.modelQuirks.refresh', 'Обновить каталог квирков моделей (model-quirks) с CDN'),
 			f1: true,
 			category: { value: 'VibeIDE', original: 'VibeIDE' },
 		});
@@ -105,7 +108,7 @@ registerAction2(class extends Action2 {
 	constructor() {
 		super({
 			id: 'vibeide.modelQuirks.showStatus',
-			title: localize2('vibeide.modelQuirks.showStatus', 'VibeIDE: Показать активный каталог квирков моделей'),
+			title: localize2('vibeide.modelQuirks.showStatus', 'Показать активный каталог квирков моделей'),
 			f1: true,
 			category: { value: 'VibeIDE', original: 'VibeIDE' },
 		});
@@ -113,21 +116,44 @@ registerAction2(class extends Action2 {
 	async run(accessor: ServicesAccessor): Promise<void> {
 		const statusService = accessor.get(IModelQuirksCatalogStatusService);
 		const notificationService = accessor.get(INotificationService);
+		const commandService = accessor.get(ICommandService);
 		const s = await statusService.getStatus().catch(() => null);
 		if (!s) {
 			notificationService.notify({ severity: Severity.Warning, message: localize('vibeide.modelQuirks.showStatus.unavailable', 'Статус каталога квирков недоступен (IPC).') });
 			return;
 		}
-		const sourceLabel = s.source === 'exeAdjacent' ? `exe-adjacent (${s.exeAdjacentPath ?? '?'})`
-			: s.source === 'cdn' ? 'CDN-кэш'
-				: s.source === 'bundled' ? 'встроенный (bundled)'
-					: 'пусто (provider defaults)';
+		// Explain WHERE the active catalog actually lives (the old toast only named the source —
+		// "CDN-кэш" — without telling the user where to find/edit it).
+		const where = s.source === 'exeAdjacent'
+			? localize('vibeide.modelQuirks.where.exe', 'файл рядом с VibeIDE.exe: {0}', s.exeAdjacentPath ?? '?')
+			: s.source === 'cdn'
+				? localize('vibeide.modelQuirks.where.cdn', 'авто-обновляемый кэш CDN (управляется приложением; отдельного файла для ручной правки нет — чтобы переопределить, положите model-quirks.json рядом с VibeIDE.exe)')
+				: s.source === 'bundled'
+					? localize('vibeide.modelQuirks.where.bundled', 'встроенный каталог сборки (обновится при загрузке с CDN или через exe-adjacent файл)')
+					: localize('vibeide.modelQuirks.where.empty', 'каталог не загружен — действуют дефолты провайдеров');
+
+		const actions = [
+			toAction({
+				id: 'vibeide.modelQuirks.refresh',
+				label: localize('vibeide.modelQuirks.action.refresh', 'Обновить с CDN'),
+				run: () => { void commandService.executeCommand('vibeide.modelQuirks.refresh'); },
+			}),
+		];
+		if (s.exeAdjacentPath) {
+			actions.push(toAction({
+				id: 'vibeide.modelQuirks.openFile',
+				label: localize('vibeide.modelQuirks.action.open', 'Открыть файл'),
+				run: () => { void commandService.executeCommand('vscode.open', URI.file(s.exeAdjacentPath!)); },
+			}));
+		}
+
 		notificationService.notify({
 			severity: Severity.Info,
-			message: localize('vibeide.modelQuirks.showStatus.msg',
-				'Каталог квирков: источник — {0}; дата — {1}; доступна — {2}.{3}',
-				sourceLabel, s.activeDate || '—', s.latestAvailableDate || '—',
+			message: localize('vibeide.modelQuirks.showStatus.msg2',
+				'Каталог квирков моделей. Где: {0}. Дата активного: {1}; доступно на CDN: {2}.{3}',
+				where, s.activeDate || '—', s.latestAvailableDate || '—',
 				s.staleExeAdjacent ? localize('vibeide.modelQuirks.showStatus.stale', ' ⚠ exe-adjacent старее доступного.') : ''),
+			actions: { primary: actions },
 		});
 	}
 });
