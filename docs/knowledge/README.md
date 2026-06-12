@@ -39,6 +39,7 @@
 | [context-report.md](architecture/context-report.md) | Команда `vibeide.context.status` (аналог `/context`): `buildContextBreakdown` считает состав промпта по живым геттерам, шкала из context-guard, история — остаток; рендер в untitled-md |
 | [commands-palette-modal.md](architecture/commands-palette-modal.md) | «VibeIDE Команды» — resizable-окно списка всех `vibe*`-команд (brain-меню). Бридж-сервис + ленивый портал, почему не `VibeModalService`, новая tsup-точка + ручной `.d.ts`, `@@`-className-футган |
 | [vibe-defaults.md](architecture/vibe-defaults.md) | `.vibe-defaults/` → генерируемый манифест (перечитывается с нуля каждую сборку) → `applyVibeDefaults` сеет в `.vibe/` (create-if-missing). Команда `vibeide.defaults.apply`, общий `collectVibeideCommands`, word wrap ON по умолчанию |
+| [dynamic-providers.md](architecture/dynamic-providers.md) | `.vibe/providers.json` (JSONC) — user-defined провайдеры/модели без пересборки. **WIP:** Фаза 1 (формат + IntelliSense + диагностика + тоглы built-in) готова; 2b-2 (overlay в `settingsOfProvider` → список+caps+транспорт) с `_storeState`-риском — план внутри |
 
 ### [ui/](ui/) — CSS, темы, view-инфраструктура
 

@@ -66,6 +66,15 @@ node_modules/
 vendor/
 `;
 
+// Runtime/machine-local artifacts VibeIDE writes into .vibe/ during work — NOT project config.
+// Seeded as .vibe/.gitignore so они не попадают в git у пользователя (window-lock, локи, trust-хэши, снапшоты).
+const DEFAULT_VIBE_GITIGNORE = `# VibeIDE — рантайм-артефакты (машинно-локальные, не конфиг проекта). Не коммитить.
+.window-lock.json
+agent-locks.json
+commands.trust.json
+snapshots/
+`;
+
 const DEFAULT_ALLOWED_MODELS = {
 	vibeVersion: VIBE_VERSION,
 	models: [] as string[],
@@ -110,6 +119,9 @@ export class VibeConfigInitContribution extends Disposable implements IWorkbench
 			// Create .vibe/ directory
 			await this._fileService.createFolder(vibeDir);
 			vibeLog.debug('vibeConfigInit', '.vibe/ directory ready');
+
+			// Keep VibeIDE runtime artifacts out of the user's git (window-lock, locks, trust, snapshots).
+			await this._createIfMissing(joinPath(vibeDir, '.gitignore'), DEFAULT_VIBE_GITIGNORE);
 
 			// Create default files (only if they don't exist)
 			await this._createIfMissing(
