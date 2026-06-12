@@ -5525,16 +5525,17 @@ export const SidebarChat = () => {
 	// Refs for keyboard scroll-into-view: array of item DIVs keyed by index.
 	const skillItemRefs = useRef<Array<HTMLDivElement | null>>([])
 
-	// Load skills list once on mount; refresh if it goes stale (TODO: subscribe to file events).
-	// Both services are guarded — if either isn't registered in useAccessor for some build
-	// the autocomplete just stays empty rather than crashing the entire SidebarChat tree.
-	useEffect(() => {
+	// Fetch the skill list. Called on mount AND every time the `/skill:` menu opens — the skills
+	// library scans `.vibe/skills/` lazily and can finish AFTER this component mounts (e.g. `.vibe`
+	// defaults are seeded at workspace open), so a one-shot mount load left the dropdown PERMANENTLY
+	// empty. Re-fetching when the trigger fires picks up late/changed skills; `getSkills()` is cached
+	// and self-invalidates on `.vibe/skills/` file events, so this is cheap. Both services are guarded
+	// — if either isn't registered the autocomplete stays empty rather than crashing the SidebarChat tree.
+	const loadSkillCmds = useCallback(() => {
 		const slashSvc = accessor.get('IVibeSlashCommandService')
 		const skillsSvc = accessor.get('IVibeSkillsLibraryService')
 		if (!slashSvc || !skillsSvc) return
-		let cancelled = false
 		slashSvc.getCommands().then(cmds => {
-			if (cancelled) return
 			const skills = cmds.filter((c): c is SkillCmd => c.category === 'skill')
 			const recent = skillsSvc.getRecentSkills()
 			const recentKeys = new Set(recent.map(id => `skill:${id}`))
@@ -5544,10 +5545,13 @@ export const SidebarChat = () => {
 			const rest = skills
 				.filter(s => !recentKeys.has(s.name))
 				.sort((a, b) => a.name.localeCompare(b.name))
-			setSkillCmds([...recentList, ...rest])
+			const next = [...recentList, ...rest]
+			// Avoid re-render churn: the menu re-fetches on every keystroke, so only update when the set changed.
+			setSkillCmds(prev => (prev.length === next.length && prev.every((p, i) => p.name === next[i].name)) ? prev : next)
 		}).catch(() => { /* skills service not ready or no skills — leave list empty */ })
-		return () => { cancelled = true }
 	}, [accessor])
+
+	useEffect(() => { loadSkillCmds() }, [loadSkillCmds])
 
 	// Keep the highlighted dropdown item visible when the user navigates with arrows.
 	// Without this, ArrowDown past the visible window leaves the highlight off-screen.
@@ -5599,6 +5603,7 @@ export const SidebarChat = () => {
 		const before = newStr.slice(0, cursorPos)
 		const m = /\/skill:([\w.-]*)$/.exec(before)
 		if (m) {
+			loadSkillCmds() // refresh on open so late-seeded/changed skills appear (cached → cheap)
 			setSkillFilter(m[1])
 			setSkillIdx(0)
 			setSkillMenuOpen(true)
@@ -5607,7 +5612,7 @@ export const SidebarChat = () => {
 		} else {
 			setSkillMenuOpen(false)
 		}
-	}, [setInstructionsAreEmpty, chatThreadsService, chatThreadsState.currentThreadId])
+	}, [setInstructionsAreEmpty, chatThreadsService, chatThreadsState.currentThreadId, loadSkillCmds])
 
 	const onKeyDown = useCallback((e: KeyboardEvent<HTMLTextAreaElement>) => {
 		// Skill menu takes precedence over Enter/Escape submit/abort when it's open.
@@ -5870,7 +5875,7 @@ export const SidebarChat = () => {
 		    (name + truncated sanitized description). Opens above the textarea by default,
 		    flips below if more space is available there (e.g. chat pane docked near the
 		    top of the window). */}
-		{skillMenuOpen && filteredSkillCmds.length > 0 && skillAnchorRect && (() => {
+		{skillMenuOpen && skillAnchorRect && (() => {
 			const GAP = 4
 			const MAX_DROPDOWN_H = 320
 			const spaceAbove = skillAnchorRect.top
@@ -5907,6 +5912,13 @@ export const SidebarChat = () => {
 						Skills:
 					</div>
 					<div className='overflow-y-auto' style={{ maxHeight: dropdownH - HEADER_H }}>
+						{filteredSkillCmds.length === 0 && (
+							<div className='px-3 py-2 text-vibe-fg-3 text-[12px]'>
+								{skillCmds.length === 0
+									? 'Скиллов нет — добавьте .vibe/skills/<id>/SKILL.md'
+									: `Нет скиллов по фильтру «${skillFilter}»`}
+							</div>
+						)}
 						{filteredSkillCmds.map((cmd, i) => {
 							const desc = sanitizeDesc(cmd.description)
 							return (
