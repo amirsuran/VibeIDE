@@ -190,6 +190,46 @@ VibeIDE/
 | `snapshots/` | Снимки файлов для отката после агентных правок |
 | `commands.json` | **Команды проекта** — shell-шорткаты для меню «Команды» в шапке IDE; первый запуск требует approve и фиксируется в `commands.trust.json` |
 | `commands.trust.json` | Approved-hash'и команд (auto-managed, обычно в `.gitignore`) |
+| `providers.json` | **Свои LLM-провайдеры и модели** — добавить/переопределить/выключить без пересборки (см. ниже) |
+
+#### Свои провайдеры — `.vibe/providers.json`
+
+Формат **JSONC** (можно `//`-комментарии), с подсветкой и автодополнением полей прямо в редакторе. Готовый пример — `.vibe/providers.example.jsonc` (создаётся автоматически). Ключи API **в файле не хранятся** — указывайте `apiKeyEnv` (переменная окружения) или `apiKeyRef` (защищённые настройки), файл можно коммитить.
+
+Главное: `active: true|false` — тумблер (на провайдере и на каждой модели). Совпадение `id` со встроенным провайдером **накладывает** ваши поля поверх него; новый `id` создаёт нового; `extends: "<id>"` — клон существующего как отдельный вариант. Пишите только отличия — остальное наследуется.
+
+```jsonc
+{
+  "version": 1,
+  "providers": [
+    // свой OpenAI-совместимый провайдер с нуля
+    { "id": "my-proxy", "name": "Мой прокси", "baseURL": "https://llm.local/v1",
+      "auth": { "type": "header", "name": "x-api-key" }, "apiKeyEnv": "MY_KEY",
+      "models": { "fetch": true } },
+
+    // выключить встроенный (убрать из списка)
+    { "id": "googleVertex", "active": false },
+
+    // прорядить модели встроенного OpenRouter
+    { "id": "openRouter", "models": { "fetch": false, "static": [
+      { "id": "anthropic/claude-sonnet-4.5", "default": true },
+      { "id": "deepseek/deepseek-v3.2" }
+    ] } },
+
+    // клон встроенного как отдельный вариант (оригинал остаётся)
+    { "id": "openRouter-fav", "extends": "openRouter", "name": "OpenRouter — избранное",
+      "apiKeyRef": "openRouter",
+      "models": { "fetch": false, "static": [ { "id": "x-ai/grok-4", "default": true } ] } }
+  ]
+}
+```
+
+| Хочу | Как |
+|---|---|
+| свой провайдер с нуля | новый `id` + `baseURL` + `auth` + `apiKeyEnv`/`apiKeyRef` |
+| выключить/подправить встроенный | совпасть по `id`, написать только изменения |
+| второй вариант на базе существующего | `extends: "<id>"` + новый `id` |
+| выключить модель | в `models.static` — `{ "id": "...", "active": false }` |
 
 ### Папка `.vibeide/` — служебные данные IDE в воркспейсе
 

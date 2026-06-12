@@ -90,6 +90,10 @@ export interface IVibeideSettingsService {
 	addModel(providerName: ProviderName, modelName: string): void;
 	deleteModel(providerName: ProviderName, modelName: string): boolean;
 
+	/** Apply `.vibe/providers.json` disable-toggles for built-in providers/models. Derived (not
+	 *  persisted) — recomputes the model picker + reselects if the active model became hidden. */
+	applyProviderActiveOverrides(overrides: VibeProviderActiveOverrides | undefined): void;
+
 	addMCPUserStateOfNames(userStateOfName: MCPUserStateOfName): Promise<void>;
 	removeMCPUserStateOfNames(serverNames: string[]): Promise<void>;
 	setMCPServerState(serverName: string, state: MCPUserState): Promise<void>;
@@ -222,6 +226,18 @@ const _stateWithMergedDefaultModels = (state: VibeideSettingsState): VibeideSett
 	}
 }
 
+/**
+ * Built-in providers/models the user disabled via `.vibe/providers.json` (`active: false`).
+ * Set by the dynamic-providers service (browser) through `applyProviderActiveOverrides`; consumed in
+ * `_validatedModelState` to drop them from the model picker (and trigger reselection if a hidden one
+ * was selected). Module-level so the pure `_validatedModelState` reads it without threading.
+ */
+export interface VibeProviderActiveOverrides {
+	readonly disabledProviders: ReadonlySet<string>;
+	readonly disabledModels: ReadonlyMap<string, ReadonlySet<string>>;
+}
+let _providerActiveOverrides: VibeProviderActiveOverrides | undefined = undefined;
+
 const _validatedModelState = (state: Omit<VibeideSettingsState, '_modelOptions'>): VibeideSettingsState => {
 
 	let newSettingsOfProvider = state.settingsOfProvider
@@ -251,10 +267,13 @@ const _validatedModelState = (state: Omit<VibeideSettingsState, '_modelOptions'>
 	newModelOptions.push(autoOption)
 
 	for (const providerName of providerNames) {
+		if (_providerActiveOverrides?.disabledProviders.has(providerName)) continue // .vibe/providers.json: active:false
 		const providerTitle = providerName // displayInfoOfProviderName(providerName).title.toLowerCase() // looks better lowercase, best practice to not use raw providerName
 		if (!newSettingsOfProvider[providerName]._didFillInProviderSettings) continue // if disabled, don't display model options
+		const disabledModelsForProvider = _providerActiveOverrides?.disabledModels.get(providerName)
 		for (const { modelName, isHidden } of newSettingsOfProvider[providerName].models) {
 			if (isHidden) continue
+			if (disabledModelsForProvider?.has(modelName)) continue // .vibe/providers.json: model active:false
 			newModelOptions.push({ name: `${modelName} (${providerTitle})`, selection: { providerName, modelName } })
 		}
 	}
@@ -376,6 +395,14 @@ class VoidSettingsService extends Disposable implements IVibeideSettingsService 
 		this._onDidChangeState.fire()
 		this._onUpdate_syncApplyToChat()
 		this._onUpdate_syncSCMToChat()
+	}
+
+	applyProviderActiveOverrides = (overrides: VibeProviderActiveOverrides | undefined): void => {
+		_providerActiveOverrides = overrides
+		// Recompute model options + selection against the new overrides. No _storeState — these are
+		// derived from .vibe/providers.json (reapplied on every load), not persisted user settings.
+		this.state = _validatedModelState(this.state)
+		this._onDidChangeState.fire()
 	}
 	async resetState() {
 		await this.dangerousSetState(defaultState())

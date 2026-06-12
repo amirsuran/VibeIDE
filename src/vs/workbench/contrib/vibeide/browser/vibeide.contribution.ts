@@ -515,6 +515,18 @@ import './vibeDefaultsContribution.js'
 // VibeIDE: default-setting overrides (editor.wordWrap = on, …)
 import './vibeDefaultSettingsOverrides.js'
 
+// VibeIDE: global settings schema registration (vibeide.llm.*, vibeide.skills.*, vibeide.tools.*, …).
+// MUST be imported so its `registerConfiguration` runs — otherwise these keys are unregistered and
+// writing them (e.g. the repair-tool «Отключить» toast) fails with "not a registered configuration".
+import '../common/vibeideGlobalSettingsConfiguration.js'
+
+// VibeIDE: .vibe/providers.json JSON Schema + jsonc association (IntelliSense + comment highlighting)
+import './vibeProvidersSchemaContribution.js'
+
+// VibeIDE: dynamic providers service (reads/resolves .vibe/providers.json) + diagnostic command
+import './vibeDynamicProvidersService.js'
+import './vibeProvidersDiagnosticContribution.js'
+
 // VibeIDE: Tool-call format indicator statusbar (native FC vs XML fallback + auto-downgrade reason)
 import './vibeStatusBarToolFormat.js'
 
