@@ -183,3 +183,14 @@ MenuRegistry.appendMenuItem(VibeideTitleBarMenuId, {
 	group: 'c_workspace',
 	order: 3,
 });
+
+// ── Group d_commands ── (after search, separated by a divider)
+
+MenuRegistry.appendMenuItem(VibeideTitleBarMenuId, {
+	command: {
+		id: 'vibeide.commands.showPalette',
+		title: localize('vibeideCommandsPalette', 'VibeIDE Команды'),
+	},
+	group: 'd_commands',
+	order: 1,
+});

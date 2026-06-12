@@ -36,6 +36,9 @@
 | [model-quirks.md](architecture/model-quirks.md) | Catalog-driven per-model quirks (temperature/topP/topK/reasoning/tool-format) — `resources/model-quirks.json` + CDN refresh |
 | [xml-tool-normalization.md](architecture/xml-tool-normalization.md) | XML tool-call pipeline (Layer 1 normalize / Layer 2 parser / Layer 3 safety net), DSML/self-closing/malformed-close coverage |
 | [xml-tool-format-matrix.md](architecture/xml-tool-format-matrix.md) | Living matrix: vendor × provider × format × coverage layer × test fixture |
+| [context-report.md](architecture/context-report.md) | Команда `vibeide.context.status` (аналог `/context`): `buildContextBreakdown` считает состав промпта по живым геттерам, шкала из context-guard, история — остаток; рендер в untitled-md |
+| [commands-palette-modal.md](architecture/commands-palette-modal.md) | «VibeIDE Команды» — resizable-окно списка всех `vibe*`-команд (brain-меню). Бридж-сервис + ленивый портал, почему не `VibeModalService`, новая tsup-точка + ручной `.d.ts`, `@@`-className-футган |
+| [vibe-defaults.md](architecture/vibe-defaults.md) | `.vibe-defaults/` → генерируемый манифест (перечитывается с нуля каждую сборку) → `applyVibeDefaults` сеет в `.vibe/` (create-if-missing). Команда `vibeide.defaults.apply`, общий `collectVibeideCommands`, word wrap ON по умолчанию |
 
 ### [ui/](ui/) — CSS, темы, view-инфраструктура
 
@@ -137,6 +140,7 @@
 | [main-renderer-config-bridge.md](patterns/main-renderer-config-bridge.md) | Pattern для прокидывания renderer-side settings в electron-main process через IPC + `process.env` indirection. Когда использовать, когда нет, alternative с direct IPC channel при росте |
 | [verify-before-hypothesizing.md](patterns/verify-before-hypothesizing.md) | **[правило]** Если симптом измерим — измерь (терминал/инструментация) ПЕРЕД гипотезой. Канон: get_dir_tree-тормоза (3 неверных гипотезы → 1 `Get-ChildItem` = 25мс → корень). Гипотезу без замера в roadmap помечать гипотезой, не причиной |
 | [unit-test-runner-footguns.md](patterns/unit-test-runner-footguns.md) | `import from 'mocha'` убивает весь test.bat-прогон (использовать глобалы), test.bat гоняет `out/` (нужен `transpile-client`), псевдотесты с инлайн-копией логики вместо импорта продукта |
+| [command-title-category.md](patterns/command-title-category.md) | Палитра склеивает `{category}: {title}` буквально → двойной «VibeIDE: VibeIDE: …». С `category` префикс в title не дублировать; без `category` — префикс «VibeIDE:» в title нормален |
 
 ### [agent-collaboration/](agent-collaboration/) — правила работы агента с автором
 

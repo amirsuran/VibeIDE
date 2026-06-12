@@ -15,6 +15,7 @@ import { IVibeideModelService } from '../common/vibeideModelService.js';
 import { IVibeideSettingsService } from '../common/vibeideSettingsService.js';
 import { getDefaultVibeReadmeMarkdown, VIBE_WORKSPACE_FORMAT_VERSION } from '../common/vibeDefaultWorkspaceReadme.js';
 import { serializeProjectCommandsInitTemplate } from '../common/projectCommandsInitTemplate.js';
+import { applyVibeDefaults } from '../common/vibeDefaults.js';
 
 const VIBE_VERSION = VIBE_WORKSPACE_FORMAT_VERSION;
 
@@ -159,13 +160,9 @@ export class VibeConfigInitContribution extends Disposable implements IWorkbench
 			// and inject current goals into the agent context (mirrors rules.md above).
 			await this._vibeideModelService.initializeModel(joinPath(vibeDir, 'goals.md'));
 
-			// Create .vibe/prompts/ directory for Prompt Library
+			// Create .vibe/prompts/ directory for Prompt Library. Default prompt templates are
+			// seeded from the .vibe-defaults manifest below (no inline duplicates).
 			await this._fileService.createFolder(joinPath(vibeDir, 'prompts'));
-			// Example prompt template
-			await this._createIfMissing(
-				joinPath(vibeDir, 'prompts', 'example.md'),
-				`# Пример шаблона промпта\n\n<!-- В чате: /my:example -->\n<!-- Плейсхолдеры: только $LATIN_NAME (буквы A-Z, цифры, _). Остаток строки после команды попадает в $ARGS. -->\n\nПроверь код ниже с точки зрения $ASPECT:\n\n\`\`\`\n$CODE\n\`\`\`\n`
-			);
 
 			// Create .vibe/workflows/ directory
 			await this._fileService.createFolder(joinPath(vibeDir, 'workflows'));
@@ -204,31 +201,14 @@ export class VibeConfigInitContribution extends Disposable implements IWorkbench
 				serializeProjectCommandsInitTemplate({ vibeVersion: VIBE_VERSION })
 			);
 
-			// Create .vibe/skills/ — Agent Skills (SKILL.md + /skill:id + GUIDELINES discovery)
-			const skillsDir = joinPath(vibeDir, 'skills');
-			await this._fileService.createFolder(skillsDir);
-			const skillsExampleDir = joinPath(skillsDir, 'example');
-			await this._fileService.createFolder(skillsExampleDir);
-			await this._createIfMissing(
-				joinPath(skillsExampleDir, 'SKILL.md'),
-				`---
-name: example
-description: Когда нужна короткая демонстрация Agent Skill или проверка команд /skill: в этом проекте.
-vibeVersion: ${VIBE_VERSION}
-# depends:        # опционально — skill packs (DAG без циклов; см. vibe skills validate)
-#   - other-skill
----
+			// Create .vibe/skills/ — Agent Skills (SKILL.md + /skill:id + GUIDELINES discovery).
+			// The default skill set is seeded from the .vibe-defaults manifest below.
+			await this._fileService.createFolder(joinPath(vibeDir, 'skills'));
 
-# Пример навыка (Agent Skill)
-
-Когда навык активен (пользователь вызвал \`/skill:example\` или задача явно совпадает с описанием):
-
-1. Одним предложением подтвердите цель пользователя.
-2. Предложите минимально безопасный план (файлы, команды) без лишних абстракций.
-3. Следуйте принятым в репозитории соглашениям по стилю кода.
-
-`,
-			);
+			// Seed default agent scaffolding (rules/, skills/, prompts/) embedded from .vibe-defaults
+			// (regenerated from disk on every build). Create-if-missing → user edits are preserved.
+			const seeded = await applyVibeDefaults(this._fileService, vibeDir);
+			vibeLog.debug('vibeConfigInit', `.vibe defaults seeded: +${seeded.created}, kept ${seeded.skipped}`);
 
 			vibeLog.info('vibeConfigInit', '.vibe/ configuration initialized');
 		} catch (e) {

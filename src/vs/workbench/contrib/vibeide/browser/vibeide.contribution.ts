@@ -408,7 +408,7 @@ import './vibeCustomCommandsOnboarding.js'
 import './vibeProjectCommandsTopBarContribution.js'
 import './vibeProjectCommandsMenubarContribution.js'
 import './vibeProjectCommandsPopupContribution.js'
-import './vibeProjectCommandFormPane.js'
+import './vibeProjectCommandFormModalContribution.js'
 import './vibeAiThinkingStatusBar.js'
 
 // VibeIDE: Plan-lease periodic janitor (.vibe/plans/.leases TTL cleanup)
@@ -502,6 +502,18 @@ import './vibeInlineAiExplanationHoverProvider.js'
 
 // VibeIDE: Context window visualizer statusbar
 import './vibeContextWindowStatusBar.js'
+
+// VibeIDE: Context usage report command (vibeide.context.status — opens composition report)
+import './vibeContextReportContribution.js'
+
+// VibeIDE: "VibeIDE Команды" resizable command-browser modal (brain menu)
+import './vibeCommandsPaletteContribution.js'
+
+// VibeIDE: "Установить дефолтную обвязку для агентов" command (.vibe defaults)
+import './vibeDefaultsContribution.js'
+
+// VibeIDE: default-setting overrides (editor.wordWrap = on, …)
+import './vibeDefaultSettingsOverrides.js'
 
 // VibeIDE: Tool-call format indicator statusbar (native FC vs XML fallback + auto-downgrade reason)
 import './vibeStatusBarToolFormat.js'

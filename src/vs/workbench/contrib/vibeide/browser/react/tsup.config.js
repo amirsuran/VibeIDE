@@ -15,6 +15,8 @@ export default defineConfig({
 		'./src2/quick-edit-tsx/index.tsx',
 		'./src2/diff/index.tsx',
 		'./src2/modal-tsx/index.tsx',
+		'./src2/commands-palette-tsx/index.tsx',
+		'./src2/commands-form-tsx/index.tsx',
 	],
 	outDir: './out',
 	format: ['esm'],

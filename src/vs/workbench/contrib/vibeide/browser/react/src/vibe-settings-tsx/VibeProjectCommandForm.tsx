@@ -48,6 +48,8 @@ export interface VibeProjectCommandFormProps {
 	readonly commandIdForEdit?: string;
 	/** Prefilled draft (edit mode). Undefined for add ⇒ use ADD_COMMAND_DRAFT_EMPTY. */
 	readonly initialDraft?: AddCommandDraft;
+	/** When hosted in a modal (not an editor tab), close via this instead of `closeActiveEditor`. */
+	readonly onClose?: () => void;
 }
 
 export const VibeProjectCommandForm: React.FC<VibeProjectCommandFormProps> = (props) => {
@@ -102,10 +104,12 @@ export const VibeProjectCommandForm: React.FC<VibeProjectCommandFormProps> = (pr
 	}, []);
 
 	const closeEditor = useCallback(async () => {
+		// Modal host passes onClose; editor-tab host falls back to closing the active editor.
+		if (props.onClose) { props.onClose(); return; }
 		try {
 			await commandService.executeCommand('workbench.action.closeActiveEditor');
 		} catch { /* ignore */ }
-	}, [commandService]);
+	}, [commandService, props]);
 
 	const onSave = useCallback(async () => {
 		if (!validation.isValid || saveBusy) return;

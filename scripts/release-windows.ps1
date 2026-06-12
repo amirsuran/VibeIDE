@@ -126,6 +126,15 @@ try {
 # shadow scope-tailwind copy in sync with edits in `react/src/`. Skipping this
 # step was the root cause of a release failure on 2026-05-12 where a fix in
 # `vibeSettingsRu.ts` had not propagated to the shadow tree.
+# ── 0. Regenerate the embedded .vibe-defaults manifest ────────────────────────
+# Re-read .vibe-defaults/ from scratch on every build so the seeded agent scaffolding
+# always reflects the current folder — the file set is never hard-coded.
+if (-not $SkipCompile) {
+    Step "Regenerating .vibe-defaults manifest..."
+    Npm "run gen:vibe-defaults"
+    OK ".vibe-defaults manifest regenerated"
+}
+
 if (-not $SkipCompile) {
     Step "Rebuilding React tree (scope-tailwind + tsup)..."
     Npm "run buildreact"

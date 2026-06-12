@@ -56,7 +56,7 @@ function uint8ArrayToBase64(data: Uint8Array): string {
 	}
 }
 import { getIsReasoningEnabledState, getReservedOutputTokenSpace, getModelCapabilities } from '../common/modelCapabilities.js';
-import { reParsedToolXMLString, chat_systemMessage, chat_systemMessage_local } from '../common/prompt/prompts.js';
+import { reParsedToolXMLString, chat_systemMessage, chat_systemMessage_local, systemToolsXMLPrompt } from '../common/prompt/prompts.js';
 import { detectModelFamily } from '../common/prompt/modelFamily.js';
 import { computeLastExchangePinSet } from '../common/prompt/lastExchangePin.js';
 import { isPinnedContextMessage } from '../common/prompt/pinnedContext.js';
@@ -1365,8 +1365,37 @@ const prepareMessages = (params: {
 
 
 
+/** One labelled row of the context-composition report (see `buildContextBreakdown`). */
+export interface ContextBreakdownSegment {
+	readonly key: string;
+	readonly label: string;
+	/** Raw estimate (chars / 4) for this segment. */
+	readonly tokens: number;
+}
+
+/** Composition of the prompt that would be sent for the selected model, for the Context Report command. */
+export interface ContextBreakdown {
+	readonly providerName: string;
+	readonly modelName: string;
+	/** Model context window (real tokens). 0 when unknown (auto/unresolved model and no live data). */
+	readonly maxTokens: number;
+	/** Learned estimate→real calibration factor for this model (1 when none/disabled). */
+	readonly calibrationFactor: number;
+	/** True when the model uses native function-calling — tool schemas ride the SDK, not the prompt. */
+	readonly toolsViaSdk: boolean;
+	readonly segments: readonly ContextBreakdownSegment[];
+	/** Sum of all system-side segments (raw estimate). */
+	readonly systemSideTokens: number;
+	/** Conversation/history share, derived from the live total minus the system side. `undefined` on a cold thread. */
+	readonly messagesTokens: number | undefined;
+	/** Live calibrated total from the context guard (real tokens). `undefined` until a request ran this thread. */
+	readonly liveTotalTokens: number | undefined;
+}
+
 export interface IConvertToLLMMessageService {
 	readonly _serviceBrand: undefined;
+	/** Build a composition breakdown of the prompt for the selected model (powers the Context Report command). Read-only — sends nothing. */
+	buildContextBreakdown(modelSelection: ModelSelection | null): Promise<ContextBreakdown>;
 	prepareLLMSimpleMessages: (opts: { simpleMessages: SimpleLLMMessage[], systemMessage: string, modelSelection: ModelSelection | null, featureName: FeatureName }) => { messages: LLMChatMessage[], separateSystemMessage: string | undefined }
 	prepareLLMChatMessages: (opts: { chatMessages: ChatMessage[], chatMode: ChatMode, modelSelection: ModelSelection | null, repoIndexerPromise?: Promise<{ results: string[], metrics: any } | null> }) => Promise<{ messages: LLMChatMessage[], separateSystemMessage: string | undefined }>
 	prepareFIMMessage(opts: { messages: LLMFIMMessage, modelSelection: ModelSelection | null, featureName: FeatureName, languageId?: string }): { prefix: string, suffix: string, stopTokens: string[] }
@@ -1730,6 +1759,84 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 			this.repoIndexerService.warmIndex(undefined).catch(() => { });
 			return null;
 		}
+	}
+
+	// Read-only composition report for the Context Report command (vibeide.context.status).
+	// Measures the same prompt pieces that prepareLLMChatMessages assembles — reusing the same
+	// getters as the single source of truth — without sending anything. The conversation/history
+	// share is derived as the remainder of the live (de-calibrated) total minus the measured
+	// system side, which avoids importing chatThreadService here (that would close an import cycle:
+	// chatThreadService → convertToLLMMessageService).
+	buildContextBreakdown: IConvertToLLMMessageService['buildContextBreakdown'] = async (modelSelection) => {
+		const est = (s: string | undefined | null) => Math.ceil((s?.length ?? 0) / 4);
+
+		// Resolve capabilities only for a concrete model; tolerate auto/null so the report still
+		// shows the model-agnostic composition (rules, playbook, goals, refs).
+		const sel = modelSelection && modelSelection.providerName !== 'auto'
+			? { providerName: modelSelection.providerName as Exclude<ProviderName, 'auto'>, modelName: modelSelection.modelName }
+			: null;
+		let specialToolFormat: 'openai-style' | 'anthropic-style' | 'gemini-style' | undefined = undefined;
+		let modelContextWindow = 0;
+		if (sel) {
+			const { overridesOfModel } = this.vibeideSettingsService.state;
+			const catalogInfo = this.remoteCatalogService.getCachedModelInfo(sel.providerName, sel.modelName);
+			const caps = getModelCapabilities(sel.providerName, sel.modelName, overridesOfModel, catalogInfo);
+			specialToolFormat = caps.specialToolFormat;
+			modelContextWindow = caps.contextWindow ?? 0;
+		}
+
+		// System frame (workspace, directory tree, environment, memories) + (for XML models) tool defs.
+		const fullSystem = await this._generateChatMessagesSystemMessage('agent', specialToolFormat, sel?.providerName, sel?.modelName);
+		// Native function-calling models receive tools via the SDK, NOT in the prompt. We still
+		// estimate the XML tool-schema size to show how heavy the tool surface is for this model.
+		const toolsStr = systemToolsXMLPrompt('agent', this.mcpService.getMCPTools());
+		const toolsViaSdk = !!specialToolFormat;
+		const frameTokens = Math.max(0, est(fullSystem) - (toolsViaSdk ? 0 : est(toolsStr)));
+
+		// AI-instruction source pieces — read the SAME getters _getCombinedAIInstructions uses
+		// (single source of truth). The imperative envelopes are constant framing and fold into the
+		// messages remainder; the raw source contents are what actually weigh on the budget.
+		const globalAIInstructions = this.vibeideSettingsService.state.globalSettings.aiInstructions;
+		const vibeRules = this._getVibeRulesFileContents();
+		const sessionGoals = this._getVibeGoalsFileContent();
+		const linkedRefs = this.projectRulesService.getLinkedReferences();
+		const hasWorkspace = this.workspaceContextService.getWorkspace().folders.length > 0;
+
+		const segments: ContextBreakdownSegment[] = [
+			{ key: 'frame', label: 'Системный промпт (каркас)', tokens: frameTokens },
+			{ key: 'tools', label: toolsViaSdk ? 'Инструменты (через SDK провайдера)' : 'Инструменты (XML в промпте)', tokens: est(toolsStr) },
+			{ key: 'global', label: 'Глобальные AI-инструкции (vibeide.*)', tokens: est(globalAIInstructions) },
+			{ key: 'projectRules', label: 'Правила проекта <project_rules>', tokens: est(vibeRules) },
+			{ key: 'playbook', label: 'Playbook (.vibe agent playbook)', tokens: hasWorkspace ? est(VIBE_DOTVIBE_AGENT_PLAYBOOK) : 0 },
+			{ key: 'sessionGoals', label: 'Цели сессии <session_goals>', tokens: est(sessionGoals) },
+			{ key: 'referencedFiles', label: 'Связанные файлы <referenced_files>', tokens: est(linkedRefs) },
+		];
+		const systemSideTokens = segments.reduce((a, s) => a + s.tokens, 0);
+
+		// Live, calibrated fill from the context guard (authoritative; populated only after at least
+		// one request in the current thread).
+		const status = this.contextGuardService.getStatus();
+		const calibrationMaxFactor = this.configurationService.getValue<number>('vibeide.context.tokenCalibrationMaxFactor') ?? TOKEN_CALIBRATION_MAX;
+		const calibrationFactor = sel
+			? clampTokenCalibration(this._tokenCalibrationByModel.get(`${sel.providerName}:${sel.modelName}`), calibrationMaxFactor)
+			: 1;
+		const liveTotalTokens = status.currentTokens > 0 ? status.currentTokens : undefined;
+		const messagesTokens = liveTotalTokens !== undefined
+			? Math.max(0, Math.round(liveTotalTokens / (calibrationFactor || 1)) - systemSideTokens)
+			: undefined;
+		const maxTokens = status.maxTokens > 0 ? status.maxTokens : modelContextWindow;
+
+		return {
+			providerName: sel?.providerName ?? (modelSelection?.providerName ?? 'auto'),
+			modelName: sel?.modelName ?? (modelSelection?.modelName ?? 'auto'),
+			maxTokens,
+			calibrationFactor,
+			toolsViaSdk,
+			segments,
+			systemSideTokens,
+			messagesTokens,
+			liveTotalTokens,
+		};
 	}
 
 	prepareLLMChatMessages: IConvertToLLMMessageService['prepareLLMChatMessages'] = async ({ chatMessages, chatMode, modelSelection, repoIndexerPromise }) => {

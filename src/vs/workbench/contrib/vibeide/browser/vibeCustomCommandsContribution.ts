@@ -55,8 +55,7 @@ import {
 	ADD_COMMAND_ERROR,
 } from '../common/projectCommandsAddFormPolicy.js';
 import { VIBE_WORKSPACE_FORMAT_VERSION } from '../common/vibeDefaultWorkspaceReadme.js';
-import { setVibeProjectCommandFormProps, VibeProjectCommandFormInput } from './vibeProjectCommandFormPane.js';
-import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
+import { IVibeProjectCommandFormModalService } from '../common/vibeProjectCommandFormModalService.js';
 import { safeParseConfigJson } from '../common/vibeConfigJsonParser.js';
 import { findSuspiciousLiteralSecrets } from '../common/projectCommandSecretsResolver.js';
 import { KeybindingsRegistry, KeybindingWeight } from '../../../../platform/keybinding/common/keybindingsRegistry.js';
@@ -799,14 +798,12 @@ CommandsRegistry.registerCommand({
 });
 
 // ── vibeide.commands.add ───────────────────────────────────────────────────────
-// Opens the standalone Add/Edit form editor (`VibeProjectCommandFormInput`)
-// in 'add' mode. Form lives in `VibeProjectCommandForm.tsx` — see that file
-// for validation and write logic.
+// Opens the Add/Edit form in a resizable modal (`VibeProjectCommandFormModal`) in 'add' mode.
+// Form lives in `VibeProjectCommandForm.tsx` — see that file for validation and write logic.
 CommandsRegistry.registerCommand({
 	id: PROJECT_COMMANDS_PALETTE_IDS.add,
 	handler: async (accessor: ServicesAccessor) => {
-		const editorService = accessor.get(IEditorService);
-		const instantiationService = accessor.get(IInstantiationService);
+		const formModal = accessor.get(IVibeProjectCommandFormModalService);
 		const notifications = accessor.get(INotificationService);
 		const workspace = accessor.get(IWorkspaceContextService);
 
@@ -819,15 +816,7 @@ CommandsRegistry.registerCommand({
 			return;
 		}
 
-		setVibeProjectCommandFormProps({ mode: 'add' });
-		// Close any existing form first so reopening with fresh props remounts the
-		// React root with the new mode/draft (the editor input resource is shared).
-		const open = editorService.findEditors(VibeProjectCommandFormInput.RESOURCE);
-		if (open.length > 0) {
-			await editorService.closeEditors(open);
-		}
-		const input = instantiationService.createInstance(VibeProjectCommandFormInput);
-		await editorService.openEditor(input);
+		formModal.open({ mode: 'add' });
 	},
 });
 
@@ -838,8 +827,7 @@ CommandsRegistry.registerCommand({
 CommandsRegistry.registerCommand({
 	id: 'vibeide.commands.editById',
 	handler: async (accessor: ServicesAccessor, commandId: string) => {
-		const editorService = accessor.get(IEditorService);
-		const instantiationService = accessor.get(IInstantiationService);
+		const formModal = accessor.get(IVibeProjectCommandFormModalService);
 		const notifications = accessor.get(INotificationService);
 		const workspace = accessor.get(IWorkspaceContextService);
 		const fileService = accessor.get(IFileService);
@@ -877,17 +865,11 @@ CommandsRegistry.registerCommand({
 			return;
 		}
 
-		setVibeProjectCommandFormProps({
+		formModal.open({
 			mode: 'edit',
 			commandIdForEdit: commandId,
 			initialDraft: commandToDraft(existingCmd),
 		});
-		const open = editorService.findEditors(VibeProjectCommandFormInput.RESOURCE);
-		if (open.length > 0) {
-			await editorService.closeEditors(open);
-		}
-		const input = instantiationService.createInstance(VibeProjectCommandFormInput);
-		await editorService.openEditor(input);
 	},
 });
 
