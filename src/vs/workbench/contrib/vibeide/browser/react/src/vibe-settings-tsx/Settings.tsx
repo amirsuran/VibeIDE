@@ -601,7 +601,9 @@ export const ModelDump = ({ filteredProviders }: { filteredProviders?: ProviderN
 		// non-built-in ids, so they list here exactly like built-ins.
 		const builtinSet = new Set<string>(providerNames as readonly string[]);
 		const dynamicIds = (Object.keys(settingsState.settingsOfProvider) as string[]).filter(id => !builtinSet.has(id)) as ProviderName[];
-		const base = filteredProviders ?? [...providerNames, ...dynamicIds];
+		// Dynamic providers first — same precedence as the provider cards and the chat picker (the user's
+		// own .vibe/providers.json providers sit at the top).
+		const base = filteredProviders ?? [...dynamicIds, ...providerNames];
 		return base.filter(p => !!settingsState.settingsOfProvider[p]?._didFillInProviderSettings);
 	}, [filteredProviders, settingsState.settingsOfProvider]);
 
