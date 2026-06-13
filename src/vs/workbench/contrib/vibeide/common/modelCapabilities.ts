@@ -2190,7 +2190,11 @@ const catalogFields = (info: CatalogModelHint | undefined): Partial<VibeideStati
 
 // non-model settings
 export const getProviderCapabilities = (providerName: ProviderName) => {
-	const { providerReasoningIOSettings } = modelSettingsOfProvider[providerName]
+	// Dynamic providers (.vibe/providers.json) aren't in modelSettingsOfProvider. They're
+	// OpenAI-compatible, so fall back to the openAICompatible provider's reasoning IO settings
+	// (reasoning_effort in / reasoning_content out) instead of destructuring undefined.
+	const settings = modelSettingsOfProvider[providerName] ?? modelSettingsOfProvider['openAICompatible']
+	const { providerReasoningIOSettings } = settings
 	return { providerReasoningIOSettings }
 }
 

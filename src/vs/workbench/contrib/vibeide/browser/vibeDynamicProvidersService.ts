@@ -28,6 +28,8 @@ import { IVibeideSettingsService, VibeProviderActiveOverrides, ModelOption, DynP
 import { setDynamicProviderModelCaps, VibeideStaticModelInfo } from '../common/modelCapabilities.js';
 import { parseProvidersFile, mergeProviderEntry, VibeProviderEntry, VibeProviderModelEntry } from '../common/vibeProvidersFile.js';
 import { parseEnvFile } from '../common/vibeEnvFile.js';
+import { ILifecycleService, LifecyclePhase } from '../../../services/lifecycle/common/lifecycle.js';
+import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
 
 const TOOL_FORMAT_MAP: Record<string, 'openai-style' | 'anthropic-style' | 'gemini-style' | undefined> = {
 	openai: 'openai-style', anthropic: 'anthropic-style', gemini: 'gemini-style', none: undefined,
@@ -138,9 +140,15 @@ class VibeDynamicProvidersService extends Disposable implements IVibeDynamicProv
 		@IFileService private readonly _fileService: IFileService,
 		@IWorkspaceContextService private readonly _workspaceContextService: IWorkspaceContextService,
 		@IVibeideSettingsService private readonly _settingsService: IVibeideSettingsService,
+		@ILifecycleService private readonly _lifecycleService: ILifecycleService,
 	) {
 		super();
 		void this.reload();
+		// A window opened DIRECTLY on a folder fires no onDidChangeWorkspaceFolders, and the service
+		// can construct before workspace folders are populated — both leave the initial reload() empty
+		// (file silently "not found"). Reload once the workbench is restored, when folders[0] is
+		// guaranteed present, so the model picker actually receives the dynamic providers at startup.
+		this._lifecycleService.when(LifecyclePhase.Restored).then(() => { void this.reload(); });
 		this._register(this._workspaceContextService.onDidChangeWorkspaceFolders(() => { void this.reload(); }));
 		this._register(this._fileService.onDidFilesChange(e => {
 			const uri = this._fileUri();
@@ -291,8 +299,32 @@ class VibeDynamicProvidersService extends Disposable implements IVibeDynamicProv
 		activeDynamic.sort(compareDynamicProviders);
 
 		for (const p of activeDynamic) {
-			// Phase 1 contributes its static models (catalog auto-fetch for dynamic providers is a
-			// follow-up). providerName = file id. Models keep their in-file order within the provider.
+			// Resolve the BROWSER-VISIBLE key: apiKeyRef (secure settings) → .vibe/.env. A key only in
+			// an OS env var isn't visible to the renderer (PRODUCT invariant 12), so it doesn't count
+			// for UI gating — electron-main still resolves apiKeyEnv from process.env at request time.
+			const refKey = p.entry.apiKeyRef
+				? (this._settingsService.state.settingsOfProvider as Record<string, { apiKey?: string } | undefined>)[p.entry.apiKeyRef]?.apiKey
+				: undefined;
+			const envFileKey = p.entry.apiKeyEnv ? this._envFileVars[p.entry.apiKeyEnv] : undefined;
+			const resolvedKey = refKey || envFileKey || undefined;
+
+			// Transport overlay — built regardless of UI key (apiKeyEnv may resolve in main at send time),
+			// only needs a baseURL. extends-builtin without baseURL inherits downstream (follow-up).
+			if (p.entry.baseURL) {
+				transportConfigs[p.id] = {
+					baseURL: p.entry.baseURL,
+					...(resolvedKey ? { apiKey: resolvedKey } : {}),
+					...(p.entry.apiKeyEnv ? { apiKeyEnv: p.entry.apiKeyEnv } : {}),
+					...(p.entry.headers ? { headers: { ...p.entry.headers } } : {}),
+				};
+			}
+
+			// CONNECTED = resolvable browser-visible key. Models appear in the picker ONLY for connected
+			// providers (PRODUCT invariants 4, 8, 10) — mirrors built-ins requiring filled-in settings.
+			// No key → skip: no models offered for this provider. (Catalog fetch is Phase 2; for now the
+			// models come from the file's static list, gated by per-model `active`.)
+			if (!resolvedKey) { continue; }
+
 			const label = p.entry.name || p.id;
 			const modelCaps = new Map<string, Partial<VibeideStaticModelInfo>>();
 			for (const m of (p.entry.models?.static ?? [])) {
@@ -301,25 +333,6 @@ class VibeDynamicProvidersService extends Disposable implements IVibeDynamicProv
 				modelCaps.set(m.id, modelEntryToCaps(m));
 			}
 			if (modelCaps.size > 0) { capsMap.set(p.id, modelCaps); }
-
-			// Transport: only providers with an explicit baseURL are routable. extends-builtin without a
-			// baseURL inherits the built-in endpoint downstream — a follow-up; skip routing for now.
-			if (p.entry.baseURL) {
-				// Key precedence: apiKeyRef (secure settings) → .vibe/.env → process.env (main fallback).
-				// apiKeyRef + .env resolve HERE (renderer); the apiKeyEnv NAME is still forwarded so
-				// electron-main can fall back to process.env when neither produced a value.
-				const refKey = p.entry.apiKeyRef
-					? (this._settingsService.state.settingsOfProvider as Record<string, { apiKey?: string } | undefined>)[p.entry.apiKeyRef]?.apiKey
-					: undefined;
-				const envFileKey = p.entry.apiKeyEnv ? this._envFileVars[p.entry.apiKeyEnv] : undefined;
-				const apiKey = refKey || envFileKey || undefined;
-				transportConfigs[p.id] = {
-					baseURL: p.entry.baseURL,
-					...(apiKey ? { apiKey } : {}),
-					...(p.entry.apiKeyEnv ? { apiKeyEnv: p.entry.apiKeyEnv } : {}),
-					...(p.entry.headers ? { headers: { ...p.entry.headers } } : {}),
-				};
-			}
 		}
 		setDynamicProviderModelCaps(capsMap.size > 0 ? capsMap : undefined);
 		const hasTransport = Object.keys(transportConfigs).length > 0;
@@ -333,3 +346,18 @@ class VibeDynamicProvidersService extends Disposable implements IVibeDynamicProv
 
 // Eager: must run at startup so disabled built-ins are hidden from the model picker immediately.
 registerSingleton(IVibeDynamicProvidersService, VibeDynamicProvidersService, InstantiationType.Eager);
+
+/**
+ * Force the service to instantiate after restore. A bare Eager singleton with no consumers wasn't
+ * being created at startup (observed: the model picker never received the dynamic providers until
+ * the diagnostic command did an explicit accessor.get + reload). Injecting it here at AfterRestored —
+ * workspace folders ready — guarantees the initial reload() + overlay injection happen on launch.
+ */
+class VibeDynamicProvidersStartupContribution extends Disposable implements IWorkbenchContribution {
+	static readonly ID = 'workbench.contrib.vibeDynamicProvidersStartup';
+	constructor(@IVibeDynamicProvidersService dynProviders: IVibeDynamicProvidersService) {
+		super();
+		void dynProviders; // injection alone forces instantiation (and the service's initial reload)
+	}
+}
+registerWorkbenchContribution2(VibeDynamicProvidersStartupContribution.ID, VibeDynamicProvidersStartupContribution, WorkbenchPhase.AfterRestored);

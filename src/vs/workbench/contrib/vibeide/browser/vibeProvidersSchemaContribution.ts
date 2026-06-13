@@ -77,7 +77,7 @@ const providerSchema: IJSONSchema = {
 		extends: { type: 'string', examples: BUILTIN_PROVIDER_IDS, description: 'Унаследовать все поля от другого провайдера (built-in или из файла), затем переопределить ниже.' },
 		name: { type: 'string', description: 'Отображаемое имя.' },
 		active: { type: 'boolean', default: true, description: 'false — выключить провайдера и все его модели.' },
-		order: { type: 'number', description: 'Порядок среди ВАШИХ провайдеров в выборе модели (меньше = выше). Без значения — в конец, по имени. Встроенные не двигаются.' },
+		order: { type: 'number', description: 'Порядок среди ВАШИХ провайдеров (меньше = выше); они показываются НАД встроенными в выборе модели. Без значения — в конец вашего блока, по имени. Встроенные между собой не двигаются.' },
 		tags: { type: 'array', items: { type: 'string' } },
 		note: { type: 'string' },
 		protocol: { enum: ['openai', 'anthropic', 'gemini'], default: 'openai', description: 'Протокол транспорта. В Фазе 1 надёжно работает openai.' },

@@ -289,6 +289,13 @@ const _validatedModelState = (state: Omit<VibeideSettingsState, '_modelOptions'>
 	const autoOption: ModelOption = { name: 'Auto', selection: { providerName: 'auto' as any, modelName: 'auto' } }
 	newModelOptions.push(autoOption)
 
+	// Dynamic providers (.vibe/providers.json) surface at the TOP — right after "Auto", ABOVE the
+	// built-ins — because they're the user's explicitly-configured providers and should be prominent.
+	// They're already sorted among themselves by `order` (then name) upstream in vibeDynamicProvidersService.
+	if (_providerActiveOverrides?.dynamicModelOptions?.length) {
+		newModelOptions.push(..._providerActiveOverrides.dynamicModelOptions)
+	}
+
 	for (const providerName of providerNames) {
 		if (_providerActiveOverrides?.disabledProviders.has(providerName)) continue // .vibe/providers.json: active:false
 		const providerTitle = providerName // displayInfoOfProviderName(providerName).title.toLowerCase() // looks better lowercase, best practice to not use raw providerName
@@ -299,11 +306,6 @@ const _validatedModelState = (state: Omit<VibeideSettingsState, '_modelOptions'>
 			if (disabledModelsForProvider?.has(modelName)) continue // .vibe/providers.json: model active:false
 			newModelOptions.push({ name: `${modelName} (${providerTitle})`, selection: { providerName, modelName } })
 		}
-	}
-
-	// Models contributed by dynamic providers (.vibe/providers.json) — appended after the built-ins.
-	if (_providerActiveOverrides?.dynamicModelOptions?.length) {
-		newModelOptions.push(..._providerActiveOverrides.dynamicModelOptions)
 	}
 
 	// now that model options are updated, make sure the selection is valid

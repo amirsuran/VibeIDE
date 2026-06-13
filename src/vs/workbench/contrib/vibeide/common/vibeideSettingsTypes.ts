@@ -143,7 +143,11 @@ export const displayInfoOfProviderName = (providerName: ProviderName): DisplayIn
 		return { title: 'LM Router', }
 	}
 
-	throw new Error(`descOfProviderName: Unknown provider name: "${providerName}"`)
+	// Dynamic providers (.vibe/providers.json) carry ids that aren't compile-time union members.
+	// Don't throw — surface the id as the title so the model picker (getOptionDropdownDetail) and any
+	// other caller render instead of crashing the subtree. The picker already shows the full name in
+	// the option label; this is just the secondary provider detail.
+	return { title: providerName }
 }
 
 export const subTextMdOfProviderName = (providerName: ProviderName): string => {
@@ -499,6 +503,11 @@ export const hasDownloadButtonsOnModelsProviderNames = ['ollama'] as const satis
 export const isProviderNameDisabled = (providerName: ProviderName, settingsState: VibeideSettingsState) => {
 
 	const settingsAtProvider = settingsState.settingsOfProvider[providerName]
+	// Dynamic providers (.vibe/providers.json) have no built-in settings entry. Their selectable
+	// models are injected (key-gated) by the dynamic-providers service, so if such a provider is the
+	// current selection it's already "connected" — treat as enabled rather than dereferencing a
+	// missing entry (was: TypeError reading 'models' on model select).
+	if (!settingsAtProvider) { return false }
 	const isAutodetected = (refreshableProviderNames as string[]).includes(providerName)
 
 	const isDisabled = settingsAtProvider.models.length === 0
