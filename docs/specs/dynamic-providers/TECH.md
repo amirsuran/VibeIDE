@@ -1,71 +1,69 @@
-# TECH — Динамические LLM-провайдеры: реальная отправка + reasoning + надёжность под Moonshot/Kimi
+# TECH — Динамические провайдеры как полноценные built-in
 
-Парная к [PRODUCT.md](./PRODUCT.md). Поведение — там; здесь реализация, заземлённая в коде. Фазы A/B/C из PRODUCT.
+Парная к [PRODUCT.md](./PRODUCT.md). Поведение — там; здесь реализация, заземлённая в коде.
 
 ## Context
 
-Поток отправки LLM-запроса:
+**Что уже есть (фундамент, в `main`):**
+- Транспорт: динамик идёт через AI-SDK (`sendViaAISdk`); резолв baseURL/apiKey/headers — default-ветка `aiSdkAdapter.resolveEndpoint`; диспатч-фолбэк в `sendLLMMessage.ts`. Reasoning/`extraBody` инжектятся (`modelEntryToCaps` → caps; `sendViaAISdk:770-780`). Ключ: `apiKeyRef → .vibe/.env → process.env`.
+- Текущий показ моделей: `vibeDynamicProvidersService._applyOverridesToSettings` строит `dynamicModelOptions` из `models.static` файла и кладёт overlay'ем в `_modelOptions` (`_validatedModelState`). **Это и есть то, что переделываем** — модели из файла, без ключа, без включения.
 
-- **Диспатч:** `electron-main/llmMessage/sendLLMMessage.ts:132-136` — `sendLLMMessageToProviderImplementation[providerName]`; если записи нет → `onError('Provider not recognized')` и ранний выход. Карта определена в `sendLLMMessage.impl.ts:1701` (тип `CallFnOfProvider`, ключи — только встроенные `ProviderName`). Каждый встроенный провайдер маппится на `sendViaAISdk`, либо legacy `_sendOpenAICompatibleChat`/`sendAnthropicChat`/`sendGeminiChat`.
-- **AI-SDK путь:** `electron-main/llmMessage/aiSdkAdapter.ts` → `sendViaAISdk` (:752). Резолв транспорта — `resolveEndpoint(providerName, modelName, settingsOfProvider)` (:837) → `{baseURL, apiKey, headers, queryParams}` (switch `resolvePerProvider` :147-298). Пустой `baseURL` → `onError('missing endpoint configuration')` (:843-846). SDK выбирается data-driven (models.dev / `apiProtocol` override / fallback openai-compatible :864, :877-934).
-- **Инъекция тела (openai-compatible):** `createOpenAICompatible({... transformRequestBody: body => ({...body, ...openAICompatExtraBody})})` (:923-934). А `openAICompatExtraBody` (:780) = `{ ...additionalOpenAIPayload, ...reasoningInputPayload }`, где `additionalOpenAIPayload`/`reasoningCapabilities` берутся из `getModelCapabilities` (:770-771), а `reasoningInputPayload` — из `providerReasoningIOSettings.input.includeInPayload(reasoningInfo)` (:777-779). Для openai-compat это `openAICompatIncludeInPayloadReasoning` → `{reasoning_effort}` (`modelCapabilities.ts:1013-1020`), output `reasoning_content` (`:1700-1708`).
-- **Тулы:** `tools = specialToolFormat ? convertToolsToAiSdkToolSet(availableTools(chatMode, mcpTools), true) : undefined` (`aiSdkAdapter.ts:996`).
-- **Динамические caps:** `browser/vibeDynamicProvidersService.ts` → `modelEntryToCaps` (:40-56) маппит только `contextWindow/reservedOutputTokenSpace/specialToolFormat/supportsVision/supportsSystemMessage/cost`. `reasoning`/`extraBody`/`fim` из `VibeProviderModelEntry` (`common/vibeProvidersFile.ts:42-68`) НЕ маппятся. Транспорт (baseURL/apiKey/apiKeyEnv/headers, ключ резолвится `apiKeyRef→.vibe/.env→env`) уже кладётся overlay'ем в `settingsOfProvider[id]` (2b-2 C, `applyProviderActiveOverrides` + send-site merge).
-
-**Главная находка:** динамик не доходит до `sendViaAISdk` — диспатч отбивает неизвестный id. А reasoning/extraBody на AI-SDK пути **уже инжектятся** — нужно лишь наполнить caps. Это определяет дешевизну фазы B.
+**Built-in машинерия (Explore-карта, file:line):**
+- Каталог: `common/remoteCatalogService.ts` — `fetchCatalog(providerName, force)` (:185), реализация `fetchFromProvider` (:280-419) — **hardcoded switch**, неизвестный id → `default: []` (:406). baseURL/apiKey берутся из `settingsService.state.settingsOfProvider[providerName]` (:287) — generic. Есть общий OpenAI-compatible хендлер (~:247-278). `remoteCatalogCapableProviderNames` (:82-104) — hardcoded список.
+- Рефреш в UI: `RefreshRemoteCatalogButton`/`RefreshableRemoteCatalogs` (Settings.tsx :155-216), гейт `remoteCatalogCapableProviderNames.includes(providerName) && _didFillInProviderSettings` (:1094). Результат → `setAutodetectedModels` → `settingsOfProvider[provider].models` (generic, loose-index работает для динамиков).
+- Карточка провайдера: `SettingsForProvider` (Settings.tsx :1039) рендерит поля из `customSettingNamesOfProvider(providerName)` (:1048); `VibeProviderSettings(providerNames)` (:1116) — список карточек. Сейчас кормится `nonlocalProviderNames` (только built-in).
+- Вкладка «Модели»: `ModelDump` (:574) фильтрует `providerNames` по `_didFillInProviderSettings` (:598-600); тумблеры — `toggleModelHidden/addModel/deleteModel` (vibeideSettingsService :797-840, читают/пишут `settingsOfProvider[providerName].models`).
+- Пикер: `_validatedModelState` (vibeideSettingsService :264-345) — цикл по `providerNames`, гейт `_didFillInProviderSettings && !isHidden` (:304-308).
+- Гейт: `computeDidFillInProviderSettings` (:115-124) — для динамика падает/пусто, т.к. `defaultProviderSettings[dynId]` undefined.
+- Тип `SettingsOfProvider` keyed по union `ProviderName` (vibeideSettingsTypes :69-71); рантайм loose-index по динамику работает; `_storeState` (:568) персистит весь стейт (включая loose-ключи).
 
 ## Proposed changes
 
-### Фаза A — динамики реально отправляют
+**Архитектурное решение:** перестать показывать модели динамиков overlay'ем; вместо этого **сделать id динамика first-class в модели настроек** — завести `settingsOfProvider[dynId]` (apiKey/models/...) и прогнать его через те же циклы/гейты, что built-in. Тогда каталог-fetch, `_didFillInProviderSettings`, isHidden-тумблеры, инжект в пикер — переиспользуются, а не дублируются.
 
-**A1. Дефолт-ветка резолва транспорта** — `aiSdkAdapter.ts`, `resolvePerProvider`/`resolveEndpoint` (:147-298, :837).
-Для не-встроенного `providerName` читать `settingsOfProvider[providerName]` как динамический транспорт: `{ baseURL, apiKey: cfg.apiKey || (cfg.apiKeyEnv ? process.env[cfg.apiKeyEnv] : '') || 'noop', headers: cfg.headers, queryParams: undefined }`. Заголовки — через `assertHttpHeaderSafe` (как в `newOpenAICompatibleSDK`). Если `baseURL` пуст — вернуть пустой baseURL (существующий guard :843 даст явную ошибку → инвариант PRODUCT 3). Это зеркало уже существующего fallthrough в `newOpenAICompatibleSDK` (`sendLLMMessage.impl.ts ~364`), но для AI-SDK.
+Нужен **источник списка динамик-id** в `common`-слое (где живут циклы). Ввести в `vibeideSettingsService` derived-набор `dynamicProviderIds` (+ map id→displayName/baseURL), который `vibeDynamicProvidersService` наполняет (через тот же overlay-механизм, что уже есть), без персиста в `settingsOfProvider`-union.
 
-**A2. Фолбэк диспатча** — `sendLLMMessage.ts:132-136`.
-Если `!implementation` И `settingsOfProvider[providerName]?.baseURL` присутствует (признак динамического транспорта) → использовать `{ sendChat: (p) => sendViaAISdk(p), sendFIM: null, list: null }` вместо ошибки. Встроенные не затрагиваются (для них `implementation` найден — ветка фолбэка не выполняется → инвариант 8). Без baseURL → существующая ошибка остаётся.
+### Фаза 1 — динамики как записи настроек (заменяет overlay)
 
-После A: динамик идёт по тому же AI-SDK пути, что и агрегаторы — repair-hook, алиасы, models.dev routing, XML-fallback «бесплатно» (PRODUCT 6, 7).
+1. `vibeDynamicProvidersService`: для активных definition/extends-builtin — **seed `settingsOfProvider[id]`** записью `{ apiKey, models: [...static с isHidden], baseURL, _didFillInProviderSettings }` (через расширенный `applyProviderActiveOverrides`-overlay; НЕ персистим в union). Экспонировать `dynamicProviderIds` + display-имя/baseURL.
+2. `_validatedModelState`: цикл по провайдерам — итерировать `[...dynamicIds (по order), ...providerNames]`. Для динамика — те же гейты `_didFillInProviderSettings && !isHidden`. **Убрать** старый блок `dynamicModelOptions`. Так пикер получает только включённые модели подключённых динамиков, по `order`, выше built-in (инв. 8).
+3. `computeDidFillInProviderSettings` (:115): ветка для не-union id → «filled in» = есть резолвимый ключ (apiKey в записи). Это гейт «модели только с ключом» (инв. 4, 10).
 
-### Фаза B — reasoning/thinking
+### Фаза 2 — каталог из `/v1/models`
 
-**B1. Маппинг caps** — `modelEntryToCaps` (`vibeDynamicProvidersService.ts:40-56`), единственная правка фазы:
-- `m.extraBody` → `additionalOpenAIPayload` (verbatim pass-through; AI-SDK путь уже спредит его в тело — PRODUCT 14).
-- `m.reasoning` (объект) → `reasoningCapabilities`: форму копировать с существующей reasoning-capable openai-compat модели (изучить пример в `modelCapabilities.ts` перед правкой, не выдумывать поля). Маппинг: `reasoning.effort[]` → значения слайдера усилия; `reasoning.canTurnOff` → возможность выключения; `reasoning.thinkTags` → `openSourceThinkTags`/`stripThinkTags` (для моделей, дублирующих CoT в `<think>`). `reasoning: false` → не задавать `reasoningCapabilities` (PRODUCT 12).
-- Дефолт высокого усилия для thinking-моделей при незаданном effort (PRODUCT 11) — задать дефолт в маппинге reasoningCapabilities.
+4. `remoteCatalogService.fetchFromProvider` (:280): **до switch** — если id не built-in, но в `settingsOfProvider[id]` есть baseURL и ключ → вызвать общий OpenAI-compatible хендлер (`<baseURL>/v1/models`, ключ из записи). Иначе прежний switch.
+5. `remoteCatalogCapableProviderNames`: сделать **runtime-инклюзивным** для динамиков с baseURL (helper `isRemoteCatalogCapable(id, state)` вместо статической проверки в Settings.tsx :1094/:222).
+6. `models.static` из файла — **мёржится поверх каталога** по id (пиннинг/caps), не заменяет (инв. 6). Caps (`reasoning`/`extraBody`/contextWindow) уже идут через `setDynamicProviderModelCaps`.
 
-Инъекция в запрос (reasoning_effort + extraBody, в т.ч. `thinking:{type:"enabled"}` через extraBody) уже выполняется в `sendViaAISdk:770-780` — **доп. правок ядра не требуется**. Round-trip `reasoning_content` (PRODUCT 13) обеспечивается существующим output-маппингом openai-compat (`:1700-1708`); проверить, что для динамика он активен.
+### Фаза 3 — Settings-UI
 
-### Фаза C — надёжность под Moonshot (часть to-validate)
+7. Рендерить динамики в «Облачных провайдерах»: подать `dynamicProviderIds` в `VibeProviderSettings` (отдельной секцией «Свои провайдеры» или в общий список по `order`). `customSettingNamesOfProvider(dynId)` → `['apiKey']`; `displayInfoOfProviderName` уже не падает (fallback готов) — отдать file `name` как title через map.
+8. `ModelDump` (:574): включить `dynamicProviderIds` в `configuredProviders` → группа моделей динамика + тумблеры (toggleModelHidden generic — работает).
+9. Кнопка «Обновить каталог моделей <dyn>» — через п.5.
 
-**C1. maxOutputTokens** — `aiSdkAdapter.ts`, опции `streamText` (вызов после :1109).
-Передавать `maxOutputTokens` из `getReservedOutputTokenSpace(providerName, modelName, {isReasoningEnabled, overridesOfModel})` (`modelCapabilities.ts:2228`) для динамиков/reasoning — против пустого 200 (PRODUCT 15). **To-validate:** влияет ли это на встроенные, идущие через AI-SDK; если да — гейтить (инвариант 8 важнее).
+### Фаза 4 — ключ + гейтинг
 
-**C2. Нормализация tool-схемы** — новый ЧИСТЫЙ helper `common/vibeToolSchemaNormalize.ts` (порт идеи `kosong/.../kimi-schema.ts`): `derefJsonSchema` (инлайн локальных `$ref`/`$defs`) + проставление недостающего `type` вложенным property (enum/const/structure → type, fallback `string`), сохраняя `anyOf/oneOf/allOf`. Идемпотентно (PRODUCT 16). Применить в `convertToolsToAiSdkToolSet` (`aiSdkAdapter.ts:996`) ТОЛЬКО для динамического/openai-compat пути (gating — см. open question), на встроенных не трогать (PRODUCT 17, 19). **To-validate:** что `@ai-sdk/openai-compatible` уже нормализует — применять только непокрытое.
-
-**C3. tool_call_id ≤64 + санитизация** — симметрично на исходящих сообщениях (assistant `tool_calls` + соответствующие `tool`-результаты), в `convertMessagesToModelMessages` (`aiSdkAdapter.ts`). Чистый helper `sanitizeToolCallId(id, 64)`. **To-validate:** делает ли это AI-SDK/SDK сам; включать только если реально ломается (PRODUCT 18).
-
-**Gating (C2/C3):** решить по факту — всегда на openai-compat динамическом пути vs детект по baseURL/каталогу. По умолчанию склоняемся к «на динамическом openai-compat пути», т.к. это и есть проблемная зона; встроенные не задеваются.
+10. Поле ключа в карточке → пишет `settingsOfProvider[dynId].apiKey`. Для UI-видимости/гейтинга это и есть «подключение». `.vibe/.env`/`apiKeyRef` остаются альтернативными источниками (браузеро-видимыми). OS-env — только транспорт, для UI считается «без ключа» (инв. 12).
+11. Персист ключа динамика: либо loose-index в `settingsOfProvider` (Explore: работает + `_storeState` персистит), либо отдельный `dynamicProviderSecrets` стор — **решить здесь** (см. Risks: union-тип + миграция).
 
 ## Testing and validation
 
-- **PRODUCT 1, 2, 6 (отправка + AI-SDK + тулы):** e2e вручную — Kimi K2.7 в `.vibe/providers.json` + ключ в `.vibe/.env`; убедиться: модель отвечает потоково, вызывает встроенный тул (напр. read_file) и MCP-тул.
-- **PRODUCT 3, 4 (явные ошибки):** unit/manual — динамик без `baseURL` → ошибка с причиной, не «not recognized»; без ключа во всех источниках → ошибка-подсказка.
-- **PRODUCT 8, 9 (НЕ-регрессия) — главный риск:** после A и после C прогнать чат на встроенных (anthropic + openRouter + openAICompatible): ответ, reasoning, tool-call работают как раньше. Проверить в DevTools-логе `aiSdkAdapter`, что для встроенных `sdkNpm`/тело запроса не изменились. `compile-check-ts-native` exit=0 после каждой фазы. `scripts\test.bat` — без новых падений.
-- **PRODUCT 3 (приоритет ключа):** покрыт `test/common/vibeEnvFile.test.ts` (парсер `.vibe/.env`); добавить кейс на порядок `apiKeyRef→.vibe/.env→env`, если резолвер вынесен в чистую функцию.
-- **PRODUCT 10–14 (reasoning):** unit на `modelEntryToCaps` — `reasoning`→`reasoningCapabilities`, `extraBody`→`additionalOpenAIPayload`, `reasoning:false`→нет caps. e2e: K2.7 показывает блок размышления; `thinking:{type:"enabled"}` уходит в теле (проверить request dump).
-- **PRODUCT 15:** e2e — reasoning-модель не возвращает пустой ответ при разумном maxOutputTokens.
-- **PRODUCT 16 (идемпотентность нормализатора):** unit на `vibeToolSchemaNormalize` — enum-only без type, `$ref`/`$defs`, `anyOf/oneOf/allOf` сохранены, повтор = один проход.
-- **PRODUCT 17, 19 (gating):** unit/manual — схемы встроенных провайдеров идентичны до/после (нормализатор на их пути не вызывается).
+- **PRODUCT 1, 6:** unit — файл без `models` валиден; `static` мёржится поверх каталога по id.
+- **PRODUCT 3, 7:** manual — динамик-карточка в «Облачных» по `order`; группа в «Моделях».
+- **PRODUCT 4, 8, 10:** e2e Kimi — без ключа моделей в дропдропе НЕТ; ввёл ключ (поле/`.vibe/.env`) → каталог подтянулся; включил модель → появилась в дропдропе, по `order` выше built-in. unit на `computeDidFillInProviderSettings` (динамик с/без ключа) и на гейт в `_validatedModelState`.
+- **PRODUCT 5, 11:** manual — «Обновить каталог» тянет `/v1/models`; оффлайн/нет endpoint → диагностика, fallback на static, не падение.
+- **PRODUCT 9:** e2e — выбранная модель отвечает/думает (регресс фундамента).
+- **PRODUCT 15 (НЕ-регрессия) — главный риск:** прогон встроенных (Anthropic/OpenRouter/openAICompatible) — карточки, каталоги, дропдроп, форма запроса без изменений; `compile-check-ts-native` exit=0; `scripts\test.bat` без новых падений. Проверить, что итерация `[...dynamicIds, ...providerNames]` не задевает built-in ветки.
 
 ## Risks and mitigations
 
-- **Регрессия встроенных (инвариант 8)** — высший риск: правки в общем `aiSdkAdapter`/диспатче. Митигировать узким гейтингом (фолбэк только при `!implementation`; default-ветка резолва только для не-встроенных id; C2/C3 только на динамическом пути) + обязательным прогоном встроенных после A и C.
-- **`reasoningCapabilities` форма** — легко задать неверно. Митигировать: копировать с реального примера в `modelCapabilities.ts`, не из головы; unit на маппинг.
-- **C2/C3 over-engineering** — AI-SDK может уже покрывать. Митигировать «to-validate»: сначала замер на живом Kimi, код — только под непокрытое.
+- **Регрессия встроенных** (трогаем `_validatedModelState`, `computeDidFillInProviderSettings`, `remoteCatalogService`, Settings-UI): узкие ветки «если id не built-in» + обязательный прогон встроенных.
+- **Тип `SettingsOfProvider`** keyed по union — для динамик-id loose-index работает рантайм, но типобезопасность теряется. Митигация: явный helper-доступ (`getProviderSettings(id)`), не размазывать `as any`; рассмотреть `& Record<string, SettingsAtProvider<'openAICompatible'>>` (Explore-вариант) — но осторожно, чтобы не ослабить типизацию built-in.
+- **Персист секретов динамиков**: убедиться, что ключ шифруется (`_storeState` уже encrypt) и не утекает в `.vibe/providers.json`/логи.
+- **Overlay → settings-записи**: переход с `dynamicModelOptions` на seeded-записи не должен оставить двойной показ; удалить старый путь в той же фазе.
 
 ## Follow-ups
 
-- `fetch: true` авто-список моделей для динамиков.
-- UI-поле ключа для динамиков (тогда `apiKeyRef` для них станет полноценным).
-- Merge baseURL встроенного для `extends`-провайдера без своего baseURL (PRODUCT 5 снимет ограничение).
 - FIM для динамиков (`sendFIM`).
+- Merge baseURL встроенного для `extends` без своего baseURL.
+- Реордер встроенных относительно динамиков, если попросят.
