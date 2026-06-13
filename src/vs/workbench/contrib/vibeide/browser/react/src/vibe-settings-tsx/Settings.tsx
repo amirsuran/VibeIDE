@@ -1168,7 +1168,7 @@ const DynamicProvidersSection = () => {
 	const builtinSet = new Set<string>(providerNames as readonly string[])
 	const dynamicIds = Object.keys(settingsState.settingsOfProvider).filter(id => !builtinSet.has(id))
 	if (dynamicIds.length === 0) { return null }
-	return <div className='mt-4'>
+	return <div className='mb-4'>
 		<h3 className='text-base font-semibold text-vibe-fg-1 mb-2'>{providersS.dynamicProvidersTitle}</h3>
 		<div className='flex flex-col gap-3'>
 			{dynamicIds.map(id =>
@@ -3105,8 +3105,8 @@ export const Settings = () => {
 											onToggle={() => toggleAllSettingsGroup('providers')}
 										>
 											<h3 className={`text-vibe-fg-3 mb-2`}>{miscS.mainProvBlurb}</h3>
-											<BuiltinProvidersFold names={nonlocalProviderNames} />
 											<DynamicProvidersSection />
+											<BuiltinProvidersFold names={nonlocalProviderNames} />
 											<div className='w-full h-[1px] my-4' />
 											<RefreshableRemoteCatalogs />
 										</AllSettingsFold>
@@ -3114,8 +3114,8 @@ export const Settings = () => {
 										<>
 											<h2 className={`text-3xl mb-2`}>{nav.providers}</h2>
 											<h3 className={`text-vibe-fg-3 mb-2`}>{miscS.mainProvBlurb}</h3>
-											<BuiltinProvidersFold names={nonlocalProviderNames} />
 											<DynamicProvidersSection />
+											<BuiltinProvidersFold names={nonlocalProviderNames} />
 											<div className='w-full h-[1px] my-4' />
 											<RefreshableRemoteCatalogs />
 										</>
