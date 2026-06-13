@@ -211,22 +211,35 @@ export class SelectionHelperContribution extends Disposable implements IEditorCo
 		// const middleLine = Math.floor(startLine + (endLine - startLine) / 2);
 		const targetLine = endLine - startLine + 1 <= 2 ? startLine : startLine + 2;
 
-		let boxPos = getBoxPosition(targetLine);
+		// Near the very top of the file the pill (anchored to the line top) clips/overlaps the first
+		// lines — there's no room above. When the anchor would land on line 1–2 (i.e. the selection
+		// is in the first/second line), render it BELOW the selection instead: left-aligned under the
+		// text on the line right after it, so it never covers what was selected.
+		const renderBelow = targetLine <= 2;
 
-		// if the position of the box is too far to the right, keep searching for a good position
-		const lineDeltasToTry = [-1, -2, -3, 1, 2, 3];
+		let boxPos: { top: number; left: number };
+		if (renderBelow) {
+			const belowLine = Math.min(endLine + 1, numLinesModel);
+			const belowPos = this._editor.getScrolledVisiblePosition({ lineNumber: belowLine, column: 1 }) ?? { left: 0, top: 0 };
+			boxPos = { top: belowPos.top, left: belowPos.left };
+		} else {
+			boxPos = getBoxPosition(targetLine);
 
-		if (boxPos.left > maxLeftPx) {
-			for (const lineDelta of lineDeltasToTry) {
+			// if the position of the box is too far to the right, keep searching for a good position
+			const lineDeltasToTry = [-1, -2, -3, 1, 2, 3];
 
-				boxPos = getBoxPosition(targetLine + lineDelta);
-				if (boxPos.left <= maxLeftPx) {
-					break;
+			if (boxPos.left > maxLeftPx) {
+				for (const lineDelta of lineDeltasToTry) {
+
+					boxPos = getBoxPosition(targetLine + lineDelta);
+					if (boxPos.left <= maxLeftPx) {
+						break;
+					}
 				}
 			}
-		}
-		if (boxPos.left > maxLeftPx) { // if still not found, make it 2 lines before
-			boxPos = getBoxPosition(targetLine - 2)
+			if (boxPos.left > maxLeftPx) { // if still not found, make it 2 lines before
+				boxPos = getBoxPosition(targetLine - 2)
+			}
 		}
 
 
