@@ -178,7 +178,9 @@ export const subTextMdOfProviderName = (providerName: ProviderName): string => {
 	if (providerName === 'openCode') return 'Подписка OpenCode Go — тот же аккаунт Zen. [Модели Go](https://dev.opencode.ai/docs/go) на opencode.ai/zen/go (Qwen, DeepSeek V4, …).'
 	if (providerName === 'minimax') return '[Ключ API](https://platform.minimax.io/user-center/basic-information/interface-key). OpenAI-совместимый API. Модели: MiniMax-M3 (контекст 1M, мультимодальная, thinking переключается), MiniMax-M2.'
 
-	throw new Error(`subTextMdOfProviderName: Unknown provider name: "${providerName}"`)
+	// Dynamic providers (.vibe/providers.json) aren't in the built-in list — don't throw, just hint at
+	// where the key comes from. The provider's own docs/api-key URLs live in the file, not here.
+	return 'Провайдер из `.vibe/providers.json`. Введите ключ здесь или задайте `apiKeyEnv` в `.vibe/.env`.'
 }
 
 type DisplayInfo = {
