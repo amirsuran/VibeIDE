@@ -1050,6 +1050,13 @@ export const SettingsForProvider = ({ providerName, showProviderTitle, showProvi
 
 	const { title: providerTitle } = displayInfoOfProviderName(providerName)
 
+	// Dynamic providers (.vibe/providers.json) carry key validation status + source on their seeded
+	// entry — surfaced below the key field so the user sees whether the key actually works.
+	const isDynamicProvider = !(providerNames as readonly string[]).includes(providerName as string)
+	const dynSeed = isDynamicProvider ? (vibeSettingsState.settingsOfProvider as Record<string, { keyStatus?: string, keySource?: string } | undefined>)[providerName] : undefined
+	const dynKeyStatus = dynSeed?.keyStatus
+	const dynKeySource = (dynSeed?.keySource ?? 'none') as keyof typeof providersS.dynKeySrc
+
 	const inner = <>
 		<div className='flex items-center w-full gap-4'>
 			{showProviderTitle && <h3 className='text-xl truncate'>{providerTitle}</h3>}
@@ -1086,7 +1093,20 @@ export const SettingsForProvider = ({ providerName, showProviderTitle, showProvi
 					subTextMd={null}
 				/> : null}
 
-			{showProviderSuggestions && needsModel ?
+			{isDynamicProvider && dynKeyStatus ? (() => {
+					const srcSuffix = (dynKeyStatus !== 'none' && dynKeyStatus !== 'pending')
+						? ` · ${providersS.dynKeySrcPrefix}: ${providersS.dynKeySrc[dynKeySource] ?? providersS.dynKeySrc.none}`
+						: ''
+					const cfg = dynKeyStatus === 'valid' ? { t: providersS.dynKeyValid, c: 'text-emerald-400' }
+						: dynKeyStatus === 'invalid' ? { t: providersS.dynKeyInvalid, c: 'text-red-400' }
+							: dynKeyStatus === 'error' ? { t: providersS.dynKeyError, c: 'text-amber-400' }
+								: dynKeyStatus === 'pending' ? { t: providersS.dynKeyPending, c: 'text-vibe-fg-3' }
+									: dynKeyStatus === 'unverified' ? { t: providersS.dynKeyUnverified, c: 'text-vibe-fg-3' }
+										: { t: providersS.dynKeyNone, c: 'text-vibe-fg-4' }
+					return <div className={`text-xs mt-1 pl-2 ${cfg.c}`}>{cfg.t}{srcSuffix}</div>
+				})() : null}
+
+				{showProviderSuggestions && needsModel ?
 				providerName === 'ollama' ?
 					<WarningBox className="pl-2 mb-4" text={providersS.warnOllama} />
 					: <div className='mb-4 flex flex-col gap-2'>

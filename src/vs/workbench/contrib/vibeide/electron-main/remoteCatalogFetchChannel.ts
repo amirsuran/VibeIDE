@@ -6,7 +6,7 @@ import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { Event } from '../../../../base/common/event.js';
 import { IServerChannel } from '../../../../base/parts/ipc/common/ipc.js';
 import type { IHeaders } from '../../../../base/parts/request/common/request.js';
-import { IRequestService, asTextOrError } from '../../../../platform/request/common/request.js';
+import { IRequestService, asTextOrError, asText } from '../../../../platform/request/common/request.js';
 import { GoogleAuth } from 'google-auth-library';
 
 /** Node-backed GET for remote model catalogs — bypasses Chromium CORS in the workbench renderer. */
@@ -32,6 +32,25 @@ export class RemoteCatalogFetchChannel implements IServerChannel {
 				callSite: 'vibeideRemoteCatalogMain',
 			}, CancellationToken.None);
 			return (await asTextOrError(context)) as T;
+		}
+		if (command === 'probe') {
+			// Like 'get' but does NOT throw on non-2xx — returns the HTTP status + body so the caller can
+			// distinguish 401/403 (invalid key) from network/server errors when validating a dynamic key.
+			const { url, headers } = args as { url: string; headers?: IHeaders };
+			const context = await this.requestService.request({
+				type: 'GET',
+				url,
+				headers: {
+					Accept: 'application/json',
+					...(headers ?? {}),
+				},
+				timeout: 30_000,
+				callSite: 'vibeideRemoteCatalogProbe',
+			}, CancellationToken.None);
+			const status = context.res.statusCode ?? 0;
+			let body: string | null = null;
+			try { body = await asText(context); } catch { body = null; }
+			return { status, body } as T;
 		}
 		if (command === 'getGoogleAccessToken') {
 			// Uses Application Default Credentials: gcloud auth application-default login,

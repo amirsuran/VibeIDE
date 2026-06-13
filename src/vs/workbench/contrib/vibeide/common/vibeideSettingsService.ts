@@ -287,6 +287,12 @@ export type DynamicProviderSeed = {
 	headersJSON?: string;
 	models: VibeideStatefulModelInfo[];
 	_didFillInProviderSettings: boolean;
+	/** Key validation status shown in the provider card. `valid` = the models endpoint authenticated;
+	 *  `invalid` = 401/403; `error` = network/server; `pending` = probe in flight; `unverified` =
+	 *  static-only (`fetch:false`, no probe); `none` = no key resolved. */
+	keyStatus?: 'valid' | 'invalid' | 'error' | 'pending' | 'unverified' | 'none';
+	/** Where the resolved key came from — surfaced in the card so the user knows what's in effect. */
+	keySource?: 'gui' | 'env' | 'ref' | 'none';
 };
 let _providerActiveOverrides: VibeProviderActiveOverrides | undefined = undefined;
 

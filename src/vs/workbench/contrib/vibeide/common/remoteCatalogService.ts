@@ -44,11 +44,19 @@ interface CachedCatalog {
 	ttl: number; // milliseconds
 }
 
+/** Result of validating a dynamic provider's key by probing its models endpoint. */
+export type DynamicKeyValidation = { status: 'ok' | 'unauthorized' | 'error'; models: RemoteModelInfo[] };
+
 /**
  * Service for fetching and caching remote provider model catalogs
  */
 export interface IRemoteCatalogService {
 	readonly _serviceBrand: undefined;
+
+	/** Validate a dynamic provider's key by probing `modelsUrl` (or `<baseURL>/v1/models`): returns the
+	 *  HTTP outcome (ok / unauthorized / error) plus the parsed model list on success. Used to gate
+	 *  dynamic-provider models on a working key instead of mere key presence. */
+	fetchDynamicWithStatus(baseURL: string, apiKey: string | undefined, modelsUrl?: string): Promise<DynamicKeyValidation>;
 
 	/**
 	 * Fetch models from a remote provider's catalog
@@ -250,6 +258,10 @@ export class RemoteCatalogService implements IRemoteCatalogService {
 			headers['Authorization'] = `Bearer ${apiKey.trim()}`;
 		}
 		const data = await this.getJson<{ data?: Record<string, unknown>[] }>(modelsUrl, headers, 'openaiCompatModels');
+		return this.parseOpenAICompatibleModels(data);
+	}
+
+	private parseOpenAICompatibleModels(data: { data?: Record<string, unknown>[] }): RemoteModelInfo[] {
 		return (data.data || []).map((model) => {
 			// LiteLLM proxy and similar gateways extend OpenAI's /v1/models with capability fields.
 			// Stock OpenAI/Mistral/Groq/etc. omit these — readers below tolerate undefined.
@@ -275,6 +287,32 @@ export class RemoteCatalogService implements IRemoteCatalogService {
 				cost,
 			};
 		}).filter(m => m.id.length > 0);
+	}
+
+	async fetchDynamicWithStatus(baseURL: string, apiKey: string | undefined, modelsUrl?: string): Promise<DynamicKeyValidation> {
+		const base = baseURL.replace(/\/+$/, '');
+		const url = modelsUrl?.trim() ? modelsUrl.trim() : (base.endsWith('/v1') ? `${base}/models` : `${base}/v1/models`);
+		const headers: IHeaders = {};
+		if (apiKey?.trim()) { headers['Authorization'] = `Bearer ${apiKey.trim()}`; }
+		try {
+			// 'probe' (electron-main channel) returns the raw HTTP status without throwing on non-2xx, so
+			// we can tell 401/403 (invalid key) apart from a network/server failure.
+			const ipc = this.mainProcessService.getChannel('vibeide-channel-remoteCatalogFetch');
+			const res = await ipc.call<{ status: number; body: string | null }>('probe', { url, headers });
+			const status = res?.status ?? 0;
+			if (status === 401 || status === 403) { return { status: 'unauthorized', models: [] }; }
+			if (status >= 200 && status < 300 && typeof res?.body === 'string' && res.body.trim()) {
+				try {
+					const data = JSON.parse(res.body) as { data?: Record<string, unknown>[] };
+					return { status: 'ok', models: this.parseOpenAICompatibleModels(data) };
+				} catch {
+					return { status: 'error', models: [] };
+				}
+			}
+			return { status: 'error', models: [] };
+		} catch {
+			return { status: 'error', models: [] };
+		}
 	}
 
 	private async fetchFromProvider(providerName: ProviderName): Promise<RemoteModelInfo[]> {

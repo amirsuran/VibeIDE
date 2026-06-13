@@ -825,6 +825,15 @@ export const modelsS = {
 
 export const providersS = {
 	dynamicProvidersTitle: 'Свои провайдеры (из .vibe/providers.json)',
+	// Dynamic-provider key validation status (shown under the key field in the provider card).
+	dynKeyValid: 'Ключ действителен',
+	dynKeyInvalid: 'Ключ недействителен (ошибка авторизации)',
+	dynKeyError: 'Не удалось проверить ключ (сеть или сервер)',
+	dynKeyPending: 'Проверка ключа…',
+	dynKeyUnverified: 'Ключ не проверяется (static-список)',
+	dynKeyNone: 'Ключ не задан',
+	dynKeySrcPrefix: 'источник',
+	dynKeySrc: { gui: 'введён в IDE', env: '.vibe/.env', ref: 'apiKeyRef', none: '—' } as Record<string, string>,
 	warnOllama: 'Установите модель Ollama — мы её подхватим автоматически.',
 	warnAddModel: (providerTitle: string) =>
 		`Добавьте модель для ${providerTitle} (раздел «Модели»).`,
