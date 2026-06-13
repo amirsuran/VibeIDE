@@ -1477,6 +1477,7 @@ export const VibeCustomDropdownBox = <T extends NonNullable<any>>({
 	dropdownSearchPlaceholder = '',
 	dropdownSearchEmptyMessage = '',
 	getOptionSearchText,
+	getOptionPrefix,
 }: {
 	options: T[];
 	selectedOption: T | undefined;
@@ -1498,6 +1499,9 @@ export const VibeCustomDropdownBox = <T extends NonNullable<any>>({
 	/** Shown when the filter yields zero options (non-empty query). */
 	dropdownSearchEmptyMessage?: string;
 	getOptionSearchText?: (option: T) => string;
+	/** Optional leading badge rendered as `<glyph> · ` before the option name. The glyph carries a
+	 *  native tooltip (`title`) — used to flag provenance without cluttering the row text. */
+	getOptionPrefix?: (option: T) => { glyph: string; tooltip: string } | undefined;
 }) => {
 	const [isOpen, setIsOpen] = useState(false);
 	const [filterQuery, setFilterQuery] = useState('');
@@ -1731,6 +1735,7 @@ export const VibeCustomDropdownBox = <T extends NonNullable<any>>({
 							const thisOptionIsSelected = getOptionsEqual(option, selectedOption);
 							const optionName = getOptionDropdownName(option);
 							const optionDetail = getOptionDropdownDetail?.(option) || '';
+							const optionPrefix = getOptionPrefix?.(option);
 							const showHint = detailPresentation === 'tooltip' && !!optionDetail;
 							const rowKey = `${optionName}\0${optionDetail}`;
 
@@ -1762,6 +1767,18 @@ export const VibeCustomDropdownBox = <T extends NonNullable<any>>({
 										)}
 									</div>
 									<span className="flex min-w-0 flex-1 items-center gap-2">
+										{optionPrefix ? (
+											<span className="flex-shrink-0 flex items-center gap-1 select-none">
+												<span
+													className="@@vibe-dropdown-row__prefix cursor-help leading-none"
+													title={optionPrefix.tooltip}
+													aria-label={optionPrefix.tooltip}
+													onClick={(e) => e.stopPropagation()}
+													onMouseDown={(e) => e.stopPropagation()}
+												>{optionPrefix.glyph}</span>
+												<span className="text-vibe-fg-4">·</span>
+											</span>
+										) : null}
 										<span className="min-w-0 flex-1 whitespace-nowrap overflow-hidden text-ellipsis">{optionName}</span>
 										{showHint ? (
 											<button

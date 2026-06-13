@@ -62,12 +62,15 @@ const ModelSelectBox = ({ options, featureName, className }: { options: ModelOpt
 			if (option.selection.providerName === 'auto' && option.selection.modelName === 'auto') {
 				return modelDdS.autoDetail
 			}
-			const title = displayInfoOfProviderName(option.selection.providerName).title
-			// Dynamic-provider models flag their provenance so the user knows caps came from the file.
-			const note = option.fileNote === 'override' ? modelDdS.fileNoteOverride
+			return displayInfoOfProviderName(option.selection.providerName).title
+		}}
+		getOptionPrefix={(option) => {
+			// Dynamic-provider models flag their provenance with a leading "✎ ·" — the pencil's tooltip
+			// tells the user the model / its caps come from .vibe/providers.json, not the live catalog.
+			const tooltip = option.fileNote === 'override' ? modelDdS.fileNoteOverride
 				: option.fileNote === 'manual' ? modelDdS.fileNoteManual
 					: undefined
-			return note ? `${title} · ${note}` : title
+			return tooltip ? { glyph: '✎', tooltip } : undefined
 		}}
 		getOptionsEqual={(a, b) => optionsEqual([a], [b])}
 		className={className}
