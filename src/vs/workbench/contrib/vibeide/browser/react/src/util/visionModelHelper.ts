@@ -6,6 +6,7 @@
 import { vibeLog } from '../../../../common/vibeLog.js';
 import { SettingsOfProvider, ModelSelection, ProviderName, OverridesOfModel } from '../../../../common/vibeideSettingsTypes.js';
 import { isVisionByNameHeuristic } from '../../../../common/modelVisionHeuristics.js';
+import { getModelCapabilities } from '../../../../common/modelCapabilities.js';
 
 /**
  * Vision-capable providers that require API keys.
@@ -156,9 +157,12 @@ export function isSelectedModelVisionCapable(currentModelSelection: ModelSelecti
 	// Skip "auto" - it's not a real provider
 	if (providerName === 'auto') return false;
 
-	// Authoritative when set: catalog-derived flag (OpenRouter, openAICompatible, etc.).
-	const override = readSupportsVisionOverride(overridesOfModel, providerName, modelName);
-	if (typeof override === 'boolean') return override;
+	// Unified capability resolution (hardcoded modelOptions → name recognition for claude/gpt/gemini/
+	// minimax/… → catalog hint → user override): covers built-ins AND dynamic providers (.vibe/providers
+	// .json) through the SAME registry. A definitive boolean is authoritative; `undefined` (model the
+	// registry can't classify) falls through to the legacy provider-set heuristics below.
+	const caps = getModelCapabilities(providerName, modelName, overridesOfModel);
+	if (typeof caps.supportsVision === 'boolean') return caps.supportsVision;
 
 	// Check if it's a vision-capable API provider with a valid key
 	if (VISION_PROVIDERS.includes(providerName)) {

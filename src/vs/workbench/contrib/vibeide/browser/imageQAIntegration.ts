@@ -12,6 +12,7 @@ import { vibeLog } from '../common/vibeLog.js';
 import { ChatImageAttachment } from '../common/chatThreadServiceTypes.js';
 import { imageQAPipeline, type ImageQAOptions, type QAResponse } from '../common/imageQA/index.js';
 import { ModelSelection, OverridesOfModel, SettingsOfProvider } from '../common/vibeideSettingsTypes.js';
+import { getModelCapabilities } from '../common/modelCapabilities.js';
 
 export interface ImageQAPreprocessedMessage {
 	shouldUsePipeline: boolean;
@@ -58,8 +59,11 @@ function isModelVisionCapable(modelSelection: ModelSelection | null, settingsOfP
 		// Router decides — if user has any vision-capable provider configured, trust it.
 		return hasAnyVisionProviderConfigured(settingsOfProvider);
 	}
-	const override = overridesOfModel?.[providerName]?.[modelName]?.supportsVision;
-	if (typeof override === 'boolean') return override;
+	// Unified capability resolution (hardcoded → name recognition → catalog hint → override): covers
+	// built-ins AND dynamic providers through the same registry. Definitive boolean wins; undefined
+	// falls through to the legacy provider-set heuristics.
+	const caps = getModelCapabilities(providerName, modelName, overridesOfModel);
+	if (typeof caps.supportsVision === 'boolean') return caps.supportsVision;
 	if (VISION_PROVIDERS.has(providerName)) return true;
 	if (AGGREGATOR_PROVIDERS.has(providerName)) {
 		const lower = (modelName || '').toLowerCase();
