@@ -100,6 +100,23 @@ if (-not $Version) {
     }
 }
 
+# ── Release-readiness guard: catch version-coupled MANUAL steps that fail SILENTLY ──
+# (1) «Что нового» modal (vibeWhatsNew.ts): WHATS_NEW_BY_VERSION must have an entry for this
+#     version, else the modal shows nothing on first launch (observed: 1.2.0 shipped without it).
+# (2) README version badge must match product.json. Both run in BOTH phases — a -SkipCompile
+#     publish is also blocked if either drifted. Turns a silent miss into a loud, early failure.
+$whatsNewSrc = Get-Content "$Root\src\vs\workbench\contrib\vibeide\common\vibeWhatsNew.ts" -Raw
+if ($whatsNewSrc -notmatch "'$([regex]::Escape($newVibe))'\s*:") {
+    Write-Error "RELEASE STEP пропущен: нет записи «Что нового» для $newVibe в vibeWhatsNew.ts (WHATS_NEW_BY_VERSION['$newVibe']). Добавь хайлайты и повтори."
+    exit 1
+}
+$readmeSrc = Get-Content "$Root\README.md" -Raw
+if ($readmeSrc -notmatch "badge/версия-$([regex]::Escape($newVibe))-") {
+    Write-Error "RELEASE STEP пропущен: бейдж версии в README.md не равен $newVibe. Обнови shields-бейдж и повтори."
+    exit 1
+}
+OK "Release-readiness guard passed (What's New + README-бейдж для $newVibe на месте)"
+
 Write-Host "`n🚀 Building VibeIDE $Version for Windows x64`n" -ForegroundColor Cyan
 
 # ── npm / node helpers (Windows: must use .cmd wrappers) ─────────────────────
