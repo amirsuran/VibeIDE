@@ -840,7 +840,11 @@ export const VibeInputBox2 = forwardRef<HTMLTextAreaElement, InputBox2Props>(fun
 	// ghosted blur of the input text. Killing the shadow on the textarea hides it; the
 	// overlay (which paints the visible text) keeps its own shadow via .vibe-skill-pill.
 	const textareaOverlayStyle: React.CSSProperties = highlightSlashCommands
-		? { color: 'transparent', caretColor: overlayCaretColor, textShadow: 'none' }
+		// `border: 1px solid transparent` matches the overlay's border so BOTH boxes have an identical
+		// content width (box-sizing: border-box). Without it the textarea (border:none in dark chat) is
+		// 2px wider than the overlay → at a wrap boundary a word wraps in the overlay but not the
+		// textarea, leaving the caret stranded at the end of the previous line. The border is invisible.
+		? { color: 'transparent', caretColor: overlayCaretColor, textShadow: 'none', border: '1px solid transparent' }
 		: {};
 
 	const textareaEl = <textarea
