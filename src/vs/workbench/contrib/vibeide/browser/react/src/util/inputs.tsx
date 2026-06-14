@@ -787,6 +787,32 @@ export const VibeInputBox2 = forwardRef<HTMLTextAreaElement, InputBox2Props>(fun
 		const h = r.scrollHeight
 		const newHeight = Math.min(h + 1, 500) // plus one to avoid scrollbar appearing when it shouldn't
 		r.style.height = `${newHeight}px`
+
+		// The highlight overlay paints the VISIBLE text while the (transparent) textarea owns the caret +
+		// selection — so both MUST wrap line-for-line. They only do if their content boxes are identical.
+		// Mirror the textarea's COMPUTED padding + border widths onto the overlay, and reserve the vertical
+		// scrollbar's width as extra right padding when one is showing (overflow-y:auto). Any leftover
+		// sub-pixel / scrollbar difference makes a word wrap in one layer but not the other — stranding the
+		// caret at the end of the previous line and skewing the selection highlight (the reported bug).
+		const ov = overlayRef.current
+		if (ov) {
+			const cs = getComputedStyle(r)
+			// Solid transparent border whose per-side WIDTH equals the textarea's computed border (0 when
+			// the textarea is borderless — dark chat). border-width alone is ignored without a style.
+			ov.style.borderStyle = 'solid'
+			ov.style.borderColor = 'transparent'
+			ov.style.borderTopWidth = cs.borderTopWidth
+			ov.style.borderBottomWidth = cs.borderBottomWidth
+			ov.style.borderLeftWidth = cs.borderLeftWidth
+			ov.style.borderRightWidth = cs.borderRightWidth
+			ov.style.paddingTop = cs.paddingTop
+			ov.style.paddingBottom = cs.paddingBottom
+			ov.style.paddingLeft = cs.paddingLeft
+			// Reserve the vertical scrollbar's width (when present) as extra right padding so the overlay's
+			// text column matches the textarea's (its clientWidth already excludes the scrollbar).
+			const scrollbar = r.offsetWidth - r.clientWidth - (parseFloat(cs.borderLeftWidth) || 0) - (parseFloat(cs.borderRightWidth) || 0)
+			ov.style.paddingRight = `${(parseFloat(cs.paddingRight) || 0) + Math.max(0, scrollbar)}px`
+		}
 	}, []);
 
 
@@ -840,11 +866,7 @@ export const VibeInputBox2 = forwardRef<HTMLTextAreaElement, InputBox2Props>(fun
 	// ghosted blur of the input text. Killing the shadow on the textarea hides it; the
 	// overlay (which paints the visible text) keeps its own shadow via .vibe-skill-pill.
 	const textareaOverlayStyle: React.CSSProperties = highlightSlashCommands
-		// `border: 1px solid transparent` matches the overlay's border so BOTH boxes have an identical
-		// content width (box-sizing: border-box). Without it the textarea (border:none in dark chat) is
-		// 2px wider than the overlay → at a wrap boundary a word wraps in the overlay but not the
-		// textarea, leaving the caret stranded at the end of the previous line. The border is invisible.
-		? { color: 'transparent', caretColor: overlayCaretColor, textShadow: 'none', border: '1px solid transparent' }
+		? { color: 'transparent', caretColor: overlayCaretColor, textShadow: 'none' }
 		: {};
 
 	const textareaEl = <textarea
@@ -995,7 +1017,8 @@ export const VibeInputBox2 = forwardRef<HTMLTextAreaElement, InputBox2Props>(fun
 		lineHeight: 'inherit',
 		letterSpacing: 'inherit',
 		textAlign: 'inherit' as React.CSSProperties['textAlign'],
-		border: '1px solid transparent',
+		// border + padding are mirrored from the textarea's COMPUTED box in adjustHeight (so the two
+		// layers wrap line-for-line); not set here, to avoid React re-applying a fixed value over the sync.
 		boxSizing: 'border-box',
 		margin: 0,
 	};
