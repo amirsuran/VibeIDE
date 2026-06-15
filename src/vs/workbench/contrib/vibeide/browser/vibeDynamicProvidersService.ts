@@ -23,6 +23,9 @@ import { createDecorator } from '../../../../platform/instantiation/common/insta
 import { registerSingleton, InstantiationType } from '../../../../platform/instantiation/common/extensions.js';
 import { IFileService } from '../../../../platform/files/common/files.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
+import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+import { INotificationService } from '../../../../platform/notification/common/notification.js';
+import { scanProviderConfig, ConfigGuardFinding } from '../common/vibeConfigGuard.js';
 import { providerNames } from '../common/vibeideSettingsTypes.js';
 import { IVibeideSettingsService, VibeProviderActiveOverrides, ModelOption, DynProviderTransportConfig, DynamicProviderSeed } from '../common/vibeideSettingsService.js';
 import { setExternalProviders, ExternalProviderDescriptor, VibeideStaticModelInfo } from '../common/modelCapabilities.js';
@@ -123,6 +126,8 @@ export interface IVibeDynamicProvidersService {
 	getState(): VibeDynamicProvidersState;
 	/** Force a re-read from disk. */
 	reload(): Promise<void>;
+	/** Config Guard findings from the last load of `.vibe/providers.json` (empty if disabled/clean). */
+	getLastGuardFindings(): readonly ConfigGuardFinding[];
 }
 
 const EMPTY_STATE: VibeDynamicProvidersState = { fileExists: false, providers: [], warnings: [] };
@@ -147,6 +152,10 @@ class VibeDynamicProvidersService extends Disposable implements IVibeDynamicProv
 	private _lastSeenHidden = '';
 	/** Last key-validation results, cached so a hide-toggle re-apply doesn't re-probe the network. */
 	private _lastValidation: Map<string, DynamicKeyValidation> | undefined = undefined;
+	/** Config Guard finding signature of the last reload — dedupes the user notification across re-reads. */
+	private _lastGuardSig = '';
+	/** Config Guard findings from the last reload — surfaced by the diagnostic command. */
+	private _lastGuardFindings: readonly ConfigGuardFinding[] = [];
 
 	constructor(
 		@IFileService private readonly _fileService: IFileService,
@@ -154,6 +163,8 @@ class VibeDynamicProvidersService extends Disposable implements IVibeDynamicProv
 		@IVibeideSettingsService private readonly _settingsService: IVibeideSettingsService,
 		@ILifecycleService private readonly _lifecycleService: ILifecycleService,
 		@IRemoteCatalogService private readonly _remoteCatalogService: IRemoteCatalogService,
+		@IConfigurationService private readonly _configurationService: IConfigurationService,
+		@INotificationService private readonly _notificationService: INotificationService,
 	) {
 		super();
 		void this.reload();
@@ -203,6 +214,10 @@ class VibeDynamicProvidersService extends Disposable implements IVibeDynamicProv
 
 	getState(): VibeDynamicProvidersState {
 		return this._state;
+	}
+
+	getLastGuardFindings(): readonly ConfigGuardFinding[] {
+		return this._lastGuardFindings;
 	}
 
 	private _fileUri(): URI | undefined {
@@ -257,12 +272,47 @@ class VibeDynamicProvidersService extends Disposable implements IVibeDynamicProv
 		}
 
 		const { providers, warnings } = this._resolve(parsed.providers, [...parsed.warnings]);
-		vibeLog.warn('DynProviders', `providers.json loaded: ${providers.length} provider(s), ${warnings.length} warning(s)`);
-		for (const p of providers) {
+		// Config Guard: static-scan the user-authored entries for unsafe endpoints / hardcoded secrets.
+		const guard = this._runConfigGuard(parsed.providers);
+		const effectiveProviders = guard.blockedIds.size > 0 ? providers.filter(p => !guard.blockedIds.has(p.id)) : providers;
+		const allWarnings = [...warnings, ...guard.lines];
+		vibeLog.warn('DynProviders', `providers.json loaded: ${effectiveProviders.length} provider(s), ${allWarnings.length} warning(s)`);
+		for (const p of effectiveProviders) {
 			vibeLog.debug('DynProviders', `  • ${p.id} [${p.kind}${p.extendsBuiltin ? `:${p.extendsBuiltin}` : ''}] active=${p.entry.active !== false}`);
 		}
-		for (const w of warnings) { vibeLog.warn('DynProviders', `  ⚠ ${w}`); }
-		this._setState({ fileExists: true, providers, warnings });
+		for (const w of allWarnings) { vibeLog.warn('DynProviders', `  ⚠ ${w}`); }
+		this._setState({ fileExists: true, providers: effectiveProviders, warnings: allWarnings });
+	}
+
+	/**
+	 * Run the Config Guard over the parsed provider entries. Returns warning lines (surfaced in state
+	 * + log) and, in `block` mode, the ids of providers with a CRITICAL finding to drop from transport.
+	 * A clean scan resets the notification dedupe so a later regression notifies again.
+	 */
+	private _runConfigGuard(entries: readonly VibeProviderEntry[]): { blockedIds: Set<string>; lines: string[] } {
+		const blockedIds = new Set<string>();
+		if (this._configurationService.getValue<boolean>('vibeide.configGuard.enabled') === false) { this._lastGuardFindings = []; return { blockedIds, lines: [] }; }
+		const findings = scanProviderConfig(entries);
+		this._lastGuardFindings = findings;
+		if (findings.length === 0) { this._lastGuardSig = ''; return { blockedIds, lines: [] }; }
+		const block = this._configurationService.getValue<string>('vibeide.configGuard.mode') === 'block';
+		const lines: string[] = [];
+		for (const f of findings) {
+			lines.push(`Config Guard [${f.severity}] ${f.message}`);
+			if (block && f.severity === 'critical') { blockedIds.add(f.subject); }
+		}
+		this._notifyGuard(findings, block);
+		return { blockedIds, lines };
+	}
+
+	/** One consolidated, deduped warning notification per distinct set of findings. */
+	private _notifyGuard(findings: readonly ConfigGuardFinding[], block: boolean): void {
+		const sig = findings.map(f => `${f.ruleId}:${f.subject}`).sort().join('|');
+		if (sig === this._lastGuardSig) { return; }
+		this._lastGuardSig = sig;
+		const crit = findings.filter(f => f.severity === 'critical').length;
+		const verb = block && crit > 0 ? 'заблокировал' : 'обнаружил';
+		this._notificationService.warn(`Config Guard ${verb} проблемы безопасности в .vibe/providers.json: ${findings.length} (критичных: ${crit}). Подробности — в логе VibeIDE.`);
 	}
 
 	private _resolve(entries: readonly VibeProviderEntry[], warnings: string[]): { providers: ResolvedProviderEntry[]; warnings: string[] } {

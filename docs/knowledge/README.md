@@ -153,6 +153,12 @@
 | [xml-normalize-audit-checklist.md](agent-collaboration/xml-normalize-audit-checklist.md) | Pre-merge gate для XML normalize transform'ов (8 пунктов: escape / idempotency / null guard / structural assertions / symmetric defense / streaming partial / verbatim fixture) |
 | [why-models-ignore-injected-rules.md](agent-collaboration/why-models-ignore-injected-rules.md) | Модель игнорит правила из-за framing, не отсутствия загрузки: `[Source: path]` читается как справка, нужна binding-обёртка (образец — `session_goals`). Авто-вызов завершения за модель = антипаттерн. Project-intent — прозой в `.vibe/rules.md`, не schema |
 
+### [security/](security/) — безопасность конфигов и рантайма
+
+| Файл | О чём |
+|---|---|
+| [config-guard.md](security/config-guard.md) | Config Guard — статический скан `.vibe/providers.json` и `mcp.json` при загрузке (12 правил из AgentShield под поверхность VibeIDE): non-https/raw-IP endpoint, хардкод секретов, `curl\|sh`/`npx -y`/`--no-sandbox` в MCP. Чистый `vibeConfigGuard.ts`, `vibeide.configGuard.*` (warn/block), команда `vibeide.configGuard.showFindings`. Что НЕ дублирует: secretDetection + promptGuard |
+
 ---
 
 ## Конвенции записей

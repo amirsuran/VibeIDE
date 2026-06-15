@@ -15,13 +15,16 @@ import { IProductService } from '../../../../platform/product/common/productServ
 import { VSBuffer } from '../../../../base/common/buffer.js';
 import { IChannel } from '../../../../base/parts/ipc/common/ipc.js';
 import { IMainProcessService } from '../../../../platform/ipc/common/mainProcessService.js';
-import { MCPServerOfName, MCPConfigFileJSON, MCPServer, MCPToolCallParams, RawMCPToolCall, MCPServerEventResponse } from './mcpServiceTypes.js';
+import { MCPServerOfName, MCPConfigFileJSON, MCPConfigFileEntryJSON, MCPServer, MCPToolCallParams, RawMCPToolCall, MCPServerEventResponse } from './mcpServiceTypes.js';
 import { Event, Emitter } from '../../../../base/common/event.js';
 import { RunOnceScheduler } from '../../../../base/common/async.js';
 import { InternalToolInfo } from './prompt/prompts.js';
 import { IVibeideSettingsService } from './vibeideSettingsService.js';
 import { MCPUserStateOfName } from './vibeideSettingsTypes.js';
 import { IVibeOutboundRingBuffer } from './vibeOutboundRingBuffer.js';
+import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+import { INotificationService } from '../../../../platform/notification/common/notification.js';
+import { scanMcpConfig, ConfigGuardFinding } from './vibeConfigGuard.js';
 
 
 type MCPServiceState = {
@@ -40,6 +43,9 @@ export interface IMCPService {
 	getMCPTools(): InternalToolInfo[] | undefined;
 	callMCPTool(toolData: MCPToolCallParams): Promise<{ result: RawMCPToolCall }>;
 	stringifyResult(result: RawMCPToolCall): string
+
+	/** Config Guard findings from the last load of `mcp.json` (empty if disabled/clean). */
+	getLastGuardFindings(): readonly ConfigGuardFinding[];
 }
 
 export const IMCPService = createDecorator<IMCPService>('mcpConfigService');
@@ -83,6 +89,11 @@ class MCPService extends Disposable implements IMCPService {
 	private readonly _onDidChangeState = new Emitter<void>();
 	public readonly onDidChangeState = this._onDidChangeState.event;
 
+	/** Config Guard finding signature of the last refresh — dedupes the user notification across re-reads. */
+	private _lastGuardSig = '';
+	/** Config Guard findings from the last refresh — surfaced by the diagnostic command. */
+	private _lastGuardFindings: readonly ConfigGuardFinding[] = [];
+
 	private readonly _scheduleMcpConfigRefresh = this._register(new RunOnceScheduler(() => {
 		void this._refreshMCPServers();
 	}, 350));
@@ -98,6 +109,8 @@ class MCPService extends Disposable implements IMCPService {
 		@IMainProcessService private readonly mainProcessService: IMainProcessService,
 		@IVibeideSettingsService private readonly vibeideSettingsService: IVibeideSettingsService,
 		@IVibeOutboundRingBuffer private readonly _outboundBuffer: IVibeOutboundRingBuffer,
+		@IConfigurationService private readonly _configurationService: IConfigurationService,
+		@INotificationService private readonly _notificationService: INotificationService,
 	) {
 		super();
 		this.channel = this.mainProcessService.getChannel('vibe-channel-mcp')
@@ -307,6 +320,36 @@ class MCPService extends Disposable implements IMCPService {
 	}
 
 
+	/**
+	 * Run the Config Guard over the MCP server entries: log every finding and notify once per distinct
+	 * finding set. In `block` mode, returns the names of servers with a CRITICAL finding so the caller
+	 * can keep them from starting. A clean scan resets the notification dedupe.
+	 */
+	private _runConfigGuard(servers: Record<string, MCPConfigFileEntryJSON>): Set<string> {
+		const blockedNames = new Set<string>();
+		if (this._configurationService.getValue<boolean>('vibeide.configGuard.enabled') === false) { this._lastGuardFindings = []; return blockedNames; }
+		const findings = scanMcpConfig(servers);
+		this._lastGuardFindings = findings;
+		if (findings.length === 0) { this._lastGuardSig = ''; return blockedNames; }
+		const block = this._configurationService.getValue<string>('vibeide.configGuard.mode') === 'block';
+		for (const f of findings) {
+			vibeLog.warn('mcp', `Config Guard [${f.severity}] ${f.message}`);
+			if (block && f.severity === 'critical') { blockedNames.add(f.subject); }
+		}
+		this._notifyGuard(findings, block);
+		return blockedNames;
+	}
+
+	/** One consolidated, deduped warning notification per distinct set of findings. */
+	private _notifyGuard(findings: readonly ConfigGuardFinding[], block: boolean): void {
+		const sig = findings.map(f => `${f.ruleId}:${f.subject}`).sort().join('|');
+		if (sig === this._lastGuardSig) { return; }
+		this._lastGuardSig = sig;
+		const crit = findings.filter(f => f.severity === 'critical').length;
+		const verb = block && crit > 0 ? 'заблокировал' : 'обнаружил';
+		this._notificationService.warn(`Config Guard ${verb} проблемы безопасности в mcp.json: ${findings.length} (критичных: ${crit}). Подробности — в логе VibeIDE.`);
+	}
+
 	// Handle server state changes
 	private async _refreshMCPServers(): Promise<void> {
 
@@ -315,6 +358,17 @@ class MCPService extends Disposable implements IMCPService {
 		const newConfigFileJSON = await this._parseMCPConfigFile();
 		if (!newConfigFileJSON) { vibeLog.info('mcp', `Not setting state: MCP config file not found`); return }
 		if (!newConfigFileJSON?.mcpServers) { vibeLog.info('mcp', `Not setting state: MCP config file did not have an 'mcpServers' field`); return }
+
+		// Config Guard: static-scan server entries; in block mode, drop critical-flagged servers before
+		// they start (filtering the parsed config so the rest of the refresh logic is untouched).
+		const blockedNames = this._runConfigGuard(newConfigFileJSON.mcpServers);
+		if (blockedNames.size > 0) {
+			const filtered: Record<string, MCPConfigFileEntryJSON> = {};
+			for (const [n, cfg] of Object.entries(newConfigFileJSON.mcpServers)) {
+				if (!blockedNames.has(n)) { filtered[n] = cfg; }
+			}
+			newConfigFileJSON.mcpServers = filtered;
+		}
 
 
 		const oldConfigFileNames = Object.keys(this.state.mcpServerOfName)
@@ -344,6 +398,10 @@ class MCPService extends Disposable implements IMCPService {
 			updatedServerNames,
 			userStateOfName: this.vibeideSettingsService.state.mcpUserStateOfName,
 		})
+	}
+
+	public getLastGuardFindings(): readonly ConfigGuardFinding[] {
+		return this._lastGuardFindings;
 	}
 
 	stringifyResult(result: RawMCPToolCall): string {

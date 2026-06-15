@@ -339,6 +339,9 @@ import './vibeLogOutputChannel.js'
 // VibeIDE: Project Commands audit privacy flags (vibeide.commands.audit{,Stdout})
 import '../common/commandsAuditPrivacyConfiguration.js'
 
+// VibeIDE: Config Guard settings (vibeide.configGuard.*) — static scan of .vibe/providers.json & mcp.json
+import '../common/vibeConfigGuardConfiguration.js'
+
 // VibeIDE: Persisted plan resume (scan .vibe/plans/ on startup, offer to continue interrupted plans)
 import './vibePersistedPlanResumeContribution.js'
 import './vibePersistedPlanDiskEditContribution.js'
@@ -529,6 +532,9 @@ import './vibeProvidersSchemaContribution.js'
 // VibeIDE: dynamic providers service (reads/resolves .vibe/providers.json) + diagnostic command
 import './vibeDynamicProvidersService.js'
 import './vibeProvidersDiagnosticContribution.js'
+
+// VibeIDE: Config Guard diagnostic command (show findings from .vibe/providers.json & mcp.json scans)
+import './vibeConfigGuardDiagnosticContribution.js'
 
 // VibeIDE: Tool-call format indicator statusbar (native FC vs XML fallback + auto-downgrade reason)
 import './vibeStatusBarToolFormat.js'
