@@ -157,6 +157,26 @@
 }
 
 /*
+ * Skill-menu row highlight (hover + keyboard-active). Uses VS Code's purpose-built list
+ * variables, NOT --vibe-bg-2/-3: those collapse to --vscode-input-background (the dropdown's
+ * own surface) on several themes, making the highlight invisible. list.* vars are guaranteed
+ * to contrast with the list background on any theme. `[data-active]` (after :hover so it wins
+ * when the mouse is over the keyboard-selected row) marks the arrow-key position.
+ */
+.skill-menu-item:hover {
+	background-color: var(--vscode-list-hoverBackground);
+}
+.skill-menu-item[data-active] {
+	background-color: var(
+		--vscode-list-activeSelectionBackground,
+		var(--vscode-list-focusBackground, var(--vscode-list-hoverBackground))
+	);
+}
+.skill-menu-item[data-active] .skill-menu-item-title {
+	color: var(--vscode-list-activeSelectionForeground);
+}
+
+/*
  * Settings / workspace wells: same border + hover/focus chain as chat composer
  * (--vscode-commandCenter-* → purple/pink accent in VibeIDE themes).
  */

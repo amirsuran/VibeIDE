@@ -5925,11 +5925,12 @@ export const SidebarChat = () => {
 								<div
 									key={cmd.name}
 									ref={(el) => { skillItemRefs.current[i] = el }}
-									className={`px-3 py-1.5 cursor-pointer ${i === skillIdx ? 'bg-vibe-bg-3' : 'hover:bg-vibe-bg-2'}`}
+									className='@@skill-menu-item px-3 py-1.5 cursor-pointer'
+									data-active={i === skillIdx ? '' : undefined}
 									onMouseEnter={() => setSkillIdx(i)}
 									onClick={() => insertSelectedSkill(cmd)}
 								>
-									<div className='text-vibe-fg-1 text-[13px] font-semibold truncate'>/{cmd.name}</div>
+									<div className='@@skill-menu-item-title text-vibe-fg-1 text-[13px] font-semibold truncate'>/{cmd.name}</div>
 									{desc && <div className='text-vibe-fg-3 text-[11px] truncate mt-0.5'>{desc}</div>}
 								</div>
 							)
