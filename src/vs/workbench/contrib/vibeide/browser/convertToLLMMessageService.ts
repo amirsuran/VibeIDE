@@ -244,6 +244,13 @@ const prepareMessages_openai_tools = (messages: SimpleLLMMessage[]): AnthropicOr
 
 	const newMessages: OpenAILLMChatMessage[] = [];
 
+	// Tool-call ids already emitted in this assembly. An INTERRUPTED/resumed turn can replay
+	// the same tool_call id into history; a provider rejects a duplicate id in an assistant's
+	// tool_calls array or a repeated tool result with "HTTP 400 ... duplicate tool_call id".
+	// Track seen ids and skip the whole replayed (tool_call + tool result) pair. (Reported: abort
+	// mid-tool-call → next send 400. See docs/knowledge/.../chat-interrupt-and-inject.md)
+	const seenToolCallIds = new Set<string>();
+
 	for (let i = 0; i < messages.length; i += 1) {
 		const currMsg = messages[i]
 
@@ -516,6 +523,13 @@ const prepareMessages_openai_tools = (messages: SimpleLLMMessage[]): AnthropicOr
 			}
 			continue
 		}
+
+		// (currMsg.role === 'tool' from here.) Drop a replayed duplicate so the request stays valid.
+		if (currMsg.id && seenToolCallIds.has(currMsg.id)) {
+			vibeLog.warn('convertToLLMMessage', `Пропущен дублирующий tool_call id: ${currMsg.id} (${currMsg.name})`)
+			continue
+		}
+		if (currMsg.id) { seenToolCallIds.add(currMsg.id) }
 
 		// Append tool_call to the NEAREST preceding assistant message — not just
 		// the immediately previous one. OpenAI tools format permits multiple

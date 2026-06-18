@@ -345,6 +345,9 @@ export type ThreadType = {
 		currCheckpointIdx: number | null; // the latest checkpoint we're at (null if not at a particular checkpoint, like if the chat is streaming, or chat just finished and we haven't clicked on a checkpt)
 
 		stagingSelections: StagingSelectionItem[];
+		/** Context the user queued WHILE a turn is running — drained into a user message at the top of the
+		 *  next agent hop (no abort needed). See docs/knowledge/chat-ux/chat-interrupt-and-inject.md. */
+		pendingInjections?: string[];
 		focusedMessageIdx: number | undefined; // index of the user message that is being edited (undefined if none)
 
 		linksOfMessageIdx: { // eg. link = linksOfMessageIdx[4]['RangeFunction']
@@ -456,6 +459,7 @@ const newThreadObject = (workspaceId: string | undefined, workspaceLabel: string
 		state: {
 			currCheckpointIdx: null,
 			stagingSelections: [],
+			pendingInjections: [],
 			focusedMessageIdx: undefined,
 			linksOfMessageIdx: {},
 		},
@@ -584,6 +588,8 @@ export interface IChatThreadService {
 
 	// call to add a message
 	addUserMessageAndStreamResponse({ userMessage, threadId, images, noPlan, displayContent }: { userMessage: string, threadId: string, images?: ChatImageAttachment[], noPlan?: boolean, displayContent?: string }): Promise<void>;
+	/** Queue context to be merged into the NEXT agent hop without aborting the running turn. */
+	addPendingInjection(threadId: string, text: string): void;
 
 	// approve/reject
 	approveLatestToolRequest(threadId: string): void;
@@ -4999,6 +5005,10 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 
 			this._setStreamState(threadId, { isRunning: 'idle', interrupt: idleInterruptor })
 
+			// Drain any context the user queued mid-run (without aborting) — becomes a real user
+			// message this hop. See docs/knowledge/chat-ux/chat-interrupt-and-inject.md.
+			this._drainPendingInjections(threadId)
+
 			const chatMessages = this.state.allThreads[threadId]?.messages ?? []
 
 			// Check if we've already synthesized a tool for this original request (prevent infinite loops)
@@ -6641,11 +6651,26 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 					if (autopilotOn && (withinNudgeBudget || questionOverride)) {
 						autoContinueOnTextCount += 1
 						if (askedQuestion) { questionNudgeCount += 1 }
-						const corrective = askedQuestion
+						// Weak XML-mode callers can't be forced via tool_choice (no native tools are sent)
+						// and don't map "вызови vibe_complete" to an emission — so when THIS turn ran in XML
+						// tool mode, spell out the exact tags to output. See docs/knowledge/chat-ux/chat-interrupt-and-inject.md.
+						let xmlCompleteHint = ''
+						try {
+							if (modelSelection && modelSelection.providerName !== 'auto') {
+								const { getModelCapabilities } = await import('../common/modelCapabilities.js')
+								const caps = getModelCapabilities(modelSelection.providerName, modelSelection.modelName, overridesOfModel)
+								if (!caps.specialToolFormat) {
+									xmlCompleteHint = '\n\nТы в XML-режиме инструментов: чтобы ЗАВЕРШИТЬ ход, выведи РОВНО это и больше ничего —\n<vibe_complete>\n<summary>что сделано, 1–3 предложения</summary>\n</vibe_complete>'
+								}
+							}
+						} catch { /* capabilities unavailable → plain nudge */ }
+						let corrective = askedQuestion
 							? '⚙️ Авто-продолжение (автопилот): ты завершил ход вопросом, но автопилот включён — пользователь в этом режиме не отвечает. Прими решение самостоятельно (выбери разумный вариант по умолчанию, зафиксируй его одной строкой) и продолжай работу инструментами. Не жди подтверждения.'
 							: info.fullText.trim().length === 0
 								? '⚙️ Авто-продолжение (автопилот): твой предыдущий ход пришёл ПУСТЫМ (ни текста, ни вызова инструмента) — вероятно, сбой доставки ответа. Продолжай выполнение задачи с того места, где остановился: вызови следующий нужный инструмент или дай финальный ответ.'
 								: '⚙️ Авто-продолжение (автопилот): ты завершил ход текстом без вызова инструмента. Если задача НЕ закончена — продолжай, вызвав нужный инструмент. Если задача ПОЛНОСТЬЮ выполнена — вызови инструмент `vibe_complete` (но сначала перепроверь, что всё действительно сделано: правки применены, сборка/тесты проходят, шагов не осталось). Не пиши «Готово» просто текстом — это завершит ход только через `vibe_complete`. Если не хватает данных — прими разумное решение сам и продолжай.'
+						// Text-only completion case only (not the question / empty-turn variants) gets the XML hint.
+						if (!askedQuestion && info.fullText.trim().length !== 0) { corrective += xmlCompleteHint }
 						this._addMessageToThread(threadId, { role: 'user', content: corrective, displayContent: corrective, selections: null, isSyntheticNudge: true, state: defaultMessageState })
 						shouldSendAnotherMessage = true
 						// Force the follow-up turn to emit a tool call (vibe_complete or a real tool) so a
@@ -8656,6 +8681,24 @@ We only need to do it for files that were edited since `from`, ie files between 
 	// 100..5000). Trim headroom is fixed at 100 (delta between cap and target)
 	// — keeps trim runs amortised, no need for two separate settings.
 	private static readonly TRIM_HEADROOM = 100;
+
+	addPendingInjection(threadId: string, text: string): void {
+		const t = text.trim()
+		if (!t) { return }
+		const cur = this.state.allThreads[threadId]?.state.pendingInjections ?? []
+		this._setThreadState(threadId, { pendingInjections: [...cur, t] })
+	}
+
+	/** Drain queued mid-run context into a real user message so the model sees it on this hop and it
+	 *  shows in the transcript. Cleared FIRST to avoid a re-entrant double-inject. */
+	private _drainPendingInjections(threadId: string): void {
+		const pending = this.state.allThreads[threadId]?.state.pendingInjections
+		if (!pending || pending.length === 0) { return }
+		const content = '[Контекст, добавленный в ходе выполнения]\n' + pending.join('\n\n')
+		this._setThreadState(threadId, { pendingInjections: [] })
+		this._addMessageToThread(threadId, { role: 'user', content, displayContent: content, selections: [], images: [], pdfs: [], state: defaultMessageState })
+		vibeLog.warn('chatThreadService', `[inject] подмешан контекст к следующему хопу (${pending.length} заметок)`)
+	}
 
 	private _addMessageToThread(threadId: string, message: ChatMessage) {
 		// Invalidate plan cache when plan messages are added

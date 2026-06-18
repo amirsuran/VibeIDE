@@ -4727,6 +4727,7 @@ export const SidebarChat = () => {
 	const accessor = useAccessor()
 	const commandService = accessor.get('ICommandService')
 	const chatThreadsService = accessor.get('IChatThreadService')
+	const notificationService = accessor.get('INotificationService')
 
 	const settingsState = useSettingsState()
 	// ----- HIGHER STATE -----
@@ -5248,6 +5249,21 @@ export const SidebarChat = () => {
 		await chatThreadsService.abortRunning(threadId)
 	}
 
+	// Queue the typed text as context for the agent's NEXT hop WITHOUT aborting the running turn.
+	// Drained into a real user message at the top of the next hop (chatThreadService).
+	// See docs/knowledge/chat-ux/chat-interrupt-and-inject.md.
+	const onInject = useCallback(() => {
+		const threadId = currentThread.id
+		const val = textAreaRef.current?.value ?? ''
+		if (!val.trim()) { return }
+		chatThreadsService.addPendingInjection(threadId, val)
+		const n = chatThreadsService.state.allThreads[threadId]?.state.pendingInjections?.length ?? 1
+		if (textAreaFnsRef.current) { textAreaFnsRef.current.setValue('') }
+		chatThreadsService.setThreadDraft(threadId, '')
+		textAreaRef.current?.focus()
+		notificationService.info(`Контекст в очереди — подмешается на следующем хопе агента (${n}).`)
+	}, [chatThreadsService, currentThread.id, textAreaRef, textAreaFnsRef, notificationService])
+
 	const keybindingString = accessor.get('IKeybindingService').lookupKeybinding(VIBEIDE_CTRL_L_ACTION_ID)?.getLabel()
 
 	const threadId = currentThread.id
@@ -5642,11 +5658,16 @@ export const SidebarChat = () => {
 			// Check isDisabled again at the time of key press (not closure value)
 			if (!isDisabled && !isRunning) {
 				onSubmit()
+			} else if (isRunning) {
+				// Agent is running → Enter queues the typed text as context for the NEXT hop (no abort).
+				// See docs/knowledge/chat-ux/chat-interrupt-and-inject.md.
+				e.preventDefault()
+				onInject()
 			}
 		} else if (e.key === 'Escape' && isRunning) {
 			onAbort()
 		}
-	}, [onSubmit, onAbort, isRunning, isDisabled, skillMenuOpen, filteredSkillCmds, skillIdx, insertSelectedSkill])
+	}, [onSubmit, onAbort, onInject, isRunning, isDisabled, skillMenuOpen, filteredSkillCmds, skillIdx, insertSelectedSkill])
 
 	// Context usage calculation + warning (partially memoized - draft tokens calculated on each render)
 	const [ctxWarned, setCtxWarned] = useState(false)
