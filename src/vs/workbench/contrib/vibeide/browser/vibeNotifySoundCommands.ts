@@ -14,7 +14,7 @@ registerAction2(class extends Action2 {
 	constructor() {
 		super({
 			id: 'vibeide.notify.sound.preview',
-			title: localize2('vibeide.notify.sound.preview', 'VibeIDE: Прослушать звук уведомления'),
+			title: localize2('vibeide.notify.sound.preview', 'Прослушать звук уведомления'),
 			category: localize2('vibeide.notify.category', 'VibeIDE'),
 			f1: true,
 		});
