@@ -49,19 +49,27 @@ where npm >nul 2>&1
 if not errorlevel 1 goto :eof
 set "NODE_VER=22.22.1"
 if exist "%~dp0.nvmrc" for /f "usebackq tokens=* delims=" %%v in ("%~dp0.nvmrc") do set "NODE_VER=%%v"
-REM (1) Direct path in fnm's default layout (no subprocess) — respects FNM_DIR if set.
-set "FNM_ROOT=%FNM_DIR%"
-if not defined FNM_ROOT set "FNM_ROOT=%APPDATA%\fnm"
-set "NODE_DIR=%FNM_ROOT%\node-versions\v%NODE_VER%\installation"
-if exist "%NODE_DIR%\npm.cmd" goto :ensure_npm_have
-REM (2) Fallback: ask fnm directly (non-default layout, or .nvmrc pins only a major like `22`).
+REM Search KNOWN fnm roots for the installed version's bin dir. FNM_DIR may be unset OR point
+REM somewhere the versions don't actually live (observed), so we check all candidates, not just it.
 set "NODE_DIR="
+call :try_root "%FNM_DIR%"
+if not defined NODE_DIR call :try_root "%APPDATA%\fnm"
+if not defined NODE_DIR call :try_root "%LOCALAPPDATA%\fnm"
+if not defined NODE_DIR call :try_root "%USERPROFILE%\.fnm"
+if defined NODE_DIR goto :ensure_npm_have
+REM Last resort: ask fnm to run node and report its own dir (also honors a non-default FNM_DIR).
 for /f "usebackq delims=" %%i in (`fnm exec --using "%NODE_VER%" node -e "process.stdout.write(require('path').dirname(process.execPath))" 2^>nul`) do set "NODE_DIR=%%i"
 if not defined NODE_DIR goto :ensure_npm_fail
 :ensure_npm_have
 set "PATH=%NODE_DIR%;%PATH%"
-echo [run-dev] npm not on PATH; using Node %NODE_VER% from "%NODE_DIR%".
+echo [run-dev] npm not on PATH; using Node from "%NODE_DIR%".
 goto :eof
 :ensure_npm_fail
-echo [run-dev] WARNING: npm not on PATH and Node %NODE_VER% not found via fnm. Run `fnm install %NODE_VER%` or put npm on PATH.
+echo [run-dev] WARNING: npm not on PATH and Node %NODE_VER% not found. Checked FNM_DIR, %%APPDATA%%\fnm, %%LOCALAPPDATA%%\fnm, %%USERPROFILE%%\.fnm and `fnm exec`. Run `fnm install %NODE_VER%` or put npm on PATH.
+goto :eof
+
+REM try_root <fnm-root>: if <root>\node-versions\v<ver>\installation\npm.cmd exists, set NODE_DIR to it.
+:try_root
+if "%~1"=="" goto :eof
+if exist "%~1\node-versions\v%NODE_VER%\installation\npm.cmd" set "NODE_DIR=%~1\node-versions\v%NODE_VER%\installation"
 goto :eof
