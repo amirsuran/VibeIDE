@@ -764,6 +764,12 @@ export class VibeideGlobalSettingsConfigurationContribution extends Disposable i
 					description: localize('vibeide.agent.implicitCompleteOnExhaustedNudge', 'Сеть-подстраховка автопилота: когда бюджет нуджей (`autoContinueMaxNudges`) исчерпан, а модель упорно ДЕКЛАРИРУЕТ завершение прозой («Готово», «Завершаю», «Задача выполнена») вместо вызова `vibe_complete` — закрыть прогон как неявное завершение, вместо тупика с кнопкой «Продолжить». Узко: только автопилот + исчерпанный бюджет + терминальный текст-завершение (не воскрешает старый always-on «Готово»-матчинг). Provider-независимо — работает даже если форс `tool_choice` проигнорирован. Дефолт on; off — всегда показывать «Продолжить».'),
 					scope: ConfigurationScope.APPLICATION,
 				},
+				'vibeide.agent.implicitCompleteAfterFirstNudge': {
+					type: 'boolean',
+					default: true,
+					description: localize('vibeide.agent.implicitCompleteAfterFirstNudge', 'Раннее чистое завершение автопилота: если модель уже получила хотя бы ОДИН принудительный нудж (`tool_choice=required` — явный шанс вызвать `vibe_complete`), но снова заканчивает НЕ-вопросный ход терминальной прозой завершения («Готово», «Задача выполнена», "task complete") — принять это как неявное завершение СРАЗУ, не доедая остаток бюджета нуджей. Зачем: лишние нуджи «продолжай!» на реально завершённой задаче провоцируют слабую модель выдумывать ненужную работу. Вопросы сюда не попадают (идут своим путём подпинывания). Дефолт on; off — ждать полного исчерпания бюджета (см. `implicitCompleteOnExhaustedNudge`).'),
+					scope: ConfigurationScope.APPLICATION,
+				},
 				'vibeide.agent.responseLanguage': {
 					type: 'string',
 					default: 'auto',

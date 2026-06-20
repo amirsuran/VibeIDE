@@ -6707,6 +6707,23 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 					const withinNudgeBudget = maxNudges > 0 && autoContinueOnTextCount < maxNudges
 					const questionOverride = askedQuestion && (maxQuestionNudges === 0 || questionNudgeCount < maxQuestionNudges)
 
+					// Early clean completion: once the model has had at least ONE forced-tool nudge
+					// (`tool_choice=required` — its explicit chance to emit `vibe_complete`) and STILL ends a
+					// NON-question turn with terminal completion prose («Готово», «Задача выполнена», …),
+					// accept it as an implicit vibe_complete now instead of spending the rest of the nudge
+					// budget. The extra «продолжай!» nudges only push an already-done model to invent
+					// busywork. Questions never match here — they keep their own nudge path below.
+					if (autopilotOn
+						&& !askedQuestion
+						&& autoContinueOnTextCount >= 1
+						&& this._configurationService.getValue<boolean>('vibeide.agent.implicitCompleteAfterFirstNudge') !== false
+						&& looksLikeCompletionText(info.fullText)) {
+						vibeLog.warn('chatThread', `[autopilot] early implicit vibe_complete: terminal completion prose after ${autoContinueOnTextCount} forced nudge(s) — ending cleanly instead of nudging the full budget.`)
+						this._finalizePlanIfComplete(threadId)
+						this._setStreamState(threadId, { isRunning: undefined })
+						return
+					}
+
 					if (autopilotOn && (withinNudgeBudget || questionOverride)) {
 						autoContinueOnTextCount += 1
 						if (askedQuestion) { questionNudgeCount += 1 }
