@@ -59,11 +59,31 @@ MenuRegistry.appendMenuItem(MenuId.MenubarVibeProjectCommandsMenu, {
 	},
 });
 
-// `editPick` / `deletePick` Quick-Pick entries used to live here (`group: '2_ops'`).
-// They were redundant once `VibeProjectCommandsPopupContribution` intercepts the
-// menubar click and renders per-row inline Edit/Delete icons. The underlying
-// CommandsRegistry handlers stay registered (palette-accessible) — only the
-// menubar surface for them is dropped.
+// `2_ops` — Edit / Delete Quick-Pick entries. The visible-case popup
+// (`VibeProjectCommandsPopupContribution`) suppresses the native dropdown and renders
+// per-row inline Edit/Delete icons instead, so these MenuItems never show there. BUT when
+// the title-bar is narrow the "Команды" menu collapses into the overflow ("…") chevron,
+// where it renders as a NATIVE submenu the popup interceptor can't hook — so without these
+// entries overflow users had no Edit/Delete affordance at all. Re-added here as the native
+// fallback (they pick which command, then edit/delete it). Handlers live in
+// `vibeCustomCommandsContribution` and stay palette-accessible regardless.
+MenuRegistry.appendMenuItem(MenuId.MenubarVibeProjectCommandsMenu, {
+	group: '2_ops',
+	order: 1,
+	command: {
+		id: PROJECT_COMMANDS_PALETTE_IDS.edit,
+		title: localize('vibeide.menubar.commands.edit', "✎ Редактировать команду…"),
+	},
+});
+
+MenuRegistry.appendMenuItem(MenuId.MenubarVibeProjectCommandsMenu, {
+	group: '2_ops',
+	order: 2,
+	command: {
+		id: PROJECT_COMMANDS_PALETTE_IDS.delete,
+		title: localize('vibeide.menubar.commands.delete', "🗑 Удалить команду…"),
+	},
+});
 
 export class VibeProjectCommandsMenubarContribution extends Disposable implements IWorkbenchContribution {
 	static readonly ID = 'workbench.contrib.vibeProjectCommandsMenubar';

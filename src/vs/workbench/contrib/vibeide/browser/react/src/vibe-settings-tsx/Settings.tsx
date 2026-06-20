@@ -10,7 +10,7 @@ import { remoteCatalogCapableProviderNames } from '../../../../common/remoteCata
 import ErrorBoundary from '../sidebar-tsx/ErrorBoundary.js'
 import { VibeButtonBgDarken, VibeCustomDropdownBox, VibeInputBox2, VibeSimpleInputBox, VibeSwitch } from '../util/inputs.js'
 import { useAccessor, useIsDark, useIsOptedOut, useRefreshModelListener, useRefreshModelState, useSettingsState } from '../util/services.js'
-import { X, RefreshCw, Loader2, Check, Asterisk, Plus, ChevronRight, ChevronDown, ImageOff, Image } from 'lucide-react'
+import { X, RefreshCw, Loader2, Check, Asterisk, Plus, ChevronRight, ChevronDown, ImageOff, Image, Play } from 'lucide-react'
 import { joinPath } from '../../../../../../../base/common/resources.js'
 import { ModelDropdown } from './ModelDropdown.js'
 import { VibeWorkspaceFormsPanel } from './VibeWorkspaceForms.js'
@@ -27,7 +27,8 @@ import { useMCPServiceState } from '../util/services.js';
 import { OPT_OUT_KEY } from '../../../../common/storageKeys.js';
 import { StorageScope, StorageTarget } from '../../../../../../../platform/storage/common/storage.js';
 import { generateUuid } from '../../../../../../../base/common/uuid.js'
-import { nav, modelsS, providersS, generalS, ollamaS, miscS, toolApprovalLabel, safetyS, modelDdS } from './vibeSettingsRu.js'
+import { nav, modelsS, providersS, generalS, ollamaS, miscS, toolApprovalLabel, safetyS, modelDdS, notifyS } from './vibeSettingsRu.js'
+import { NOTIFY_DEFAULT_SOUND_IDS } from '../../../vibeNotifySoundService.js'
 
 type Tab =
 	| 'models'
@@ -37,6 +38,7 @@ type Tab =
 	| 'mcp'
 	| 'workspace'
 	| 'general'
+	| 'notifications'
 	| 'safety'
 	| 'all';
 
@@ -2750,6 +2752,183 @@ const SafetyPanel = () => {
 	);
 };
 
+// Notification-sound picker (phone-like): pick + click-preview a default, browse a custom file with
+// pick-time validation, set volume, toggle per-event triggers. Reads/writes `vibeide.notify.sound.*`.
+const NOTIFY_KEY = 'vibeide.notify.sound'
+type NotifySoundState = {
+	enabled: boolean; sound: string; customPath: string; volume: number;
+	muteWhenFocused: boolean; onComplete: boolean; onStalled: boolean; onAwaitingUser: boolean;
+}
+
+const NotificationSoundPanel = () => {
+	const accessor = useAccessor()
+	const configService = accessor.get('IConfigurationService')
+	const notifySoundService = accessor.get('IVibeNotifySoundService')
+	const fileDialogService = accessor.get('IFileDialogService')
+	const notificationService = accessor.get('INotificationService')
+
+	const read = useCallback((): NotifySoundState => {
+		const rawVol = configService.getValue<number>(`${NOTIFY_KEY}.volume`)
+		const volume = typeof rawVol === 'number' && isFinite(rawVol) ? Math.min(1, Math.max(0, rawVol)) : 0.6
+		// All booleans default ON — only an explicit `false` disables (matches the config defaults).
+		return {
+			enabled: configService.getValue<boolean>(`${NOTIFY_KEY}.enabled`) !== false,
+			sound: configService.getValue<string>(`${NOTIFY_KEY}.sound`) ?? 'taskCompleted',
+			customPath: configService.getValue<string>(`${NOTIFY_KEY}.customPath`) ?? '',
+			volume,
+			muteWhenFocused: configService.getValue<boolean>(`${NOTIFY_KEY}.muteWhenFocused`) !== false,
+			onComplete: configService.getValue<boolean>(`${NOTIFY_KEY}.onComplete`) !== false,
+			onStalled: configService.getValue<boolean>(`${NOTIFY_KEY}.onStalled`) !== false,
+			onAwaitingUser: configService.getValue<boolean>(`${NOTIFY_KEY}.onAwaitingUser`) !== false,
+		}
+	}, [configService])
+
+	const [st, setSt] = useState<NotifySoundState>(read)
+
+	useEffect(() => {
+		const d = configService.onDidChangeConfiguration(e => {
+			if (e.affectsConfiguration(NOTIFY_KEY)) { setSt(read()) }
+		})
+		return () => d.dispose()
+	}, [configService, read])
+
+	const set = useCallback(async (subKey: string, value: unknown) => {
+		try {
+			await configService.updateValue(`${NOTIFY_KEY}.${subKey}`, value)
+		} catch (e: any) {
+			notificationService.notify({ severity: Severity.Error, message: `${notifyS.sectionTitle}: ${e?.message ?? e}` })
+		}
+	}, [configService, notificationService])
+
+	const pickDefault = (id: string) => { void set('sound', id); notifySoundService.preview(id) }
+
+	const browseCustom = useCallback(async () => {
+		const picked = await fileDialogService.showOpenDialog({
+			title: notifyS.browseDialogTitle,
+			canSelectFiles: true,
+			canSelectFolders: false,
+			canSelectMany: false,
+			filters: [{ name: 'Аудио', extensions: ['mp3', 'ogg', 'wav'] }],
+		})
+		const uri = picked?.[0]
+		if (!uri) { return }
+		const path = uri.fsPath
+		const result = await notifySoundService.validateCustomFile(path)
+		if (!result.ok) {
+			notificationService.notify({ severity: Severity.Warning, message: notifyS.customRejected(result.reason ?? '') })
+			return
+		}
+		await set('customPath', path)
+		await set('sound', 'custom')
+		notifySoundService.preview(undefined, path)
+		notificationService.info(notifyS.customAccepted)
+	}, [fileDialogService, notifySoundService, notificationService, set])
+
+	const soundRow = (id: string, label: string, selected: boolean, onSelect: () => void, onPreview: () => void, extra?: React.ReactNode) => (
+		<div
+			key={id}
+			className={`flex items-center justify-between gap-3 px-3 py-2 rounded-md cursor-pointer select-none border ${selected ? 'border-[var(--vscode-focusBorder)] bg-[var(--vscode-list-hoverBackground)]' : 'border-transparent hover:bg-[var(--vscode-list-hoverBackground)]'}`}
+			onClick={onSelect}
+		>
+			<div className='flex items-center gap-2 min-w-0'>
+				<span className={`shrink-0 size-3 rounded-full border ${selected ? 'border-[var(--vscode-focusBorder)] bg-[var(--vscode-focusBorder)]' : 'border-vibe-fg-3'}`} />
+				<span className='text-sm text-vibe-fg-1 truncate'>{label}</span>
+				{extra}
+			</div>
+			<button
+				type='button'
+				className='shrink-0 p-1 rounded hover:bg-[var(--vscode-toolbar-hoverBackground)] text-vibe-fg-2'
+				onClick={(e) => { e.stopPropagation(); onPreview() }}
+				data-tooltip-id='vibe-tooltip'
+				data-tooltip-place='left'
+				data-tooltip-content={notifyS.previewTooltip}
+				aria-label={notifyS.previewTooltip}
+			>
+				<Play size={14} />
+			</button>
+		</div>
+	)
+
+	const eventCheckbox = (subKey: 'onComplete' | 'onStalled' | 'onAwaitingUser', label: string) => (
+		<label className='flex items-center gap-2 cursor-pointer select-none'>
+			<input type='checkbox' checked={st[subKey]} onChange={(e) => set(subKey, e.target.checked)} />
+			<span className='text-sm text-vibe-fg-2'>{label}</span>
+		</label>
+	)
+
+	return (
+		<div className='max-w-[600px]'>
+			<h2 className='text-3xl mb-2'>{notifyS.sectionTitle}</h2>
+			<h4 className='text-vibe-fg-3 mb-4'>{notifyS.sectionDesc}</h4>
+
+			<div className='flex items-center gap-x-2 mb-4'>
+				<VibeSwitch size='xs' value={st.enabled} onChange={(v) => set('enabled', v)} />
+				<span className='text-vibe-fg-2 text-sm pointer-events-none'>{notifyS.enabledLabel}</span>
+			</div>
+
+			<div className={`flex flex-col gap-6 ${st.enabled ? '' : 'opacity-50 pointer-events-none'}`}>
+				{/* Sound picker */}
+				<div>
+					<h3 className='text-base font-medium text-vibe-fg-1 mb-1'>{notifyS.soundTitle}</h3>
+					<p className='text-xs text-vibe-fg-3 mb-2'>{notifyS.soundHint}</p>
+					<div className='flex flex-col gap-1'>
+						{NOTIFY_DEFAULT_SOUND_IDS.map(id =>
+							soundRow(id, notifyS.soundNames[id] ?? id, st.sound === id, () => pickDefault(id), () => notifySoundService.preview(id))
+						)}
+						{soundRow(
+							'custom',
+							notifyS.customLabel,
+							st.sound === 'custom',
+							() => { if (st.customPath) { void set('sound', 'custom'); notifySoundService.preview('custom') } else { void browseCustom() } },
+							() => notifySoundService.preview('custom'),
+							<span className='text-xs text-vibe-fg-4 truncate max-w-[220px]'>{st.customPath || notifyS.customNotSet}</span>
+						)}
+					</div>
+					<div className='flex items-center gap-3 mt-2'>
+						<VibeButtonBgDarken className='px-3 py-1 text-xs' onClick={() => void browseCustom()}>
+							{notifyS.browseBtn}
+						</VibeButtonBgDarken>
+						<span className='text-xs text-vibe-fg-3'>{notifyS.customRules}</span>
+					</div>
+				</div>
+
+				{/* Volume */}
+				<div>
+					<h3 className='text-base font-medium text-vibe-fg-1 mb-2'>{notifyS.volumeTitle}</h3>
+					<div className='flex items-center gap-3'>
+						<input
+							type='range'
+							min={0}
+							max={1}
+							step={0.05}
+							value={st.volume}
+							onChange={(e) => set('volume', Number(e.target.value))}
+							className='w-48'
+						/>
+						<span className='text-xs text-vibe-fg-3 w-10 text-right tabular-nums'>{Math.round(st.volume * 100)}%</span>
+					</div>
+				</div>
+
+				{/* Mute when focused */}
+				<div className='flex items-center gap-x-2'>
+					<VibeSwitch size='xs' value={st.muteWhenFocused} onChange={(v) => set('muteWhenFocused', v)} />
+					<span className='text-vibe-fg-2 text-sm pointer-events-none'>{notifyS.muteWhenFocusedLabel}</span>
+				</div>
+
+				{/* Events */}
+				<div>
+					<h3 className='text-base font-medium text-vibe-fg-1 mb-2'>{notifyS.eventsTitle}</h3>
+					<div className='flex flex-col gap-2'>
+						{eventCheckbox('onComplete', notifyS.onCompleteLabel)}
+						{eventCheckbox('onStalled', notifyS.onStalledLabel)}
+						{eventCheckbox('onAwaitingUser', notifyS.onAwaitingUserLabel)}
+					</div>
+				</div>
+			</div>
+		</div>
+	)
+}
+
 export const Settings = () => {
 	const isDark = useIsDark()
 	// --- sidebar nav ---
@@ -2763,6 +2942,7 @@ export const Settings = () => {
 		{ tab: 'providers', label: nav.providers },
 		{ tab: 'featureOptions', label: nav.featureOptions },
 		{ tab: 'general', label: nav.general },
+		{ tab: 'notifications', label: nav.notifications },
 		{ tab: 'safety', label: nav.safety },
 		{ tab: 'mcp', label: nav.mcp },
 		{ tab: 'all', label: nav.all },
@@ -3198,7 +3378,24 @@ export const Settings = () => {
 
 
 
-							{/* Safety & Diagnostics section */}
+							{/* Notifications section */}
+								<div className={shouldShowTab('notifications') ? `` : 'hidden'}>
+									<ErrorBoundary>
+										{selectedSection === 'all' ? (
+											<AllSettingsFold
+												title={nav.notifications}
+												open={!!allSettingsExpanded.notifications}
+												onToggle={() => toggleAllSettingsGroup('notifications')}
+											>
+												<NotificationSoundPanel />
+											</AllSettingsFold>
+										) : (
+											<NotificationSoundPanel />
+										)}
+									</ErrorBoundary>
+								</div>
+
+								{/* Safety & Diagnostics section */}
 							<div className={shouldShowTab('safety') ? `` : 'hidden'}>
 								<ErrorBoundary>
 									{selectedSection === 'all' ? (

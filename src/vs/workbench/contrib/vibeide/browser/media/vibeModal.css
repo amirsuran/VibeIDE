@@ -474,7 +474,7 @@
 }
 
 .vibeide-cmdpalette-search {
-	margin: 10px 12px;
+	margin: 0 0 8px;
 	padding: 6px 8px;
 	border: 1px solid var(--vscode-input-border, var(--vscode-editorWidget-border));
 	border-radius: 4px;
@@ -492,7 +492,7 @@
 	flex: 1 1 auto;
 	min-height: 0;
 	overflow-y: auto;
-	padding: 0 6px 6px;
+	/* Outer gutter comes from .vibeide-rmodal-body; only item rows carry their own padding. */
 	/* Scrollbar look comes from the shared .vibe-scroll rules (single source of truth). */
 }
 
@@ -652,13 +652,22 @@
 	background-color: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
 	color: var(--vscode-foreground);
 }
-/* Flex content region; children own their internal layout/scroll. */
+/* Flex content region. The modal owns the content gutter (single source of truth) — content
+   must NOT add its own outer padding. Children own only their internal layout/scroll. */
 .vibeide-rmodal-body {
 	flex: 1 1 auto;
 	min-height: 0;
 	display: flex;
 	flex-direction: column;
-	overflow: hidden;
+	/* Adaptive: the modal owns scrolling — a scrollbar appears only when content overflows.
+	   Children with their own flex:1 scroll region (lists) still scroll internally; this never
+	   double-scrolls because flex absorbs the remaining height. Thin scrollbar via `vibe-scroll`. */
+	overflow-y: auto;
+	padding: 14px 16px;
+}
+/* Opt-out for content that already owns its padding (e.g. a shared form reused outside the modal). */
+.vibeide-rmodal-body--flush {
+	padding: 0;
 }
 /* Layout for the resizable modal's opt-in scroll container (scrollbar look comes from .vibe-scroll). */
 .vibeide-rmodal-scroll {
@@ -777,7 +786,7 @@
 	display: flex;
 	flex-wrap: wrap;
 	gap: 6px;
-	padding: 12px 16px 10px;
+	padding: 0 0 10px;
 }
 .vibeide-provdiag-btn {
 	font-size: 12px;
@@ -799,7 +808,7 @@
 	overflow-y: auto;
 	flex: 1 1 auto;
 	min-height: 0;
-	padding: 0 16px 16px;
+	/* Outer gutter comes from .vibeide-rmodal-body. */
 }
 .vibeide-provdiag-empty {
 	color: var(--vscode-descriptionForeground);

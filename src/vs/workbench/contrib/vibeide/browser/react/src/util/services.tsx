@@ -75,6 +75,8 @@ import { IVibeCommandsPaletteService } from '../../../../common/vibeCommandsPale
 import { IVibeProjectCommandFormModalService } from '../../../../common/vibeProjectCommandFormModalService.js'
 import { IVibeProviderDiagnosticsService } from '../../../../common/vibeProviderDiagnosticsService.js'
 import { IVibeDynamicProvidersService } from '../../../vibeDynamicProvidersService.js'
+import { IVibeNotifySoundService } from '../../../vibeNotifySoundService.js'
+import { IVibeNotifySoundsModalService } from '../../../../common/vibeNotifySoundsModalService.js'
 import { IEditorService } from '../../../../../../../workbench/services/editor/common/editorService.js'
 
 
@@ -294,6 +296,8 @@ const getReactAccessor = (accessor: ServicesAccessor) => {
 			IVibeProjectCommandFormModalService: accessor.get(IVibeProjectCommandFormModalService),
 			IVibeProviderDiagnosticsService: accessor.get(IVibeProviderDiagnosticsService),
 			IVibeDynamicProvidersService: accessor.get(IVibeDynamicProvidersService),
+			IVibeNotifySoundService: accessor.get(IVibeNotifySoundService),
+			IVibeNotifySoundsModalService: accessor.get(IVibeNotifySoundsModalService),
 			IEditorService: accessor.get(IEditorService),
 
 		} as const

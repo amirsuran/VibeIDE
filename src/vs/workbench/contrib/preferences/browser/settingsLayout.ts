@@ -533,20 +533,12 @@ export const tocData: ITOCEntry<string> = {
 					settings: ['vibeide.*']
 				}
 			]
-		},
-		// Bundled chat extensions registered by Copilot Chat / Anthropic chat fork
-		// land under `chat.*` (and a handful of cross-cutting `accessibility.signals.chat*`
-		// and `imageCarousel.*` keys). Keep them as a separate top-level so they don't
-		// pollute the `vibeide.*` tree while still appearing in the TOC.
-		{
-			id: 'chat-extensions',
-			label: localize('chatExtensions', "Chat (Extensions)"),
-			settings: [
-				'chat.*',
-				'github.copilot.chat.*',
-				'imageCarousel.*',
-				'accessibility.signals.chat*',
-			]
 		}
+		// [VibeIDE removed] The native chat panel is stripped from VibeIDE, so its `chat.*`
+		// settings are orphaned. The former `chat-extensions` TOC group surfaced them as a
+		// visible "Chat (Extensions)" section — removed so they no longer appear as a
+		// dedicated settings section. The underlying registration in chat.contribution.ts is
+		// intentionally LEFT INTACT: that block also registers live MCP / prompt-files / skills
+		// defaults (mcp*, PromptsConfig.*) that VibeIDE features read at runtime.
 	]
 };

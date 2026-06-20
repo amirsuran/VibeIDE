@@ -27,13 +27,16 @@ export interface VibeModalFormProps {
 	/** Forwarded to the root; the shell additionally closes on ESC unless the child preventDefault'd it. */
 	readonly onKeyDown?: (e: React.KeyboardEvent) => void;
 	readonly ariaLabel?: string;
+	/** Drop the modal's default content gutter — only for content that already pads itself
+	 *  (e.g. a shared form reused outside the modal). Default modals should leave this off. */
+	readonly flushBody?: boolean;
 	readonly children?: React.ReactNode;
 }
 
 const VIEWPORT_MARGIN = 40;
 
 export const VibeModalForm: React.FC<VibeModalFormProps> = ({
-	open, title, onClose, headerRight, onKeyDown, ariaLabel, children,
+	open, title, onClose, headerRight, onKeyDown, ariaLabel, flushBody, children,
 	defaultWidth = 720, defaultHeight = 600, minWidth = 480, minHeight = 360,
 }) => {
 	const [size, setSize] = useState<{ w: number; h: number }>({ w: defaultWidth, h: defaultHeight });
@@ -86,7 +89,7 @@ export const VibeModalForm: React.FC<VibeModalFormProps> = ({
 					<button className="@@vibeide-rmodal-close" title="Закрыть (ESC)" onClick={onClose}>✕</button>
 				</div>
 
-				<div className="@@vibeide-rmodal-body">
+				<div className={flushBody ? "@@vibeide-rmodal-body @@vibeide-rmodal-body--flush @@vibe-scroll" : "@@vibeide-rmodal-body @@vibe-scroll"}>
 					{children}
 				</div>
 

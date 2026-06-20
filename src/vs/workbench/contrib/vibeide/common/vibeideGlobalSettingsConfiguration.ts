@@ -927,7 +927,7 @@ export class VibeideGlobalSettingsConfigurationContribution extends Disposable i
 						localize('vibeide.notify.sound.sound.custom', 'Свой файл (укажите путь в `customPath`)'),
 					],
 					default: 'taskCompleted',
-					description: localize('vibeide.notify.sound.sound', 'Какой звук проигрывать. Прослушать выбранный вариант — команда «VibeIDE: Прослушать звук уведомления». Для своего звука выберите `custom` и укажите путь в `vibeide.notify.sound.customPath`.'),
+					description: localize('vibeide.notify.sound.sound', 'Какой звук проигрывать. Удобнее всего — пикер с превью по клику в Настройках VibeIDE → «Уведомления», либо редактор «VibeIDE Звуки» (меню-мозг в заголовке), где можно загрузить свой трек и вырезать фрагмент. Прослушать выбранный вариант также можно командой «VibeIDE: Прослушать звук уведомления». Для своего звука выберите `custom` и укажите путь в `vibeide.notify.sound.customPath`.'),
 					scope: ConfigurationScope.APPLICATION,
 				},
 				'vibeide.notify.sound.customPath': {

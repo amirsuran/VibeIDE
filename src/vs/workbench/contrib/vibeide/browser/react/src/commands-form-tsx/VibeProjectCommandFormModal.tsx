@@ -41,6 +41,7 @@ export const VibeProjectCommandFormModal: React.FC = () => {
 			defaultHeight={640}
 			minWidth={520}
 			minHeight={400}
+			flushBody
 		>
 			{props && (
 				<div className="@@vibeide-rmodal-scroll">

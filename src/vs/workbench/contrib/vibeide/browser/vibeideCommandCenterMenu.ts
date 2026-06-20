@@ -203,3 +203,12 @@ MenuRegistry.appendMenuItem(VibeideTitleBarMenuId, {
 	group: 'd_commands',
 	order: 2,
 });
+
+MenuRegistry.appendMenuItem(VibeideTitleBarMenuId, {
+	command: {
+		id: 'vibeide.sounds.open',
+		title: localize('vibeideSounds', 'VibeIDE Звуки'),
+	},
+	group: 'd_commands',
+	order: 3,
+});
