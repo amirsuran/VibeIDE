@@ -25,9 +25,12 @@ shift
 goto parse_args
 :after_args
 
+REM Ensure Node/npm/npx are callable for BOTH steps: --compile (npm) and the launch itself
+REM (scripts\vibe-dev.bat shells out to npx/node and resolves the Electron path via node).
+call :ensure_npm
+
 if not defined DO_COMPILE goto launch
 echo [run-dev] --compile: running `npm run compile`...
-call :ensure_npm
 call npm run compile
 if !errorlevel! neq 0 (
 	echo [run-dev] Compile failed ^(exit !errorlevel!^) -- aborting launch.
