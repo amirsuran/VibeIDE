@@ -266,7 +266,7 @@ OK "Portable archive built: $zipName"
 Step "Collecting artifacts..."
 $setupDir  = "$Root\.build\win32-x64\system-setup"
 
-$exeFiles = Get-ChildItem "$setupDir\VSCodeSetup*.exe" -ErrorAction SilentlyContinue
+$exeFiles = Get-ChildItem "$setupDir\$($product.nameShort)Setup*.exe" -ErrorAction SilentlyContinue
 # Pick ONLY the current version's portable zip — never a stale leftover (e.g. one a
 # messenger locked so the pre-clean above had to skip it). Keeps a forgotten build out.
 $zipFiles  = Get-ChildItem "$archiveDir\$zipName" -ErrorAction SilentlyContinue
