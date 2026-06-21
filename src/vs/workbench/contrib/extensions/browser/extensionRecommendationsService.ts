@@ -268,7 +268,14 @@ export class ExtensionRecommendationsService extends Disposable implements IExte
 			.map(({ extension }) => extension)
 			.filter(extension => !isString(extension) || this.isExtensionAllowedToBeRecommended(extension));
 
-		if (allowedRecommendations.length) {
+		// [VibeIDE removed] Do NOT show the intrusive workspace "Do you want to install the recommended
+		// extensions (dbaeumer, ms-vscode, …) for this repository?" toast (~5s after a folder opens).
+		// The recommendation set is still computed and stays available in the Extensions view →
+		// Recommended; only the auto-prompt is cut. Kept behind a runtime-false gate (explicit `boolean`
+		// type so it never trips `allowUnreachableCode`, and all references stay intact) for easy
+		// restore. See patches-vscode-source/vibeide-remove-workspace-recommendations-toast.patch.
+		const VIBEIDE_SHOW_WORKSPACE_RECOMMENDATIONS_TOAST: boolean = false;
+		if (VIBEIDE_SHOW_WORKSPACE_RECOMMENDATIONS_TOAST && allowedRecommendations.length) {
 			await this._registerP(timeout(5000));
 			await this.extensionRecommendationNotificationService.promptWorkspaceRecommendations(allowedRecommendations);
 		}
