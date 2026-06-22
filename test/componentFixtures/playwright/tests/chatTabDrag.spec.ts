@@ -40,6 +40,7 @@ function verifyChatTabDragInvariant(before, after) {
     }
     return { preserved: violations.length === 0, violations };
 }
+globalThis.verifyChatTabDragInvariant = verifyChatTabDragInvariant;
 `;
 
 type ChatTabSnapshot = { chatId: string; groupId: number; editorIndex: number };

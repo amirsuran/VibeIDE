@@ -52,6 +52,8 @@ function decodeWindowLock(raw) {
     const windowId = typeof r.windowId === 'string' && r.windowId.length > 0 ? r.windowId : undefined;
     return { pid, startedAtMs, lastHeartbeatAtMs, windowId };
 }
+globalThis.decideWindowRole = decideWindowRole;
+globalThis.decodeWindowLock = decodeWindowLock;
 `;
 
 type WindowRole =
@@ -287,6 +289,7 @@ function verifyMultiWindowLockInvariants(windows) {
     }
     return { ok: violations.length === 0, violations };
 }
+globalThis.verifyMultiWindowLockInvariants = verifyMultiWindowLockInvariants;
 `;
 			await ctx1.addInitScript(MULTI_WINDOW_INVARIANT_LOGIC);
 			await ctx2.addInitScript(MULTI_WINDOW_INVARIANT_LOGIC);
@@ -339,6 +342,7 @@ function verifyMultiWindowLockInvariants(windows) {
     }
     return { ok: violations.length === 0, violations };
 }
+globalThis.verifyMultiWindowLockInvariants = verifyMultiWindowLockInvariants;
 `;
 			await ctx1.addInitScript(MULTI_WINDOW_INVARIANT_LOGIC);
 			await ctx2.addInitScript(MULTI_WINDOW_INVARIANT_LOGIC);
