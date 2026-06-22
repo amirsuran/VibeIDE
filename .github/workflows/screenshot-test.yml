@@ -3,10 +3,18 @@ name: Checking Component Screenshots
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'media/**'
   pull_request:
     branches:
       - main
       - 'release/*'
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'media/**'
 
 permissions:
   contents: read
