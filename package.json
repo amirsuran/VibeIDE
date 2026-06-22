@@ -220,7 +220,7 @@
     "@floating-ui/react": "^0.27.19",
     "@fortawesome/fontawesome-free": "^6.7.2",
     "@playwright/cli": "^0.1.1",
-    "@playwright/test": "^1.56.1",
+    "@playwright/test": "1.59.1",
     "@stylistic/eslint-plugin-ts": "^2.8.0",
     "@tailwindcss/typography": "^0.5.19",
     "@types/cookie": "^0.3.3",

@@ -19,6 +19,7 @@
  */
 
 import { test, expect, type Page } from '@playwright/test';
+import { getBaseURL } from './utils';
 
 // NLS key patterns that must never leak into rendered UI.
 const NLS_KEY_PATTERN = /%[a-zA-Z][a-zA-Z0-9._-]*%/;
@@ -101,7 +102,7 @@ const ENGLISH_ONLY_UI_STRINGS = [
  * Tolerates a slow first load.
  */
 async function getRootBodyText(page: Page): Promise<string> {
-	await page.goto('/', { waitUntil: 'load', timeout: 30_000 });
+	await page.goto(getBaseURL() + '/', { waitUntil: 'load', timeout: 30_000 });
 	await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => { /* best-effort */ });
 	return page.locator('body').innerText();
 }
@@ -279,7 +280,7 @@ test.describe('VibeIDE i18n — locale: qps-ploc (pseudo-locale gate)', () => {
 test.describe('VibeIDE i18n — inspectLocaleScreens helper-driven smoke', () => {
 	test('locale: ru — no English text / raw keys / placeholder leaks on root', async ({ page }) => {
 		await page.addInitScript(INSPECT_LOCALE_SCREENS_LOGIC);
-		await page.goto('/', { waitUntil: 'load', timeout: 25_000 });
+		await page.goto(getBaseURL() + '/', { waitUntil: 'load', timeout: 25_000 });
 		const screens = await scrapeVisibleScreens(page);
 		const findings = await page.evaluate(
 			(args) => (window as unknown as { inspectLocaleScreens: (l: string, s: unknown[]) => LocaleFinding[] }).inspectLocaleScreens(args.locale, args.screens),
@@ -296,7 +297,7 @@ test.describe('VibeIDE i18n — inspectLocaleScreens helper-driven smoke', () =>
 
 	test('locale: qps-ploc — no unbracketed VibeIDE strings on root', async ({ page }) => {
 		await page.addInitScript(INSPECT_LOCALE_SCREENS_LOGIC);
-		await page.goto('/', { waitUntil: 'load', timeout: 25_000 });
+		await page.goto(getBaseURL() + '/', { waitUntil: 'load', timeout: 25_000 });
 		const screens = await scrapeVisibleScreens(page);
 		const findings = await page.evaluate(
 			(args) => (window as unknown as { inspectLocaleScreens: (l: string, s: unknown[]) => LocaleFinding[] }).inspectLocaleScreens(args.locale, args.screens),
@@ -313,7 +314,7 @@ test.describe('VibeIDE i18n — inspectLocaleScreens helper-driven smoke', () =>
 
 	test('locale: en — fallback works, no raw keys', async ({ page }) => {
 		await page.addInitScript(INSPECT_LOCALE_SCREENS_LOGIC);
-		await page.goto('/', { waitUntil: 'load', timeout: 25_000 });
+		await page.goto(getBaseURL() + '/', { waitUntil: 'load', timeout: 25_000 });
 		const screens = await scrapeVisibleScreens(page);
 		const findings = await page.evaluate(
 			(args) => (window as unknown as { inspectLocaleScreens: (l: string, s: unknown[]) => LocaleFinding[] }).inspectLocaleScreens(args.locale, args.screens),
@@ -333,7 +334,7 @@ test.describe('VibeIDE i18n — inspectLocaleScreens helper-driven smoke', () =>
 		// screenshot with the DOM-text scrape — screenshot proves the screen
 		// did render, DOM-text proves no key/leak surfaced.
 		await page.addInitScript(INSPECT_LOCALE_SCREENS_LOGIC);
-		await page.goto('/', { waitUntil: 'load', timeout: 25_000 });
+		await page.goto(getBaseURL() + '/', { waitUntil: 'load', timeout: 25_000 });
 
 		// Capture a screenshot to confirm the screen is rendering at all.
 		const screenshot = await page.screenshot({ fullPage: false });

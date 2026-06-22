@@ -25,6 +25,7 @@
  */
 
 import { test, expect, type Page, type Route } from '@playwright/test';
+import { getBaseURL } from './utils';
 
 // Hosts that are permitted in component fixture rendering.
 // localhost + 127.0.0.1 are always allowed (component explorer server).
@@ -111,7 +112,7 @@ test.describe('Privacy: network sniffer (hard gate)', () => {
 		const { violations } = await attachSniffer(page);
 
 		// Navigate to the component-explorer root to trigger any passive loads
-		await page.goto('/');
+		await page.goto(getBaseURL() + '/');
 		await page.waitForLoadState('networkidle');
 
 		expect(violations, `Privacy gate failed — blocked outbound requests detected:\n${violations.join('\n')}`).toHaveLength(0);
@@ -135,7 +136,7 @@ test.describe('Privacy: network sniffer (hard gate)', () => {
 
 		try {
 			// Navigate to the sidebar fixture if it exists; skip gracefully otherwise
-			await page.goto('/___explorer/sidebar-tsx/SidebarChat/Default/Light', { waitUntil: 'networkidle', timeout: 10_000 });
+			await page.goto(getBaseURL() + '/___explorer/sidebar-tsx/SidebarChat/Default/Light', { waitUntil: 'networkidle', timeout: 10_000 });
 		} catch {
 			test.skip();
 			return;
