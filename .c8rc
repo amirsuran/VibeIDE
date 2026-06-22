@@ -1,6 +1,6 @@
 {
 	"reporter": ["text", "lcov", "json-summary"],
-	"include": ["out/vs/workbench/contrib/vibeide/**"],
+	"include": ["out/vs/workbench/contrib/vibeide/common/**"],
 	"exclude": [
 		"out/vs/workbench/contrib/vibeide/**/react/**",
 		"out/vs/workbench/contrib/vibeide/test/**",
