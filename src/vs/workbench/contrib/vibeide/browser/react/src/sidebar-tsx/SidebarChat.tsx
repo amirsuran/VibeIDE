@@ -5765,7 +5765,72 @@ export const SidebarChat = () => {
 		if (contextPct < 0.6 && ctxWarned) setCtxWarned(false)
 	}, [contextPct, ctxWarned, contextTotal, contextBudget, accessor])
 
-	const inputChatArea = <div className='relative'>
+	// Pending-injection strip lives ABOVE the .relative input wrapper — otherwise the absolute
+	// maximize/zen toolbar (anchored top/right of .relative) floats over the strip instead of the input.
+	const pendingInjectionsStrip = pendingInjections.length > 0 ? (
+		<div
+			style={{
+				margin: '0 6px 6px',
+				padding: '6px 8px',
+				borderRadius: '10px',
+				background: 'rgba(234, 179, 8, 0.12)',
+				border: '1px solid rgba(234, 179, 8, 0.35)',
+				display: 'flex',
+				flexDirection: 'column',
+				gap: '4px',
+			}}
+		>
+			<div className="text-xs" style={{ opacity: 0.8, display: 'flex', alignItems: 'center', gap: '6px' }}>
+				<Pin size={12} />
+				<span>В очереди — подмешается в следующем ходе агента ({pendingInjections.length})</span>
+			</div>
+			{pendingInjections.map((note, i) => (
+				<div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: '6px' }}>
+					<div
+						className="text-xs text-vibe-fg-2"
+						title={note}
+						style={{
+							flex: 1,
+							minWidth: 0,
+							whiteSpace: 'pre-wrap',
+							overflow: 'hidden',
+							display: '-webkit-box',
+							WebkitLineClamp: 3,
+							WebkitBoxOrient: 'vertical',
+							opacity: 0.9,
+						}}
+					>
+						{note}
+					</div>
+					<button
+						type="button"
+						onClick={() => chatThreadsService.removePendingInjection(threadId, i)}
+						title="Убрать из очереди"
+						aria-label="Убрать из очереди"
+						style={{
+							flexShrink: 0,
+							padding: '2px',
+							borderRadius: '4px',
+							background: 'transparent',
+							color: 'inherit',
+							border: 'none',
+							cursor: 'pointer',
+							opacity: 0.6,
+							display: 'flex',
+						}}
+						onMouseEnter={e => (e.currentTarget.style.opacity = '1')}
+						onMouseLeave={e => (e.currentTarget.style.opacity = '0.6')}
+					>
+						<X size={12} />
+					</button>
+				</div>
+			))}
+		</div>
+	) : null
+
+	const inputChatArea = <>
+		{pendingInjectionsStrip}
+		<div className='relative'>
 		<div
 			style={{
 				position: 'absolute',
@@ -5822,66 +5887,6 @@ export const SidebarChat = () => {
 				<Maximize size={14} />
 			</button>
 		</div>
-		{pendingInjections.length > 0 && (
-			<div
-				style={{
-					margin: '0 6px 6px',
-					padding: '6px 8px',
-					borderRadius: '10px',
-					background: 'rgba(234, 179, 8, 0.12)',
-					border: '1px solid rgba(234, 179, 8, 0.35)',
-					display: 'flex',
-					flexDirection: 'column',
-					gap: '4px',
-				}}
-			>
-				<div className="text-xs" style={{ opacity: 0.8, display: 'flex', alignItems: 'center', gap: '6px' }}>
-					<Pin size={12} />
-					<span>В очереди — подмешается в следующем ходе агента ({pendingInjections.length})</span>
-				</div>
-				{pendingInjections.map((note, i) => (
-					<div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: '6px' }}>
-						<div
-							className="text-xs text-vibe-fg-2"
-							title={note}
-							style={{
-								flex: 1,
-								minWidth: 0,
-								whiteSpace: 'pre-wrap',
-								overflow: 'hidden',
-								display: '-webkit-box',
-								WebkitLineClamp: 3,
-								WebkitBoxOrient: 'vertical',
-								opacity: 0.9,
-							}}
-						>
-							{note}
-						</div>
-						<button
-							type="button"
-							onClick={() => chatThreadsService.removePendingInjection(threadId, i)}
-							title="Убрать из очереди"
-							aria-label="Убрать из очереди"
-							style={{
-								flexShrink: 0,
-								padding: '2px',
-								borderRadius: '4px',
-								background: 'transparent',
-								color: 'inherit',
-								border: 'none',
-								cursor: 'pointer',
-								opacity: 0.6,
-								display: 'flex',
-							}}
-							onMouseEnter={e => (e.currentTarget.style.opacity = '1')}
-							onMouseLeave={e => (e.currentTarget.style.opacity = '0.6')}
-						>
-							<X size={12} />
-						</button>
-					</div>
-				))}
-			</div>
-		)}
 		<VibeChatArea
 		featureName='Chat'
 		onSubmit={() => onSubmit()}
@@ -6032,12 +6037,12 @@ export const SidebarChat = () => {
 
 	</VibeChatArea>
 	</div>
+	</>
 
 
 	const isLandingPage = previousMessages.length === 0
 
-
-	const initiallySuggestedPromptsHTML = 					<div className='flex flex-col gap-2 w-full text-nowrap text-vibe-fg-3 select-none'>
+	const initiallySuggestedPromptsHTML =					<div className='flex flex-col gap-2 w-full text-nowrap text-vibe-fg-3 select-none'>
 		{[
 			chatS.suggestSummarize,
 			chatS.suggestRustTypes,
