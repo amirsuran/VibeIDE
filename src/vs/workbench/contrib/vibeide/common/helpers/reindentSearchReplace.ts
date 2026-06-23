@@ -22,6 +22,18 @@
  * Pure (no I/O) so it is unit-testable from test/common.
  */
 
+/**
+ * True when index `idx` in `text` sits at the start of a line (start-of-text or right after a `\n`).
+ *
+ * Used to decide whether a raw `indexOf` hit is a real byte-exact LINE match. A hit that starts
+ * mid-line (e.g. the model dropped the anchor's first-line indent, so the search text matches from
+ * the middle of an indented line) is NOT line-aligned — the caller should treat it as inexact and
+ * fall through to indentation-tolerant matching so the replacement gets re-indented.
+ */
+export function isAtLineStart(text: string, idx: number): boolean {
+	return idx === 0 || text[idx - 1] === '\n';
+}
+
 /** Leading run of spaces/tabs of a single line (no newline expected). */
 export function getLeadingWhitespace(line: string): string {
 	const m = /^[ \t]*/.exec(line);

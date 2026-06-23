@@ -18,7 +18,7 @@
  */
 
 import * as assert from 'assert';
-import { alignReplacementIndentation, firstNonBlankLine, getLeadingWhitespace } from '../../common/helpers/reindentSearchReplace.js';
+import { alignReplacementIndentation, firstNonBlankLine, getLeadingWhitespace, isAtLineStart } from '../../common/helpers/reindentSearchReplace.js';
 
 suite('reindentSearchReplace', () => {
 
@@ -105,5 +105,47 @@ suite('reindentSearchReplace', () => {
 
 	test('empty final → unchanged', () => {
 		assert.strictEqual(alignReplacementIndentation('', '        ', ''), '');
+	});
+
+	test('isAtLineStart distinguishes line-aligned vs mid-line indexOf hits', () => {
+		const file = '        log(x);\n        next();';
+		assert.strictEqual(isAtLineStart(file, 0), true, 'start of text');
+		// indexOf of the un-indented text lands AFTER the 8 leading spaces → mid-line, not line-aligned.
+		const mid = file.indexOf('log(x);');
+		assert.ok(mid > 0);
+		assert.strictEqual(isAtLineStart(file, mid), false, 'mid-line hit');
+		// The same text WITH its indent matches at the line boundary.
+		assert.strictEqual(isAtLineStart(file, file.indexOf('        log(x);')), true, 'line-aligned hit');
+	});
+
+	test('regression: mid-line indexOf must NOT count as exact → reindent restores the first line', () => {
+		// The Promed spiral. The file's anchor is indented; the model's old_string dropped the FIRST
+		// line's 8 spaces, so a raw `indexOf` matches from the middle of the indented line. That hit is
+		// NOT line-aligned, so findTextInCode marks the match inexact and the reindent path realigns the
+		// replacement — restoring the indent instead of snapping the first line to column 0 (which sent
+		// weaker models into an endless "fix the whitespace" retry loop).
+		const file = [
+			"        log('>> onSprLoad', params);",
+			'        ctrl.resetStates();',
+			'',
+			'        if (!view.patoSprLoaded) {',
+		].join('\n');
+		const oldStr = "log('>> onSprLoad', params);\n        ctrl.resetStates();\n\n        if (!view.patoSprLoaded) {";
+		const newStr = "log('>> onSprLoad', params);\n        // reset moved to onHide\n\n        if (!view.patoSprLoaded) {";
+
+		const idx = file.indexOf(oldStr);
+		assert.ok(idx > 0, 'old_string matches the file mid-line (after the dropped indent)');
+		assert.strictEqual(isAtLineStart(file, idx), false, 'mid-line hit → treated as inexact → reindent path runs');
+
+		// The realignment the inexact path applies (mirrors editCodeService.findTextInCode call site):
+		const fileIndent = getLeadingWhitespace("        log('>> onSprLoad', params);");
+		const searchIndent = getLeadingWhitespace(firstNonBlankLine(oldStr));
+		const aligned = alignReplacementIndentation(searchIndent, fileIndent, newStr);
+		assert.strictEqual(aligned, [
+			"        log('>> onSprLoad', params);",
+			'        // reset moved to onHide',
+			'',
+			'        if (!view.patoSprLoaded) {',
+		].join('\n'), 'first line restored to 8 spaces, body untouched');
 	});
 });

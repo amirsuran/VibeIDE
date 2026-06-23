@@ -37,7 +37,7 @@ import { QuickEditPropsType } from './quickEditActions.js';
 import { IModelContentChangedEvent } from '../../../../editor/common/textModelEvents.js';
 import { extractCodeFromFIM, extractCodeFromRegular, ExtractedSearchReplaceBlock, extractSearchReplaceBlocks, normalizeSearchReplaceMarkers } from '../common/helpers/extractCodeFromResult.js';
 import { findLinesTolerant } from '../common/helpers/fuzzyLineMatch.js';
-import { alignReplacementIndentation, firstNonBlankLine, getLeadingWhitespace } from '../common/helpers/reindentSearchReplace.js';
+import { alignReplacementIndentation, firstNonBlankLine, getLeadingWhitespace, isAtLineStart } from '../common/helpers/reindentSearchReplace.js';
 import { INotificationService, } from '../../../../platform/notification/common/notification.js';
 import { EditorOption } from '../../../../editor/common/config/editorOptions.js';
 import { Emitter } from '../../../../base/common/event.js';
@@ -163,7 +163,14 @@ const findTextInCode = (text: string, fileContents: string, canFallbackToRemoveW
 
 	// if idx was found
 	if (idx !== -1) {
-		if (opts?.matchModeRef) opts.matchModeRef.exact = true
+		// A raw indexOf can land MID-LINE: when a model copies the anchor's first line WITHOUT its
+		// leading indentation, `text` still matches the file from the middle of an indented line
+		// (right after the whitespace). That is NOT a true byte-exact line match — the replacement
+		// runs on whole lines, so the first line would silently lose its indent, and the reindent
+		// safety net (gated on `!exact`) would never fire. Only treat a hit as exact when it starts
+		// at a line boundary; a mid-line hit falls through to the tolerant path so the replacement
+		// gets re-indented to the file's anchor. See helpers/reindentSearchReplace.ts.
+		if (opts?.matchModeRef) opts.matchModeRef.exact = isAtLineStart(fileContents, idx)
 		return returnAns(fileContents, idx)
 	}
 

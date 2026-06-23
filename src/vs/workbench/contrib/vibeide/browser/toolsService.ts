@@ -1803,7 +1803,7 @@ export class ToolsService implements IToolsService {
 				let indentationNote: string | null = null
 				if (applyInfo.indentAdjustments.length > 0) {
 					const widths = Array.from(new Set(applyInfo.indentAdjustments.map(a => a.fileIndentWidth))).sort((a, b) => a - b)
-					indentationNote = `Внимание: отступ твоего old_string/new_string не совпал с файлом (отступ якорной строки в файле: ${widths.join('/')} пробел(ов)) — я автоматически выровнял блок по файлу. Проверь diff: если отступ в результате всё равно неверный, пришли new_string с ТОЧНЫМ отступом КАЖДОЙ строки (включая первую) или используй rewrite_file. Инструмент вставляет new_string дословно и не переотступает сам.`
+					indentationNote = `Отступ твоего old_string/new_string не совпал с файлом (отступ якорной строки: ${widths.join('/')} пробел(ов)) — я УЖЕ автоматически выровнял блок по файлу, правка применена корректно. НЕ присылай повторные правки только ради пробелов/отступа и не перечитывай файл по кругу из-за этого: посмотри diff ОДИН раз. Если отступ в diff ВСЁ ЕЩЁ неверный — пришли new_string с ТОЧНЫМ отступом КАЖДОЙ строки (включая первую) ИЛИ используй rewrite_file для всего блока.`
 				}
 				// File content has just been mutated — re-mark as read so chained edits still pass the guard.
 				this._markFileRead(uri)
