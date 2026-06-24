@@ -71,9 +71,10 @@ VibeIDE — форк [VS Code open source (Code-OSS)](https://github.com/microso
 
 ### Требования
 
-- **Node.js 22.22.1** (версия зафиксирована в `.nvmrc`)
-- Python 3.x
+- **Node.js 22.22.1** (версия зафиксирована в `.nvmrc`) — именно этот мажор; на другом (24/20) сборка падает, часто **молча**.
+- Python 3.x (нужен node-gyp)
 - Git
+- **Windows:** Visual Studio Build Tools 2022 — компонент **«Desktop development with C++»** **И** **Spectre-mitigated библиотеки**. Подробности и команды — в [«C/C++ тулчейн для Windows»](#cc-тулчейн-для-windows-нативные-модули--обязательно) ниже.
 
 #### Node через fnm (рекомендуется)
 
@@ -93,6 +94,27 @@ npm -v         # должно показать версию npm
 > - **bash/zsh:** `eval "$(fnm env --use-on-cd)"` (добавь в `~/.bashrc` / `~/.zshrc`)
 >
 > На Windows запуск dev-IDE через `.\run-dev.bat --compile` также сам резолвит Node из fnm, если он установлен.
+
+#### C/C++ тулчейн для Windows (нативные модули) — обязательно
+
+`npm install` компилирует нативные модули (`@vscode/windows-registry`, `@vscode/spdlog`, `native-keymap`, `node-pty` и др.) через **node-gyp**, поэтому нужен компилятор MSVC. Без него `preinstall` падает с `*** Invalid C/C++ Compiler Toolchain`.
+
+```powershell
+winget install --id Microsoft.VisualStudio.2022.BuildTools -e --accept-package-agreements --accept-source-agreements `
+  --override "--quiet --wait --norestart --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+```
+
+> ⚠️ **Spectre-mitigated библиотеки — отдельный компонент, и без него сборка падает.** На `@vscode/windows-registry` будет `MSB8040: для этого проекта требуются библиотеки с устранением рисков Spectre`. `--includeRecommended` их **не** ставит — добавь явно через `setup.exe modify` (winget доустановить компонент в существующий VS **не умеет** — считает это «нет обновлений»):
+>
+> ```powershell
+> & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\setup.exe" modify `
+>   --installPath "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\BuildTools" `
+>   --add Microsoft.VisualStudio.Component.VC.Runtimes.x86.x64.Spectre --quiet --norestart
+> ```
+>
+> **Не передавай `--wait` напрямую в `setup.exe`** — он его не понимает и сразу выходит с `exit 87`. Ожидание делает `Start-Process … -Wait`.
+
+После установки тулчейна **открой новый терминал** (PATH обновится) и убедись, что Node = 22.22.1, прежде чем `npm install`.
 
 ### Сборка из исходников
 
