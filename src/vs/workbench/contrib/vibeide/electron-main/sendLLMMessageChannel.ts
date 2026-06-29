@@ -13,6 +13,7 @@ import { EventLLMMessageOnTextParams, EventLLMMessageOnErrorParams, EventLLMMess
 import { sendLLMMessage } from './llmMessage/sendLLMMessage.js'
 import { IMetricsService } from '../common/metricsService.js';
 import { sendLLMMessageToProviderImplementation, clearProviderClientCaches } from './llmMessage/sendLLMMessage.impl.js';
+import { getDispatcherDiagnostics } from './llmMessage/systemCAFetch.js';
 
 // NODE IMPLEMENTATION - calls actual sendLLMMessage() and returns listeners to it
 
@@ -85,6 +86,10 @@ export class LLMMessageChannel implements IServerChannel {
 				// Diagnostic: clear stale local client caches + recreate the shared cloud
 				// dispatcher so wedged transport recovers without an IDE restart.
 				clearProviderClientCaches()
+			}
+			else if (command === 'getTransportDiagnostics') {
+				// Diagnostic: live shared-dispatcher generation/age for the stall report.
+				return getDispatcherDiagnostics()
 			}
 			else {
 				throw new Error(`VibeIDE sendLLM: command "${command}" not recognized.`)

@@ -793,6 +793,36 @@ body.monaco-workbench,
 	font-weight: 600;
 }
 
+/* Vibe Projects row layout: label fills, inline actions (rename/forget) pinned right. */
+.vibe-projects-slot-row {
+	display: flex;
+	align-items: center;
+	width: 100%;
+	/* Shared vibe-panel content inset (token --vibeide-space-md = 12px, matches headers + chat); keeps Projects aligned with Server. */
+	padding: 0 var(--vibeide-space-md);
+}
+.vibe-projects-slot-label {
+	flex: 1 1 auto;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.vibe-projects-slot-actions {
+	flex: 0 0 auto;
+	display: flex;
+	align-items: center;
+	visibility: hidden;
+}
+/* Reveal the pencil/trash on row hover or when focused via keyboard. */
+.monaco-list-row:hover .vibe-projects-slot-actions,
+.monaco-list-row.focused .vibe-projects-slot-actions,
+.vibe-projects-slot-actions:focus-within {
+	visibility: visible;
+}
+.vibe-projects-slot-actions .action-label.codicon {
+	color: var(--vscode-icon-foreground);
+}
+
 /* ----------------------------------------------------------------------------------------
  * Project Commands — custom "Команды" popup (replaces native menubar dropdown).
  * Targets --vscode-menu-* tokens so the popup is visually indistinguishable from
@@ -925,4 +955,51 @@ body.monaco-workbench,
 }
 .vibe-cmd-popup-row__action--danger:hover {
 	color: var(--vscode-errorForeground, #f48771);
+}
+
+/* Vibe Server view pane */
+.vibe-server-body {
+	/* Horizontal inset lives on the rows/status (full-width hover); see --vibeide-space-sm. */
+	padding: var(--vibeide-space-sm) 0;
+}
+.vibe-server-status-line {
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+	word-break: break-all;
+	margin-bottom: 4px;
+	padding: 0 var(--vibeide-space-md);
+}
+.vibe-server-actions {
+	display: flex;
+	flex-direction: column;
+}
+.vibe-server-action-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 5px var(--vibeide-space-md);
+	border-radius: 4px;
+	cursor: pointer;
+	user-select: none;
+}
+.vibe-server-action-row:hover {
+	background-color: var(--vscode-list-hoverBackground);
+}
+.vibe-server-action-icon {
+	flex-shrink: 0;
+	color: var(--vscode-icon-foreground);
+	font-size: 14px;
+}
+.vibe-server-action-label {
+	font-size: 13px;
+	color: var(--vscode-foreground);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.vibe-server-action-sep {
+	height: 1px;
+	background-color: var(--vscode-panel-border);
+	margin: 6px var(--vibeide-space-md);
+	opacity: 0.5;
 }

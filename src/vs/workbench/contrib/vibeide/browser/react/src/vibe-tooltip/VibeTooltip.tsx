@@ -4,7 +4,8 @@
  *--------------------------------------------------------------------------------------*/
 
 import '../styles.css'
-import { Tooltip } from 'react-tooltip';
+import { useEffect, useRef } from 'react';
+import { Tooltip, TooltipRefProps } from 'react-tooltip';
 import 'react-tooltip/dist/react-tooltip.css';
 import { useIsDark } from '../util/services.js';
 import { tooltipS } from '../vibe-settings-tsx/vibeSettingsRu.js';
@@ -19,6 +20,25 @@ export const VibeTooltip = () => {
 
 
 	const isDark = useIsDark()
+
+	// Global "hide on mouse-out" watchdog. react-tooltip closes on the anchor's `mouseleave`/`blur`,
+	// but a chat anchor can unmount mid-stream (or the pointer can jump out without a mouseleave firing)
+	// and the tooltip sticks. On every pointer-over, if the cursor is NOT over a tooltip anchor or inside
+	// a tooltip body, force-close every tooltip. This makes "leaving the element" the reliable dismissal
+	// for ALL tooltips in the app, independent of focus/blur. Capture phase so it runs before stopPropagation.
+	const tooltipRefs = useRef<Record<string, TooltipRefProps | null>>({})
+	useEffect(() => {
+		const onPointerOver = (e: MouseEvent) => {
+			const target = e.target as Element | null
+			if (!target || typeof target.closest !== 'function') { return }
+			// Over an anchor → let the library manage it. Inside a tooltip body (selectable provider-info /
+			// ollama tooltips have pointerEvents:all) → keep it open so the user can interact.
+			if (target.closest('[data-tooltip-id]') || target.closest('.react-tooltip')) { return }
+			for (const ref of Object.values(tooltipRefs.current)) { ref?.close() }
+		}
+		document.addEventListener('mouseover', onPointerOver, true)
+		return () => document.removeEventListener('mouseover', onPointerOver, true)
+	}, [])
 
 	return (
 
@@ -84,6 +104,7 @@ export const VibeTooltip = () => {
 
 			<Tooltip
 				id="vibe-tooltip"
+				ref={el => { tooltipRefs.current['vibe-tooltip'] = el }}
 				// border='1px solid var(--vscode-editorGroup-border)'
 				border='1px solid rgba(100,100,100,.2)'
 				opacity={1}
@@ -95,6 +116,7 @@ export const VibeTooltip = () => {
 			/>
 			<Tooltip
 				id="vibe-tooltip-orange"
+				ref={el => { tooltipRefs.current['vibe-tooltip-orange'] = el }}
 				border='1px solid rgba(200,200,200,.3)'
 				opacity={1}
 				delayShow={50}
@@ -102,6 +124,7 @@ export const VibeTooltip = () => {
 			/>
 			<Tooltip
 				id="vibe-tooltip-green"
+				ref={el => { tooltipRefs.current['vibe-tooltip-green'] = el }}
 				border='1px solid rgba(200,200,200,.3)'
 				opacity={1}
 				delayShow={50}
@@ -109,6 +132,7 @@ export const VibeTooltip = () => {
 			/>
 			<Tooltip
 				id="vibe-tooltip-ollama-settings"
+				ref={el => { tooltipRefs.current['vibe-tooltip-ollama-settings'] = el }}
 				border='1px solid rgba(100,100,100,.2)'
 				opacity={1}
 				openEvents={{ mouseover: true, click: true, focus: true }}
@@ -135,6 +159,7 @@ export const VibeTooltip = () => {
 
 			<Tooltip
 				id="vibe-tooltip-provider-info"
+				ref={el => { tooltipRefs.current['vibe-tooltip-provider-info'] = el }}
 				border='1px solid rgba(100,100,100,.2)'
 				opacity={1}
 				delayShow={50}

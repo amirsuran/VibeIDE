@@ -32,8 +32,10 @@ import { Registry } from '../../../../platform/registry/common/platform.js';
 import { IConfigurationRegistry, Extensions as ConfigurationExtensions } from '../../../../platform/configuration/common/configurationRegistry.js';
 import { localize } from '../../../../nls.js';
 import { IAuditLogService } from './auditLogService.js';
-import { SubagentResult } from './vibeSubagentService.js';
+import { SubagentResult, SubagentType } from './vibeSubagentService.js';
 import { IVibeSubagentService } from './vibeSubagentService.js';
+import { IVibeSubagentRegistryService } from './vibeSubagentRegistryService.js';
+import { buildRoute, VibeAgentRoute } from './vibeAgentRoutes.js';
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 
@@ -109,6 +111,15 @@ export interface IVibeSubagentOrchestratorService {
 
 	/** Get all completion records for a plan */
 	getCompletionHistory(planId: string): StepCompletionRecord[];
+
+	/** Classify a task into an ordered role workflow (Vibe Agents — VA.3/VA.4). Pure, no spawn. */
+	planRoute(taskText: string): VibeAgentRoute;
+
+	/**
+	 * Run the role workflow for a task: spawn each role in sequence, handing the previous
+	 * role's summary forward as context. Stops the chain on the first failure.
+	 */
+	executeRoute(params: { parentThreadId: string; taskText: string }): Promise<SubagentResult[]>;
 }
 
 // ── Implementation ─────────────────────────────────────────────────────────────
@@ -123,8 +134,65 @@ class VibeSubagentOrchestratorService extends Disposable implements IVibeSubagen
 		@IConfigurationService private readonly _config: IConfigurationService,
 		@IAuditLogService private readonly _audit: IAuditLogService,
 		@IVibeSubagentService private readonly _subagentSvc: IVibeSubagentService,
+		@IVibeSubagentRegistryService private readonly _registry: IVibeSubagentRegistryService,
 	) {
 		super();
+	}
+
+	planRoute(taskText: string): VibeAgentRoute {
+		return buildRoute(taskText);
+	}
+
+	async executeRoute(params: { parentThreadId: string; taskText: string }): Promise<SubagentResult[]> {
+		const { parentThreadId, taskText } = params;
+		const route = buildRoute(taskText);
+		this._log.info(`[SubagentOrchestrator] route ${route.kind}: ${route.roles.join(' → ')}${route.securityAdded ? ' (+security)' : ''}`);
+		this._audit.append({ ts: Date.now(), action: 'agent_route_started', ok: true, meta: { kind: route.kind, roles: route.roles, securityAdded: route.securityAdded } });
+
+		const results: SubagentResult[] = [];
+		let priorSummary = '';
+		for (const stage of route.stages) {
+			// Roles within a stage are independent → run them in parallel.
+			const stageResults = await Promise.all(stage.map(role => this._runRole(role, parentThreadId, taskText, priorSummary)));
+			let failed = false;
+			const summaries: string[] = [];
+			for (const r of stageResults) {
+				if (!r || r.status === 'failed') {
+					failed = true;
+					continue;
+				}
+				results.push(r);
+				if (r.summary) {
+					summaries.push(r.summary);
+				}
+			}
+			if (failed) {
+				this._log.warn(`[SubagentOrchestrator] stage [${stage.join(', ')}] had a failure — stopping route`);
+				break;
+			}
+			priorSummary = summaries.join('\n\n') || priorSummary;
+		}
+		return results;
+	}
+
+	/** Spawns and awaits a single role; resolves to undefined on spawn/run error. */
+	private async _runRole(role: SubagentType, parentThreadId: string, taskText: string, priorSummary: string): Promise<SubagentResult | undefined> {
+		const preset = this._registry.getPreset(role);
+		const goal = `Роль: ${preset.displayName}. Задача: ${taskText}`
+			+ (priorSummary ? `\n\nКонтекст от предыдущего этапа:\n${priorSummary}` : '');
+		try {
+			const subagentId = await this._subagentSvc.spawn({
+				parentThreadId,
+				type: role,
+				goal,
+				maxSteps: preset.defaultMaxSteps,
+				maxWallClockMs: preset.defaultMaxWallClockMs,
+			});
+			return await this._subagentSvc.awaitResult(subagentId);
+		} catch (err) {
+			this._log.error(`[SubagentOrchestrator] role ${role} failed: ${err}`);
+			return undefined;
+		}
 	}
 
 	async handleCompletion(params: {

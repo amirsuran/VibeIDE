@@ -26,6 +26,18 @@ import { Agent, setGlobalDispatcher } from 'undici'
 
 let _dispatcher: Agent | undefined
 let _initialized = false
+// Diagnostics: monotonic id + creation time of the live dispatcher. The "no tokens until restart"
+// stall is suspected to be a wedged keep-alive pool; surfacing which dispatcher generation served a
+// request (and how old it is) tells "reset helped" (id bumped) from "reset didn't".
+let _dispatcherId = 0
+let _dispatcherCreatedAtMs = 0
+
+/** Snapshot of the live dispatcher generation for stall diagnostics. ageMs = how long this pool has been reused. */
+export const getDispatcherDiagnostics = (): { id: number; ageMs: number; initialized: boolean } => ({
+	id: _dispatcherId,
+	ageMs: _dispatcherCreatedAtMs ? Date.now() - _dispatcherCreatedAtMs : 0,
+	initialized: _initialized,
+})
 
 const buildDispatcher = (): Agent => {
 	let systemCAs: string[] = []
@@ -39,6 +51,8 @@ const buildDispatcher = (): Agent => {
 	}
 	const ca = [...tls.rootCertificates, ...systemCAs]
 	const agent = new Agent({ connect: { ca } })
+	_dispatcherId += 1
+	_dispatcherCreatedAtMs = Date.now()
 	return agent
 }
 
@@ -58,6 +72,7 @@ export const ensureSystemCADispatcher = (): Agent => {
 			vibeLog.warn('systemCAFetch', 'setGlobalDispatcher failed:', (e as Error).message)
 		}
 	}
+	vibeLog.info('systemCAFetch', `[dispatcher] created shared undici pool #${_dispatcherId}`)
 	return _dispatcher
 }
 
@@ -79,6 +94,7 @@ export const resetSystemCADispatcher = (): Agent => {
 	} catch (e) {
 		vibeLog.warn('systemCAFetch', 'setGlobalDispatcher (reset) failed:', (e as Error).message)
 	}
+	vibeLog.warn('systemCAFetch', `[dispatcher] reset shared undici pool → #${_dispatcherId} (old pool destroyed)`)
 	// Tear down the old pool AFTER swapping so in-flight requests on it fail fast
 	// instead of pinning sockets. Fire-and-forget — destroy() rejects in-flight requests.
 	if (old) {

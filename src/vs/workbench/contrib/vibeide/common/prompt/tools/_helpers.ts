@@ -49,6 +49,7 @@ Instead of  →  use:
 - grep/rg/findstr/Select-String    →  grep (ripgrep-backed; supports glob/type/output_mode)
 - sed -i / awk -i                  →  edit_file (SEARCH/REPLACE; integrates with diff view)
 The validator will reject these shell forms with a structured error and suggest the correct tool.
+NEVER edit or generate file contents through the shell — no node -e/python -c file surgery, no > / >> redirects into source files, no here-strings (cat <<EOF, @'...'@) — and NEVER create a throwaway script file (e.g. fix-*.js) just to transform code. Apply the change directly with edit_file (partial edits) or rewrite_file (whole file). Shell-based file edits break on quoting and multi-line input (especially PowerShell's >> continuation prompt) and leave stray files behind. The terminal is for build/test/git/package-manager/dev-server commands only.
 When piping git or other paged commands, pipe through cat to avoid getting stuck in a pager.`;
 
 export const cwdHelper = 'Optional. The directory in which to run the command. Defaults to the first workspace folder.';

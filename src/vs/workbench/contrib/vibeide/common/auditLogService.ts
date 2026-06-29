@@ -65,7 +65,7 @@ export interface AuditEvent {
 	action: 'prompt' | 'reply' | 'diff_preview' | 'apply' | 'undo' | 'rollback' | 'snapshot:create' | 'snapshot:restore' | 'snapshot:discard' | 'git:stash' | 'git:stash:restore' | 'skill_suggestion'
 		| 'plan_started' | 'plan_step_completed' | 'plan_failed' | 'plan_resumed'
 		| 'advisory_territorial_lock'
-		| 'subagent_spawned' | 'subagent_completed'
+		| 'subagent_spawned' | 'subagent_completed' | 'agent_route_started'
 		| 'browser_run_proposed'
 		| 'mcp_sampling_request'
 		| 'background_job_budget_exceeded'

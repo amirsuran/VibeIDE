@@ -109,6 +109,11 @@ export interface IVibeSkillsLibraryService {
 	resolveDependencies(skillId: string): Promise<string[]>;
 	/** Drops in-memory skill list so the next scan reads disk (file events usually invalidate already). */
 	invalidateCache(): void;
+	/**
+	 * Registers a built-in/bundled skills root (lowest discovery priority — workspace and
+	 * globalPaths skills override by id). Used to ship default skills (e.g. `vibe-deploy`).
+	 */
+	registerBuiltinSkillRoot(root: URI): void;
 	/** Record that a skill was just invoked. Persists an MRU list across sessions so
 	 * autocomplete can surface frequently-used skills first. Safe to call on every `/skill:` expand. */
 	trackSkillUse(skillId: string): void;
@@ -337,6 +342,9 @@ class VibeSkillsLibraryService extends Disposable implements IVibeSkillsLibraryS
 
 	private _cachedSkillsList: VibeSkillEntry[] | undefined;
 
+	/** Bundled/built-in skills roots (URI strings); scanned at lowest discovery priority. */
+	private readonly _builtinRoots = new Set<string>();
+
 	constructor(
 		@IFileService private readonly _fileService: IFileService,
 		@IWorkspaceContextService private readonly _workspaceContextService: IWorkspaceContextService,
@@ -441,8 +449,25 @@ class VibeSkillsLibraryService extends Disposable implements IVibeSkillsLibraryS
 		return orderedTransitiveDependencySkillIds(skillId, skills);
 	}
 
+	registerBuiltinSkillRoot(root: URI): void {
+		const key = root.toString();
+		if (!this._builtinRoots.has(key)) {
+			this._builtinRoots.add(key);
+			this.invalidateSkillsCache();
+		}
+	}
+
 	private async _mergeAllSkillsFresh(): Promise<VibeSkillEntry[]> {
 		const byId = new Map<string, VibeSkillEntry>();
+
+		// Built-in/bundled roots first (lowest priority — overridden by globalPaths/workspace below).
+		for (const root of this._builtinRoots) {
+			try {
+				await this._collectSkillsIntoMap(URI.parse(root), byId);
+			} catch (e) {
+				vibeLog.warn('Skills', 'builtin skills root unreadable:', root, e);
+			}
+		}
 
 		const globalRoots = this._configurationService.getValue<string[]>('vibeide.skills.globalPaths')
 			?.map(s => typeof s === 'string' ? s.trim() : '')

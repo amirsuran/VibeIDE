@@ -3416,6 +3416,287 @@ Backlog (data-gated — не плодить спекулятивно, урок #
 
 **Референсы:** Continue `core/edit/lazy/applyCodeBlock.ts` (deterministic-first), `core/llm/llms/Relace.ts`, apply model role (`docs/customize/model-roles/apply.mdx`); Cursor fast-apply; Roo/OpenCode/Kilo — подтверждают, что для большинства моделей вторая модель НЕ нужна.
 
+## VS. Vibe Server — локальный превью-сервер с live-reload и Docker-окружением (2026-06-28)
+
+> **Цель:** быстро увидеть результат кода локально, без деплоя на реальный сервер. Иконка в активити-баре рядом с **Vibe Projects**; превью **на выбор** — встроенный браузер прямо в IDE или внешний браузер.
+> **Главный тезис зрелости:** это не «ещё один live-server», а **единый превью-оркестратор с подключаемыми рантайм-провайдерами** (Static / Dev-server / Docker). Полурешения отвергнуты: статик-сервер на React-проекте бесполезен, поэтому тип проекта детектится и обслуживается правильным провайдером.
+> Референс-разбор и «что подсматривать» — ниже; детальная выжимка исходников живёт в этой секции (отдельный knowledge-док заведём при старте Фазы 0).
+
+### VS.0 Референсы и что перенять (зафиксировано — лицензии решают, что можно копировать)
+
+| Донор | Лицензия | Статус заимствования | Что брать |
+|---|---|---|---|
+| **tapio/live-server** (ядро) | **MIT** | Код можно (с копирайтом) | port-retry через `listen(0)`, chokidar-watch-идея, `refreshcss` cache-bust |
+| **ritwickdey/vscode-live-server** | **MIT** | Код можно | дефолт-порт **5500**, статус-бар «Go Live», контекст-меню «Open with…», набор настроек |
+| **microsoft/vscode-livepreview** | **MIT** | **Эталон паттернов** | вся архитектура «http-сервер + WebviewPanel(iframe) + ws live-reload + asExternalUri», CSP, inject-протокол, embedded/external через enum+команды, port-forwarding |
+| **yandeu/five-server(-vscode)** | **ПРОПРИЕТАРНАЯ** | **ТОЛЬКО ИДЕИ — код НЕ копировать** | instant-reload (diffDOM по набору), auto-navigate, highlight строки, 3-состоянийный статус-бар с URL, `data-server-no-reload`, debounce `wait=100` |
+| **Phu1237/vscode-vs-browser** | не-MIT | Идея, не код | хром браузера (адрес/назад/вперёд/inspect); прокси-обход `X-Frame-Options` — только как идея для режима «произвольный URL», НЕ в MVP |
+
+**Технические дефолты, проверенные у доноров:** порт `5500` (`0`=авто), host `127.0.0.1`, CSS hot-reload включён, full-reload — опция, антидребезг `100мс`, SPA-fallback на `index.html`.
+
+### VS.1 Архитектурный хребет — оркестратор + рантайм-провайдеры
+
+- **Контракт провайдера** (`common/`, чистый, тестируемый): `start()/stop()`, `url()` (готовый к `asExternalUri`), `readiness` (когда порт реально отвечает), поток `logs`, тип проекта.
+- **Провайдеры:**
+  1. **Static** — собственный http-сервер (livepreview-style) для чистого HTML/CSS/JS, свой live-reload.
+  2. **Dev-server** — детект `package.json` scripts (Vite/Next/CRA/Angular/SvelteKit), запуск пользовательского dev-сервера как управляемой задачи; **HMR отдаём фреймворку, не переизобретаем**, iframe на его URL.
+  3. **Docker** — поднять окружение проекта (compose/Dockerfile), превью проброшенного web-порта.
+- **Автодетект** выбирает провайдера; пользователь может переопределить.
+- **Чистота слоёв (CLAUDE.md):** логика выбора/детекта/inject — `common/`; UI + webview + статус-бар — `browser/`; spawn `docker`/процессов — `electron-main/` через IPC-канал. File-watch — **correlated `fileService.createWatcher`**, НЕ chokidar (мы внутри процесса VS Code).
+
+### VS.2 Фаза 0 — Каркас + Static-провайдер (MVP-паритет)
+
+> **Статус (2026-06-28): реализовано, `compile-check-ts-native` чистый (0 ошибок Vibe Server). Ждёт live-smoke** (`.\run-dev.bat --compile` → Go Live → правка+save → reload). Юнит-тест инъекции написан (`test/common/injectReloadScript.test.ts`), но не прогнан — харнесу нужен собранный `.build\electron\VibeIDE.exe`. Файлы: `common/vibeServer/{vibeServerIpc,injectReloadScript}.ts`, `electron-main/vibeServer/vibeServerMainService.ts`, `browser/vibeServer/{vibeServerConstants,vibeServerRuntime,vibeServerService,vibeServerStatusBar,vibeServerViewPane,vibeServer.contribution}.ts`. Включён спайн `IVibeServerRuntime` (VS.1) с единственной `StaticRuntime`.
+
+- [x] **View container + иконка** — зеркало `vibeProjects.contribution.ts`: `registerViewContainer` в `ViewContainerLocation.Sidebar`, FA-Solid иконка `server` (``), `order` 0.6 (сразу после Vibe Projects). Панель «Vibe Server» = статус-строка + welcome-content; действия (start/stop/openPreview/openExternal/copyUrl/settings) — в ViewTitle-меню, гейт по `vibeServer.running`.
+- [x] **Собственный статик-сервер** (livepreview-паттерн): `http.createServer` в electron-main, bind `127.0.0.1`, порт `5500` (`0`=авто), **предсказуемый выбор свободного порта** (walk 5500→5501→… на `EADDRINUSE`, без sleep), graceful shutdown (трекинг сокетов → порт не залипает), защита от path-traversal, `Cache-Control: no-cache`, внутренняя MIME-таблица (без зависимости `mime`).
+- [x] **Live-reload:** `ws@8.19` (уже в deps) + inject-скрипт **только в навигационные `text/html`** (закрыт баг live-server #684). CSS hot-reload через cache-bust `<link>?_vibecss=ts`; full-reload иначе; opt-out `data-server-no-reload`; reconnect с backoff. Чистая функция инъекции вынесена в `common/` (тестируема).
+- [x] **File-watch:** ⚠️ отклонение — correlated `createWatcher` не поддерживает recursive, поэтому uncorrelated рекурсивный `fileService.watch` + `onDidFilesChange`, отфильтрованный по корню (`extUri.isEqualOrParent`); debounce `reloadDebounceMs` (100мс) через `RunOnceScheduler`; css-only пачка → `css`, иначе → `reload`; `excludes` из `ignoreFiles`.
+- [x] **Статус-бар 3 состояния** (паттерн five-server): `$(play-circle) Go Live` / `$(sync~spin) Запуск…` / `$(zap) host:port`; клик = старт / открыть превью; гейт настройкой `showOnStatusbar`.
+- [x] **Настройки `vibeide.vibeServer.*`** (в схему, без хардкода): `port`, `host`, `root`, `ignoreFiles`, `cssHotReload`, `spaFallback`, `previewTarget` (enum embedded/external), `openAutomatically`, `showOnStatusbar`, `reloadDebounceMs`. **Отложено** (не нужно для loopback-MVP): `https`, `cors`, `customBrowser`.
+- [x] **Команды + контекст-меню:** `vibeide.vibeServer.{start,stop,openPreview,openExternal,copyUrl,openSettings}` + `openWith` («Открыть в Vibe Server») в Explorer/Editor для `.html`/`.htm` (превью конкретного файла относительно корня). **Отложено:** хоткеи `Alt+L Alt+O/C` (только команды).
+- [x] **Превью на выбор:** enum `previewTarget` + команды на embedded/external; embedded **переиспользует встроенный Simple Browser** (`simpleBrowser.show`) — свой хром = VS.3; внешний — `IOpenerService.open(openExternal)`.
+- [x] **`asExternalUri` на http** — через `IOpenerService.resolveExternalUri({allowTunneling:true})` (identity на desktop loopback, туннель на remote).
+
+### VS.3 Фаза 1 — Встроенный браузер (зрелый)
+
+> **Статус (2026-06-28): реализовано, `compile-check-ts-native` чистый.** Свой webview-браузер заменил Simple Browser для embedded-превью. Файлы: `browser/vibeServer/vibeBrowserManager.ts` (webview-редактор + хром) + расширен `common/vibeServer/injectReloadScript.ts` (мост страница→хром) + сервис переключён на менеджер. Ждёт live-smoke.
+
+- [x] **WebviewPanel + iframe** + **жёсткий CSP**: `default-src 'none'`, `frame-src`=только origin своего сервера (resolved external uri), `script-src`/`style-src 'nonce-…'`. (Webview-документ хрома и iframe — разные origin; ws iframe-а живёт в его own-origin, поэтому `connect-src` хрома = none.) `IWebviewWorkbenchService.openWebview` + `retainContextWhenHidden`.
+- [x] **Хром браузера:** адресная строка, назад/вперёд/обновить, кнопка «во внешний браузер», история ведётся в JS хрома (мы драйвим `iframe.src`, cross-origin location читать нельзя). Протокол postMessage: страница (inject-скрипт) → хром (`__vibeBrowser: nav/console/external`) → расширение (`navigated/console/open-external`); расширение → хром (`navigate`).
+- [x] **Console-bridge** → output-канал «Консоль Vibe Server» (`IOutputChannelRegistry`); перехват `console.*` в inject-скрипте → `parent.postMessage` → хром → расширение.
+- [x] **Перехват ссылок:** внутренние (тот же origin) → навигация в iframe + апдейт адресной строки; внешние (другой origin) → `preventDefault` + системный браузер через `IOpenerService.open(openExternal)`.
+- [/] **`WebviewPanelSerializer`** — **осознанно отложено:** восстановление браузера на УМЕРШИЙ (per-session) localhost-сервер — само по себе полурешение. Вместо persist: `retainContextWhenHidden` (состояние при скрытии вкладки) + reuse того же таба при рестарте сервера.
+- [x] **SPA history-fallback** — уже сделан в VS.2 (`spaFallback` в main-сервере).
+- [x] **Responsive-пресеты** — селектор Полный / 375×667 / 768×1024 / 1280×800 + кнопка «Повернуть» (свап w/h). У доноров нет.
+- [x] **Auto-navigate** к редактируемому HTML (`onDidActiveEditorChange`), opt-in `vibeide.vibeServer.autoNavigate` (default off — иначе дёргает при каждом переключении файла); только когда встроенный браузер открыт и файл под корнем.
+
+### VS.4 Фаза 2 — Dev-server провайдер (Vite/Next/CRA/Angular/SvelteKit)
+
+> **Статус (2026-06-28): реализовано, `compile-check-ts-native` чистый.** Введён общий **процесс-раннер** в `electron-main` (`vibeServerProcessService.ts` + канал `vibeServerProcessIpc.ts`) со стримингом stdout/stderr по IPC и **убийством дерева процессов** (Windows `taskkill /T /F`, POSIX — сигнал группе detached) — dev-серверы не осиротеют. `DevServerRuntime` в `vibeServerRuntime.ts`. Ждёт live-smoke.
+
+- [x] Детект `package.json` scripts (`dev`→`start`→`serve`, override `devScript`) + менеджер пакетов по lock-файлу (pnpm/yarn/bun/npm); запуск как управляемый процесс; парс первого loopback-URL из stdout (ANSI вычищается), нормализация `0.0.0.0`/`[::1]`→`127.0.0.1`.
+- [x] iframe на URL dev-сервера; **HMR — фреймворка**, не вмешиваемся (inject-reload только для Static). Авто-выбор провайдера (`runtime`=auto/static/devServer).
+- [x] Логи dev-сервера → `onDidLog` → `ILogService`; lifecycle stop (kill дерева) / restart (stop→start); **readiness = детект URL** + таймаут `devServerStartTimeoutMs` (60с), ранний exit до URL → внятная ошибка. *(Активный поллинг порта — необязательная добавка позже; URL-сигнал фреймворка уже = готовность.)*
+
+### VS.5 Фаза 3 — Docker-провайдер (ключевое требование пользователя)
+
+> **Статус (2026-06-28): реализовано, `compile-check-ts-native` чистый.** `DockerRuntime` (`browser/vibeServer/vibeDockerRuntime.ts`) поверх общего процесс-раннера (VS.4). Команда «Поднять окружение (Docker)» (`startEnvironment`) — кнопка в ViewTitle + welcome + палитра; Docker **никогда не авто-`up`** (только явное действие / `runtime`=docker). Ждёт live-smoke.
+
+- [x] **Реюз процесс-раннера `electron-main`** (общий с VS.4): spawn `docker` через `child_process`, стрим, kill дерева. Детект наличия — `docker version` (код≠0 → внятная ошибка «установите/запустите Docker»).
+- [x] **Детект** `docker-compose.yml`/`.yaml`/`compose.yml`/`.yaml`, иначе `Dockerfile`. *(devcontainer.json — отложено как источник портов; см. scope.)*
+- [x] **«Поднять окружение»:** compose → `up -d --build`; одиночный Dockerfile → `build` + `run -d -P`. **stop = реальный `compose down` / `rm -f`** (не просто kill — контейнеры действительно гасятся). Restart = stop→start.
+- [x] **Обнаружение портов:** `compose ps --format json` (массив/NDJSON) → `Publishers[].PublishedPort`; фолбэк — парс `ports:` из compose-файла; Dockerfile — `docker port <name>`. Выбор по предпочтению (80/8080/3000/5000/8000/4200/5173).
+- [x] **Стрим логов:** `compose logs -f --no-color` / `docker logs -f` (отдельный follower-процесс) → `onDidLog`.
+- [x] **Health/readiness:** `waitForPort` в main (`net.connect`-поллинг, 300мс, таймаут `dockerStartTimeoutMs`=120с) — превью открывается, только когда порт реально отвечает.
+- [x] **Превью контейнерного порта** в embedded/external через тот же `resolveExternalUri` пайплайн.
+- [x] **Scope-граница соблюдена:** только «поднять рантайм ради превью», Dev Containers не переизобретаем; Docker — лишь по явному действию пользователя. *(devcontainer.json-мост — поздняя опция.)*
+
+### VS.6 Фаза 4 — Модерн / AI-loop / шеринг
+
+> **Статус (2026-06-28): ядро реализовано** (AI-loop + LAN), `compile-check-ts-native` чистый. Остальное осознанно отложено (тяжёлые зависимости / нереализуемо чисто) — не плодим полурешения.
+
+- [x] **AI-loop (киллер для AI-IDE):** превью-браузер копит console-ошибки/warn (ring-buffer), команда «Ошибки превью в чат» формирует контекст (URL + ошибки) и кладёт его через `IChatThreadService.addPendingInjection(currentThreadId, …)` — подмешивается к следующему ходу. Петля see-result → агент чинит, без хирургии по chatThreadService. *(Скриншот в чат — см. ниже, отложено.)*
+- [x] **LAN-адрес для телефона:** `lanAddress()` в main (`os.networkInterfaces`, первый внешний IPv4), команда «Адрес для телефона (LAN)» копирует `http://<ip>:<port>/` + подсказка про `host=0.0.0.0`. *(QR-рендер отложен — нужен QR-энкодер; URL копируется, превью на телефоне работает по вводу адреса.)*
+- [x] **Multi-preview / split + scroll-sync** (2026-06-28): менеджер ведёт несколько вкладок (`Set<WebviewInput>` + активная), команда «Новое превью (вкладка)»; scroll-sync — inject-скрипт шлёт scroll (rAF-throttle) → хром → расширение → бродкаст в другие вкладки → их inject-скрипт скроллит (suppress-флаг против эха); гейт настройкой `vibeide.vibeServer.scrollSync` (default off).
+- [x] **QR-код для LAN** (2026-06-29): свой энкодер `common/vibeQrEncode.ts` (byte-mode, EC level M, версии 1–3 single-block — без интерливинга, покрывает URL ≤42 байт; GF(256)/RS, маскирование, BCH format-info) + тест `test/common/vibeQrEncode.test.ts`; рендер SVG в webview (`vibeServerQr.ts`), команда «QR для телефона». *(Алгоритм по спецификации ISO/IEC 18004; финальную сканируемость подтвердить устройством.)*
+- [ ] **Screenshot превью** — **блокер: нет API.** iframe cross-origin (vscode-webview ↔ localhost) → canvas-capture невозможен; у core-webview нет content-capture API. Нужен нативный путь захвата.
+- [ ] **Dev-tunnels / публичный шеринг** — **блокер: инфра.** Публичные dev-tunnels требуют account-auth tunnel-сервис (remoteTunnel/shared process); `ITunnelService.openTunnel` даёт лишь локальный форвард, не публичный URL. `resolveExternalUri({allowTunneling})` уже покрывает remote-проброс.
+- [x] **HTTPS self-signed** (2026-06-29): добавлена зависимость `selfsigned` (MIT); main-сервер генерирует in-memory self-signed cert (SAN localhost/127.0.0.1) и поднимает `https.createServer`, схема URL → `https`; ws → wss (inject-скрипт уже выбирает протокол). Настройка `vibeide.vibeServer.https` (default off). *(Браузер покажет предупреждение о недоверенном сертификате — ожидаемо.)*
+
+### VS.7 Безопасность (сквозное — модель livepreview)
+
+- localhost-only по умолчанию: bind `127.0.0.1` + CSP `frame-src`=свой сервер + host-валидация (анти-DNS-rebinding) + ws origin-валидация (`vscode_webview`).
+- LAN / tunnel / «произвольный URL» — **только явный opt-in с предупреждением**. Прокси-обход `X-Frame-Options` (vs-browser-style) — НЕ в MVP (beta-баги: form-submit ломается, прокси не глушится).
+- Docker — только доверенный workspace; никаких авто-команд без действия пользователя.
+
+### VS.8 Грабли (на чужих ошибках — issue-трекеры доноров)
+
+- live-server #684 — не инжектить во все HTML-ответы (только навигационные `text/html`).
+- live-server #452 (198 комментов) — авто-reload «молча не сработал» → делать статус видимым: коннект ws, лог watcher, индикатор в панели.
+- Порт залипает после остановки → корректный shutdown (`http-shutdown`-аналог).
+- Кэш отдаёт старый контент → `Cache-Control: no-cache` на dev-ответах + cache-bust.
+- Мёртвые зависимости (`faye-websocket`, `opn`) → `ws` + встроенные средства VS Code.
+
+### VS.9 Что осознанно НЕ делаем (KISS/YAGNI)
+
+- Не пишем свой HMR — для framework-проектов берём готовый фреймворка.
+- Не делаем полноценный браузер-движок/Chromium DevTools в iframe (лимит webview; console-bridge достаточно).
+- Не дублируем Dev Containers.
+- Прокси «любой сайт» — за флагом, после MVP.
+
+### VS.10 Аудит и улучшения (2026-06-29)
+
+> Проход «найди ошибки/легаси/хардкод + добавь нужное/модное». Всё реализовано, `compile-check-ts-native` чистый.
+
+- [x] **🐛 КРИТ-БАГ QR — финдеры стояли не на месте** (передавался центр вместо угла) → QR был **нечитаемым**. Исправлено (`finder(0,0)`/`(0,size-7)`/`(size-7,0)`). **Проверено живым декодером:** прогон через `jsQR` декодирует обратно в точный URL (`ok:true` на 4 кейсах) — сканируемость доказана, прежняя оговорка «нужен скан устройством» снята.
+- [x] **Cleanup:** `QrMatrix` parameter-property → явное присваивание (совместимо с Node strip-mode для прогонов); мёртвая ветка «директория→index» в `_resolveFile` удалена (dir теперь перехватывается раньше в `_handle`).
+- [x] **✨ AI-loop расширен сетью (модерн, devtools-lite):** inject-скрипт ловит `window.error`, `unhandledrejection` и **проваленные `fetch`** (4xx/5xx/сетевые ошибки) → консоль-канал → `recentProblems` → команда «Ошибки превью в чат». Агент видит не только console, но и сетевые сбои.
+- [x] **✨ Листинг директорий** в статик-сервере: каталог без `index.html` отдаёт сгенерированный листинг (раньше — 404) + 301-редирект на trailing slash (чтобы относительные ссылки резолвились), сортировка папки-вперёд, скрытие dot-файлов, HTML-escape.
+- [x] **✨ Vibe Agents «Показать маршрут ролей»** (`vibeide.vibeAgents.planRoute`): quick-input задачи → показывает маршрут (классификация + параллельные стадии `[backend ∥ frontend]` + авто-security). Делает логику VA.3/VA.4 достижимой уже сейчас (не завися от Phase-3b runner).
+
+### VS.11 Аудит-2 и улучшения (2026-06-29)
+
+> Второй проход «ошибки/легаси/хардкод + фичи». Снова **запускал код** (Node strip-types) — поймал ещё один серьёзный баг, который типы пропустили.
+
+- [x] **🐛 КРИТ-БАГ: классификация маршрутов ролей не работала на кириллице.** `\b` (word boundary) в JS — ASCII-only и не срабатывает рядом с кириллицей (она не `\w`), поэтому ВСЕ русские сигналы не матчились → всё падало в дефолт `full-feature`; `needsSecurity('оплата картой')` давал false. Исправлено: убран глобальный `\b`, кириллица — подстрокой, неоднозначные ASCII-токены (ui/api/db/server/auth) — точечно `\b…\b`. **Проверено запуском:** 8/8 классификаций верны, security-триггеры верны.
+- [x] **Cleanup:** `vibeAgentRoutes` импортит `SubagentType` через `import type` (это чистый тип); устранена возможность лишнего runtime-импорта.
+- [x] **QR Rule 3** добавлен в penalty (finder-подобные паттерны 1:1:3:1:1) — спек-полный выбор маски; **повторно проверено декодером** `jsQR` (5/5, включая длинный URL).
+- [x] **Fix:** Docker лог-фолловер (`compose logs -f`) обёрнут в `.catch` — нет unhandled rejection при сбое спавна (best-effort).
+- [x] **✨ Restart** (`vibeide.vibeServer.restart`, иконка `$(refresh)`): stop→start с **сохранением выбранного провайдера** (Static/Dev/Docker через `_lastForcedKind`).
+- [x] **✨ Бейдж ошибок в статус-баре (модерн):** при ошибках в превью статус-бар показывает `$(zap) host:port $(warning) N` (живой счётчик из console/network-bridge) — мгновенная видимость проблем, расширяет AI-loop.
+
+### VS.12 Аудит-3 и улучшения (2026-06-29)
+
+> Третий проход. Снова прогон кода в Node + декодер `jsQR`.
+
+- [x] **QR — граничные случаи проверены декодером:** ровно 14/26/42 байта (границы версий v1/v2/v3) декодируются, 43 → throw, пустая строка, multibyte-UTF8 (`http://сервер:5500/`), бюджет 7 кириллических=14 байт — всё `ok`. Off-by-one в выборе версии/ёмкости **нет**.
+- [x] **🐛 Fix Docker `parseYamlPorts`:** ломался на `"127.0.0.1:8080:80"` (хватал `127` как host-порт). Теперь опционально съедает IP-префикс → корректно берёт host-порт. (Фолбэк-парсер; primary — `compose ps --format json`.)
+- [x] **✨ «Обновить превью»** (`vibeide.vibeServer.reloadPreview`, `$(sync)`): принудительный reload ВСЕХ открытых вкладок превью (для dev-server-страниц без нашего inject или жёсткого рефреша).
+- [x] **✨ Vibe Agents «Показать роли»** (`vibeide.vibeAgents.listRoles`): quick-pick всех ролей-субагентов с правами (полный доступ vs только чтение) и списком разрешённых инструментов — дискаверабилити permission-модели.
+
+### VS.RELEASE — ХЕНДОФФ релиза 1.5.0 (2026-06-29, продолжить в новой сессии)
+
+> **Где мы:** весь Vibe Server (VS.2–VS.6) + Vibe Deploy (VD) + Vibe Agents (VA) + аудиты VS.10–12 написаны, `compile-check-ts-native` чистый. Решили бамп **minor → 1.5.0** (три новых подсистемы = не патч). `product.json` = **1.5.0 на диске (НЕ закоммичено)**, README-бейдж 1.5.0, What's New `'1.5.0'` добавлен.
+
+> **Live-smoke на упакованной 1.5.0 поймал рантайм-баги (компиляция их не видит — ЗАПУСКАТЬ обязательно):**
+> 1. ✅ **FIXED `pauseInfo` TypeError** — `SidebarChat.tsx:5443` (pre-existing чужая правка): `currThreadStreamState?.isRunning === undefined && currThreadStreamState.pauseInfo` падал на свежем треде → добавлен `?.` ко второму доступу.
+> 2. ✅ **FIXED external-URI** — `vibeServerService._resolveExternal`: `resolveExternalUri({allowTunneling:true})` на десктопе **бросает** «Could not resolve external URI» (нет tunnel-резолвера) → обёрнут в try/catch с фолбэком на сырой URI (localhost открывается напрямую). Касалось ВСЕХ кнопок открытия превью (Static/Dev/Docker).
+> 3. ✅ **DONE редизайн панели** (запрос юзера): действия Vibe Server — **вертикальным списком с подписями** в теле `VibeServerViewPane` (видны все / подписаны / не пусто). Иконки в ViewTitle оставлены. CSS `.vibe-server-action-*` в `vibeide.css`.
+
+> **СЛЕДУЮЩИЕ ШАГИ (по порядку):**
+> 1. **Dev-проверка визуала** (быстро, ~6 мин): `fnm env --use-on-cd | Out-String | Invoke-Expression; fnm use; .\run-dev.bat --compile`. Проверить: кнопка «Открыть превью» открывает localhost без ошибки URI; панель — вертикальные подписанные кнопки.
+> 2. **Если «гуд» → релизная Фаза 1** (~75 мин, упаковка): `fnm env… ; fnm use; .\scripts\release-windows.ps1 -SkipPublish` (без `-Version` → текущая 1.5.0, без бампа/коммита — обходит husky). Артефакты: `.build\win32-x64\system-setup\VibeIDESetup.exe` + `.build\win32-x64\archive\VibeIDE-1.5.0-win32-x64.zip`. Штамп `out-build/.vibe-build-version`=1.5.0.
+> 3. **Фаза 2 (публикация), только после «гуд» по упакованной:** СНАЧАЛА разрулить **husky-блок** (pre-commit hygiene режет `product.json` за `extensionsGallery` → коммит бампа не проходит): `git commit -am "chore: bump version to 1.5.0" --no-verify` ИЛИ починить хук. ПОТОМ `.\scripts\release-windows.ps1 -SkipCompile` (публикует заштампованный 1.5.0, tag+release, без перекомпиляции). ⚠️ **НЕ** «re-run без -SkipPublish» — тот авто-бампнет 1.5.0→1.5.1.
+
+> **Гочи:** fnm активировать только через `fnm env --use-on-cd | Out-String | Invoke-Expression` (просто `fnm use` падает «shell profile не настроен»); системный Node = v24, нужен **v22.22.1** (через fnm) — иначе память предупреждала. Установщик неподписан → SmartScreen (ожидаемо). Smoke `--version` без вывода (non-fatal).
+> **Метод-урок:** баги QR (битые финдеры), классификации ролей (`\b`+кириллица), `pauseInfo`, external-URI — ВСЕ найдены **запуском кода** (Node `--experimental-strip-types` + `jsQR`-декодер), не компиляцией. Перед релизом гонять чистые модули и live-smoke.
+
+**Рекомендуемый порядок:** VS.2 (каркас+Static) → VS.3 (встроенный браузер) → VS.4 (dev-server) → VS.5 (Docker) → VS.6 (AI-loop/модерн). Каждая фаза самодостаточна и поставляема отдельно.
+
+---
+
+## VD. Vibe Deploy — мост от локального превью к облаку (2026-06-28)
+
+> **Нарратив:** Vibe Server = «увидеть локально», **Vibe Deploy = «выкатить в прод»**. Весь путь local→cloud не выходя из IDE.
+> **Решение (зафиксировано с пользователем):** пишем **СВОЙ** скилл `vibe-deploy` (наш код → наша лицензия; имя 1-в-1 под семейство `vibe-*`). Подход — **гибрид**: нативный провайдеро-агностичный seam на TS (команда/кнопка «Деплой») **И** агентный скилл, исполняющий многошаговый деплой — обе модели сохраняем.
+> Референс [swan4er/vibe-deploy](https://github.com/swan4er/vibe-deploy) — **только идеи подхода, НЕ код** (у него нет лицензии → бандлить/форкать нельзя).
+
+### VD.0 Что перенять у референса (идеями; код не берём — лицензии нет)
+
+- **10-шаговый поток деплоя:** анализ → токен → баланс → выбор стратегии (PaaS vs VPS) → подготовка (Docker/env/конфиги) → инфраструктура → деплой → домен/DNS/SSL → CI/CD → финальная проверка.
+- **Анализатор проекта:** детект рантайма/фреймворка/портов/БД/env — **переиспользуем то, что уже есть в VS.4/VS.5** (детект package.json-скриптов, портов из compose/Dockerfile).
+- **Шаблоны:** Dockerfile/compose под Node/Python/Go/PHP/React/fullstack; nginx reverse-proxy/статика; systemd (PM2/gunicorn); GitHub Actions (push→deploy).
+- **Управляемые БД:** PostgreSQL/MySQL/MongoDB/Redis.
+- **Домен/DNS/Let's Encrypt SSL**, SSH-ключи, приватные репо.
+- **Обёртка provider-API** (у референса — Timeweb): паттерн «provider wrapper + state-файл `deploy-state.md` в .gitignore».
+- **Безопасность:** приватные репо, секреты в `~/.config/<provider>/`, non-root юзер `app` на VPS, `ufw`+`fail2ban`.
+
+### VD.1 Архитектура — гибрид (native seam + own skill)
+
+- **Нативный seam (TS):** команда/кнопка «Vibe Deploy» (в палитре + рядом с Vibe Server) — детект «чем деплоить» (provider-agnostic), формирует структурированную задачу и **запускает наш скилл через агента**. Показ статуса/прогресса + финальный URL.
+- **Скилл `vibe-deploy` (наш):** `SKILL.md` (RU-триггеры «задеплой/выкатить/опубликовать/деплой») + скрипты (анализ, provider-API, генерация Docker/CI, state). Живёт в скилл-движке (`.vibe/skills/` / bundled), исполняется агентом в терминале — родная для VibeIDE модель.
+- **Provider-agnostic ядро:** первый провайдер — **Timeweb** (под пользователя), затем плагинами Vercel/Netlify/Fly/Render/собственный-VPS-по-SSH.
+- **Синергия с Vibe Server:** Docker-артефакт, уже собранный/проверенный локально в VS.5, **тем же** едет в облако — один путь, без рассинхрона «локально одно, в проде другое».
+
+### VD.2 Фаза 1 — скилл-каркас `vibe-deploy` (наш код)
+
+> **Статус (2026-06-28): реализовано** (instruction-driven скилл, наш контент, MIT). Файлы: `.vibe/skills/vibe-deploy/SKILL.md` + `reference/timeweb.md` + `reference/templates.md`. Скилл подхватывается скилл-движком (триггеры «задеплой/выкати/опубликуй/timeweb»).
+
+- [x] `SKILL.md` с RU-триггерами + 10-шаговый поток + 5 железных правил (подтверждение перед внешним действием, секреты вне репо, провайдеро-агностичность, реюз локального Docker-артефакта, приватность по умолчанию).
+- [x] Анализатор проекта — **инструкцией** (агент переиспользует сигналы VS.4/VS.5: package.json scripts, порты из compose/Dockerfile), без дублирующего кода.
+- [x] Шаблоны Dockerfile/compose/nginx/CI — свои, в `reference/templates.md` (Node/статика-SPA/Python/Go/PHP + reverse-proxy + GitHub Actions + `.dockerignore`).
+- [x] `deploy-state.md` (идемпотентность) + авто-`.gitignore` — прописано в правилах скилла.
+- [x] Timeweb-провайдер — `reference/timeweb.md`: auth (Bearer, токен в `~/.config/timeweb/`), карта ресурсов, потоки VPS/PaaS, обработка ошибок; **точные endpoint'ы агент сверяет по докам, не зашиты** (защита от устаревания). *(Решено instruction-driven, без Python-скриптов референса → ноль рантайм-зависимостей.)*
+- [/] **Дистрибуция конечным юзерам** (2026-06-29): добавлен **seam** — `IVibeSkillsLibraryService.registerBuiltinSkillRoot(uri)` сканирует bundled-root на низшем приоритете (workspace/globalPaths перекрывают). **Осталось (на сборке):** copy-glob skill-файлов в продукт + регистрация root через `FileAccess`/appRoot — финализируется в `собери`, где можно подтвердить, что md-файлы реально попадают в пакет (встроить как TS-строки нельзя — markdown насыщен тройными backtick-ами).
+
+### VD.3 Фаза 2 — нативный seam
+
+> **Статус (2026-06-28): реализовано.** `browser/vibeDeploy.contribution.ts` — команда + кнопка, `compile-check-ts-native` чистый.
+
+- [x] Команда `vibeide.vibeDeploy.deploy` (палитра `Vibe Deploy: Задеплоить проект` + кнопка `$(cloud-upload)` в ViewTitle панели Vibe Server). Стартует ход через `addUserMessageAndStreamResponse` с запросом на деплой → активируется скилл.
+- [x] **Подтверждение перед деплоем** — обеспечено самим скиллом (правило №1): kickoff лишь запускает анализ+план, внешние действия — только после «да».
+- [ ] Provider-picker UI / индикация статуса / кликабельный итоговый URL — позже (сейчас провайдер выбирается в диалоге со скиллом).
+
+### VD.4 Фаза 3 — домен/SSL/CI-CD
+
+> **Статус (2026-06-28): реализовано** в скилле — `reference/domains-ci.md` (провайдеро-агностично) + шаблон CI в `reference/templates.md`.
+
+- [x] Домен + DNS-записи + Let's Encrypt SSL (VPS: `certbot --nginx` + renew; PaaS: авто-SSL платформы; HTTP→HTTPS редирект).
+- [x] GitHub Actions workflow (push в main → деплой по SSH), генерация SSH-deploy-ключа, приватный репо, секреты только в GitHub Secrets.
+- [x] Управляемые БД — в потоке скилла (Timeweb: managed DB; чек-лист готовности в `domains-ci.md`).
+
+### VD.5 Провайдеры (плагинами, после Timeweb)
+
+> **Статус (2026-06-28): реализовано** — `reference/providers.md` (адаптеры под единый контракт) + контракт для добавления новых.
+
+- [x] Vercel / Netlify (статика + serverless), Fly.io / Render (контейнеры), собственный VPS по SSH — каждый секцией скилла под общий 10-шаговый контракт; точные CLI-флаги агент сверяет по докам (не зашиты).
+
+### VD.6 Безопасность (сквозное)
+
+- Приватные репо; секреты/токены вне репо (`~/.config/<provider>/`, `deploy-state` в `.gitignore`); non-root `app` на VPS; `ufw`+`fail2ban`; SSL.
+- **Никакого авто-деплоя.** Деплой — outward-facing и труднооткатываемый → только по явному действию и с подтверждением.
+
+### VD.7 Что осознанно НЕ делаем
+
+- Не бандлим чужой код (лицензия референса отсутствует) — пишем своё.
+- Не зашиваем один провайдер в ядро — provider-agnostic с первого дня.
+- Не деплоим без подтверждения пользователя.
+
+**Зависимость:** опирается на детекты Docker/портов из VS.5 — логично делать **после** приземления Vibe Server.
+
+---
+
+## VA. Vibe Agents — курируемый набор ролей-субагентов (2026-06-28)
+
+> **Главное:** машинерия субагентов у нас **уже есть** — `vibeSubagentService` / `vibeSubagentRegistryService` / `vibeSubagentOrchestratorService` / `vibeSubagentIsolationRuntime`, `vibePersonaService`, Modes (capability fence), `vibePerFilePermissionsService` + `vibeAgentTerritorialLockService`. Поэтому vibe-agents «пристраивается» **не как новая система, а как курируемый контент-пак ролей + 2 недостающие эвристики** поверх существующего. Связь с роадмапом: **§ I** (изоляция контекста), **§ B** (мульти-агент/координация записи), **§ D** (second opinion).
+> **Решение (как с Vibe Deploy):** свой `vibe-agents` (наш код/промпты, имя 1-в-1 под `vibe-*`). Референс [swan4er/vibe-agents](https://github.com/swan4er/vibe-agents) — **только идеи** (OpenCode-формат, лицензии нет → код не берём; их выбор моделей Gemini/GPT/GLM не зашиваем).
+
+### VA.0 Что перенять идеями (не код)
+
+- **Таксономия 8 ролей:** orchestrator (координатор, не пишет код) · planner (декомпозиция/критпуть/риски) · designer · frontend-dev · backend-dev · code-reviewer · qa · security.
+- **Permission-модель на роль:** orchestrator/code-reviewer/security = **read-only, без bash/записи**; designer/frontend/backend/qa = full + bash.
+- **Маршруты оркестрации:** full-feature (`planner → designer → backend ∥ frontend → reviewer → qa → [security]`), backend-only, bug (`dev → reviewer → qa`).
+- **Security-by-default:** security-роль авто-подключается при OAuth / PII / платежах / API / секретах.
+
+### VA.1 Куда ложится в наши реалии (маппинг, НЕ дублировать)
+
+- **Роли** → определения субагентов в `vibeSubagentRegistryService` + (стиль) `vibePersonaService` + (рамка способностей) **Mode**. Persona ≠ Mode (см. `references/v1/persona-vs-modes.md`): роль = Mode-рамка, поверх — Persona-стиль.
+- **Права read-only/full** → **Mode capability fence** + `vibePerFilePermissionsService` + `vibeAgentTerritorialLockService` (reviewer/security/orchestrator — read-only Mode; devs — write + territorial lock на свою зону, чтобы не топтали друг друга при параллели).
+- **Маршруты** → `vibeSubagentOrchestratorService` (классификация задачи → workflow); context-handoff уже описан в **§ B**.
+- **Изоляция контекста** субагентов → `vibeSubagentIsolationRuntime` (**§ I**) — делегирование без «прожигания» окна родителя.
+- **Дистрибуция пака** → уже есть `personasCommunityCatalog` / skills-catalog (HTTPS + SHA-256 + diff-confirm) — пак ролей раздаём тем же механизмом.
+
+### VA.2 Фаза 1 — курируемый pack ролей (наш код)
+
+> **Статус (2026-06-28): реализовано, `compile-check-ts-native` чистый.** 8 ролей добавлены как `SubagentPreset` в `vibeSubagentRegistryService` (свои RU-промпты `systemAppendix`); `SubagentType` расширен; permission-модель — через `allowedTools` whitelist в реестре И в runtime-гейте `TOOL_WHITELIST` (`vibeSubagentService`), синхронно.
+
+- [x] 8 ролей как **наши** subagent-пресеты (orchestrator/planner/designer/frontend-dev/backend-dev/code-reviewer/qa/security), RU-промпты, свои — не из референса.
+- [x] **Permission-модель на роль** = `allowedTools`: read-only (orchestrator/planner/code-reviewer/security — только read/list/grep/glob/semantic_search) vs full (designer/frontend/backend/qa — +write/edit/terminal). Зеркалится в реестре и в runtime-whitelist.
+- [x] orchestrator = read-only координатор (делегирует, не пишет, не запускает).
+- [ ] Модели на роль — через `modelSelectionOfFeature` (роль→предпочтительная модель): **остаётся** (сейчас роль наследует модель сессии).
+
+### VA.3 Фаза 2 — оркестрация и права
+
+> **Статус (2026-06-28): реализовано, `compile-check-ts-native` чистый.** Чистый модуль `common/vibeAgentRoutes.ts` (классификация + маршрут) + методы `planRoute`/`executeRoute` в `vibeSubagentOrchestratorService`; тест `test/common/vibeAgentRoutes.test.ts`.
+
+- [x] Маршруты full-feature / backend / frontend / bug / review — `buildRoute()` (классификация по сигналам RU/EN) возвращает **стадии**; `executeRoute()` гоняет стадии последовательно, а роли **внутри стадии — параллельно** (`Promise.all`, backend ∥ frontend), с передачей summary стадии дальше; стоп на первом fail. Лимиты роли — из пресета реестра. Аудит `agent_route_started`. Тест покрывает классификацию, security-by-default и параллельную стадию.
+- [x] Привязка прав — через `allowedTools` whitelist роли (VA.2): read-only роли физически без write/terminal. *(Mode/territorial-lock уже существуют и комбинируются; жёсткая привязка профиля к Mode — опционально позже.)*
+
+### VA.4 Фаза 3 — security-by-default
+
+> **Статус (2026-06-28): реализовано** в `vibeAgentRoutes.ts`.
+
+- [x] `needsSecurity()` — эвристика триггеров (OAuth/auth/пароль/secret/token/PII/платежи/карта/api-key/credential, RU+EN); `buildRoute()` авто-добавляет роль `security` в конец маршрута, если триггер сработал и её там ещё нет. Покрыто тестом.
+
+### VA.5 Что осознанно НЕ делаем
+
+- Не строим **параллельную** субагент-машинерию — она есть, кладём поверх.
+- Не бандлим чужой код (лицензии нет); не зашиваем чужой выбор моделей.
+- Не дублируем security-проверку — переиспользуем имеющуюся.
+
+**Зависимость:** ложится на готовые `vibeSubagent*` / `vibePersona*` сервисы — можно делать независимо от Vibe Server/Deploy.
+
 ---
 
 | Документ | Описание |

@@ -40,6 +40,15 @@ import './vibeNeonThemeContribution.js'
 // Native workspace bookmarks (Vibe Projects)
 import './vibeProjects.contribution.js'
 
+// Local preview server with live reload (Vibe Server)
+import './vibeServer/vibeServer.contribution.js'
+
+// Deploy to cloud via the vibe-deploy skill (Vibe Deploy)
+import './vibeDeploy.contribution.js'
+
+// Curated agent role routing (Vibe Agents)
+import './vibeAgents.contribution.js'
+
 // update (frontend part, also see platform/)
 import './vibeideUpdateActions.js'
 
@@ -447,6 +456,7 @@ import './vibeIdleWatchdogTimelineCommand.js'
 
 // VibeIDE: Idle Watchdog — AI diagnosis Action2 (roadmap W.36)
 import './vibeIdleWatchdogAiDiagnosisAction.js'
+import './vibeStallDiagnosticsAction.js'
 
 // VibeIDE: VibeModal — workbench-level themed modal framework
 import './vibeModalServiceImpl.js'

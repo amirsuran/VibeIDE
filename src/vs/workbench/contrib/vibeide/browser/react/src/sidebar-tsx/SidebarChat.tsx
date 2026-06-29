@@ -316,6 +316,51 @@ const StallBanner = ({
 	);
 }
 
+// Inline banner shown while a provider rate-limit auto-pause counts down to an automatic resume.
+// The run already schedules the resume itself; this just makes the wait visible and offers to skip it.
+const RateLimitPauseBanner = ({
+	resumeAtMs,
+	attempt,
+	maxAttempts,
+	onResumeNow,
+}: {
+	resumeAtMs: number,
+	attempt: number,
+	maxAttempts: number,
+	onResumeNow: () => void,
+}) => {
+	const [now, setNow] = useState(() => Date.now());
+	useEffect(() => {
+		const id = window.setInterval(() => setNow(Date.now()), 1000);
+		return () => window.clearInterval(id);
+	}, []);
+	const remainingSec = Math.max(0, Math.round((resumeAtMs - now) / 1000));
+	const mm = Math.floor(remainingSec / 60);
+	const ss = remainingSec % 60;
+	const clock = mm > 0 ? `${mm}:${String(ss).padStart(2, '0')}` : `${ss}с`;
+	return (
+		<div
+			className="flex items-center gap-2 px-2 py-1 rounded border border-vibe-border-2 text-vibe-warning text-xs"
+			role="status"
+			aria-live="polite"
+		>
+			<IconWarning size={14} className="flex-shrink-0" />
+			<span className="flex-1 text-vibe-fg-2">
+				{remainingSec > 0
+					? `Провайдер взял паузу (лимит запросов). Автопродолжение через ${clock} · попытка ${attempt} из ${maxAttempts}`
+					: 'Продолжаю…'}
+			</span>
+			<button
+				type="button"
+				onClick={onResumeNow}
+				className="px-2 py-0.5 rounded border border-vibe-warning text-vibe-warning hover:bg-vibe-bg-2-hover"
+			>
+				Продолжить сейчас
+			</button>
+		</div>
+	);
+}
+
 // Spinner — rotating ring shown while model is generating (before first token arrives)
 export const Spinner = ({ className = '', size = 15 }: { className?: string; size?: number }) => (
 	<LoaderCircle
@@ -5394,6 +5439,20 @@ export const SidebarChat = () => {
 			})
 		}
 
+		// Rate-limit auto-pause countdown — provider asked us to wait; the run resumes automatically.
+		if (currThreadStreamState?.isRunning === undefined && currThreadStreamState?.pauseInfo) {
+			const { resumeAtMs, attempt, maxAttempts } = currThreadStreamState.pauseInfo
+			items.push({
+				key: 'rate-limit-pause-banner',
+				render: () => <RateLimitPauseBanner
+					resumeAtMs={resumeAtMs}
+					attempt={attempt}
+					maxAttempts={maxAttempts}
+					onResumeNow={() => { chatThreadsService.resumeRateLimitPauseNow(threadId) }}
+				/>
+			})
+		}
+
 		// Generating-tool preview (edit_file / rewrite_file in progress).
 		if (generatingTool) {
 			items.push({ key: 'generating-tool', render: () => generatingTool })
@@ -5433,10 +5492,11 @@ export const SidebarChat = () => {
 
 		// Error block.
 		if (latestError !== undefined) {
-			const _err = latestError as { message: string; fullError: Error | null; recoverable?: 'dismissPlan' | 'forceReset' | 'switchModel' }
+			const _err = latestError as { message: string; fullError: Error | null; recoverable?: 'dismissPlan' | 'forceReset' | 'switchModel' | 'retry' }
 			const isPendingPlanGate = _err.recoverable === 'dismissPlan'
 			const isForceReset = _err.recoverable === 'forceReset'
 			const isSwitchModel = _err.recoverable === 'switchModel'
+			const isRetry = _err.recoverable === 'retry'
 			items.push({
 				key: 'error-block',
 				render: () => <div className='px-2 my-1 message-enter space-y-2'>
@@ -5474,6 +5534,32 @@ export const SidebarChat = () => {
 							onClick={() => { commandService.executeCommand(VIBEIDE_OPEN_SETTINGS_ACTION_ID) }}
 							text='Открыть настройки и выбрать другую модель'
 						/>
+					) : isRetry ? (
+						// Hard-stall terminal error (no tokens within the watchdog window). Primary
+						// recovery is re-sending the last turn WITHOUT a window reload; keep the
+						// settings link as a secondary path (the message also suggests switching model).
+						<>
+							<WarningBox
+								className='text-sm my-1 mx-3'
+								onClick={() => { chatThreadsService.retryStalledStream(currentThread.id) }}
+								text='Повторить запрос'
+							/>
+							<WarningBox
+								className='text-sm my-1 mx-3'
+								onClick={() => { chatThreadsService.retryStalledStreamWithDiagnostics(currentThread.id) }}
+								text='Повторить с диагностикой'
+							/>
+							<WarningBox
+								className='text-sm my-1 mx-3'
+								onClick={() => { commandService.executeCommand('vibeide.chat.collectStallDiagnostics') }}
+								text='Собрать диагностику'
+							/>
+							<WarningBox
+								className='text-sm my-1 mx-3'
+								onClick={() => { commandService.executeCommand(VIBEIDE_OPEN_SETTINGS_ACTION_ID) }}
+								text='Открыть настройки'
+							/>
+						</>
 					) : (
 						<>
 							<p className="text-sm text-vibe-fg-3 px-1">Можно повторить попытку или сменить модель в настройках.</p>

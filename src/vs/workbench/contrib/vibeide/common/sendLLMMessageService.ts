@@ -33,6 +33,17 @@ export interface ILLMMessageService {
 	openAICompatibleList: (params: ServiceModelListParams<OpenaiCompatibleModelResponse>) => void;
 	/** Diagnostic: reset main-process transport (local client caches + shared cloud dispatcher) without restarting the IDE. */
 	resetProviderClients: () => Promise<void>;
+	/** Diagnostic: live shared-dispatcher generation/age (for the stall report). */
+	getTransportDiagnostics: () => Promise<TransportDiagnostics>;
+}
+
+/** Live shared-dispatcher generation snapshot — see `getDispatcherDiagnostics` in systemCAFetch. */
+export interface TransportDiagnostics {
+	/** monotonic dispatcher generation; bumps on every (re)create */
+	readonly id: number;
+	/** how long the current pool has been reused, ms */
+	readonly ageMs: number;
+	readonly initialized: boolean;
 }
 
 // open this file side by side with llmMessageChannel
@@ -119,6 +130,10 @@ export class LLMMessageService extends Disposable implements ILLMMessageService 
 
 	resetProviderClients(): Promise<void> {
 		return this.channel.call('resetProviderClients')
+	}
+
+	getTransportDiagnostics(): Promise<TransportDiagnostics> {
+		return this.channel.call('getTransportDiagnostics')
 	}
 
 	sendLLMMessage(params: ServiceSendLLMMessageParams) {

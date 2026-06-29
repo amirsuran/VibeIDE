@@ -29,7 +29,11 @@ import { IVibeConstraintsService } from './vibeConstraintsService.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-export type SubagentType = 'explore' | 'implement-step' | 'recover-or-skip';
+export type SubagentType =
+	// Roadmap-agent delegation roles
+	| 'explore' | 'implement-step' | 'recover-or-skip'
+	// Vibe Agents — curated role pack (VA). Read-only roles get a read-only tool whitelist.
+	| 'orchestrator' | 'planner' | 'designer' | 'frontend-dev' | 'backend-dev' | 'code-reviewer' | 'qa' | 'security';
 export type SubagentStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped' | 'disposed';
 
 /** What the parent sends to spawn a subagent */
@@ -158,6 +162,16 @@ const TOOL_WHITELIST: Record<SubagentType, string[]> = {
 	'explore': ['read_file', 'list_dir', 'grep', 'glob', 'semantic_search'],
 	'implement-step': ['read_file', 'write_file', 'edit_file', 'run_terminal_command', 'list_dir', 'grep'],
 	'recover-or-skip': ['read_file', 'run_terminal_command', 'grep'],
+	// Vibe Agents (VA) — must mirror allowedTools in vibeSubagentRegistryService presets.
+	// Read-only roles (orchestrator/planner/code-reviewer/security) cannot write or run.
+	'orchestrator': ['read_file', 'list_dir', 'grep', 'glob', 'semantic_search'],
+	'planner': ['read_file', 'list_dir', 'grep', 'glob', 'semantic_search'],
+	'code-reviewer': ['read_file', 'list_dir', 'grep', 'glob', 'semantic_search'],
+	'security': ['read_file', 'list_dir', 'grep', 'glob', 'semantic_search'],
+	'designer': ['read_file', 'write_file', 'edit_file', 'run_terminal_command', 'list_dir', 'grep', 'glob'],
+	'frontend-dev': ['read_file', 'write_file', 'edit_file', 'run_terminal_command', 'list_dir', 'grep', 'glob'],
+	'backend-dev': ['read_file', 'write_file', 'edit_file', 'run_terminal_command', 'list_dir', 'grep', 'glob'],
+	'qa': ['read_file', 'write_file', 'edit_file', 'run_terminal_command', 'list_dir', 'grep', 'glob'],
 };
 
 // ── Implementation ────────────────────────────────────────────────────────────

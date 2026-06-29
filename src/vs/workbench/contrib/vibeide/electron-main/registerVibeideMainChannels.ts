@@ -27,6 +27,10 @@ import { VibeIdleWatchdogChannelService } from './vibeIdleWatchdogChannel.js';
 import { VIBE_IDLE_WATCHDOG_CHANNEL } from '../common/vibeIdleWatchdogTypes.js';
 import { VibeWindowAttentionMainService } from './vibeWindowAttentionMainService.js';
 import { VIBE_WINDOW_ATTENTION_CHANNEL } from '../common/vibeWindowAttentionIpc.js';
+import { VibeServerMainService } from './vibeServer/vibeServerMainService.js';
+import { VIBE_SERVER_CHANNEL } from '../common/vibeServer/vibeServerIpc.js';
+import { VibeServerProcessService } from './vibeServer/vibeServerProcessService.js';
+import { VIBE_SERVER_PROCESS_CHANNEL } from '../common/vibeServer/vibeServerProcessIpc.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { IWindowsMainService } from '../../../../platform/windows/electron-main/windows.js';
 
@@ -105,5 +109,23 @@ export function registerVibeideMainProcessChannels(
 	mainProcessElectronServer.registerChannel(
 		VIBE_WINDOW_ATTENTION_CHANNEL,
 		ProxyChannel.fromService(windowAttentionService, disposables),
+	);
+
+	// Vibe Server — static document server + live reload (roadmap VS.2). Node http/ws lives
+	// in main; the renderer drives lifecycle and pushes file-change signals over this channel.
+	const vibeServerMainService = disposables.add(new VibeServerMainService(accessor.get(ILogService)));
+	mainProcessElectronServer.registerChannel(
+		VIBE_SERVER_CHANNEL,
+		ProxyChannel.fromService(vibeServerMainService, disposables),
+	);
+
+	// Vibe Server process runner — dev-servers (VS.4) and `docker compose` (VS.5).
+	const vibeServerProcessService = disposables.add(new VibeServerProcessService(
+		accessor.get(ILogService),
+		accessor.get(IEnvironmentMainService),
+	));
+	mainProcessElectronServer.registerChannel(
+		VIBE_SERVER_PROCESS_CHANNEL,
+		ProxyChannel.fromService(vibeServerProcessService, disposables),
 	);
 }

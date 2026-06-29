@@ -138,6 +138,91 @@ const BUILT_IN_PRESETS: SubagentPreset[] = [
 	},
 ];
 
+// ── Vibe Agents — curated role pack (VA) ─────────────────────────────────────
+// Permission model = the `allowedTools` whitelist: read-only roles (orchestrator,
+// planner, code-reviewer, security) physically cannot write or run commands. Merged
+// into the preset map at construction time (see class field) to avoid const TDZ.
+
+/** Read-only tool whitelist — roles that must not modify the workspace. */
+const ROLE_READONLY_TOOLS = ['read_file', 'list_dir', 'grep', 'glob', 'semantic_search'];
+/** Full tool whitelist — roles that build (write/edit/run). */
+const ROLE_FULL_TOOLS = ['read_file', 'write_file', 'edit_file', 'run_terminal_command', 'list_dir', 'grep', 'glob'];
+
+const VIBE_AGENT_ROLE_PRESETS: SubagentPreset[] = [
+	{
+		type: 'orchestrator',
+		displayName: 'Оркестратор',
+		systemAppendix: 'Ты оркестратор. Классифицируй задачу и делегируй её подходящим ролям (planner/designer/frontend-dev/backend-dev/code-reviewer/qa/security). Сам код НЕ пишешь и команды НЕ запускаешь. Верни план делегирования.',
+		allowedTools: ROLE_READONLY_TOOLS,
+		defaultMaxSteps: 10,
+		defaultMaxWallClockMs: 30_000,
+		defaultMaxTokens: 12_000,
+	},
+	{
+		type: 'planner',
+		displayName: 'Планировщик',
+		systemAppendix: 'Ты планировщик. Декомпозируй задачу на эпики/шаги, определи критический путь и риски. Только чтение, без правок. Верни структурированный план.',
+		allowedTools: ROLE_READONLY_TOOLS,
+		defaultMaxSteps: 15,
+		defaultMaxWallClockMs: 60_000,
+		defaultMaxTokens: 20_000,
+	},
+	{
+		type: 'designer',
+		displayName: 'Дизайнер',
+		systemAppendix: 'Ты дизайнер UI. Отвечаешь за компоненты, дизайн-систему, стили. Меняй только UI-слой; бизнес-логику и бэкенд не трогай.',
+		allowedTools: ROLE_FULL_TOOLS,
+		defaultMaxSteps: 30,
+		defaultMaxWallClockMs: 120_000,
+		defaultMaxTokens: 30_000,
+	},
+	{
+		type: 'frontend-dev',
+		displayName: 'Фронтенд',
+		systemAppendix: 'Ты фронтенд-разработчик. State, API-клиент, роутинг, TypeScript, UI-тесты. Оставайся в рамках фронтенда — серверную логику не меняй.',
+		allowedTools: ROLE_FULL_TOOLS,
+		defaultMaxSteps: 40,
+		defaultMaxWallClockMs: 180_000,
+		defaultMaxTokens: 40_000,
+	},
+	{
+		type: 'backend-dev',
+		displayName: 'Бэкенд',
+		systemAppendix: 'Ты бэкенд-разработчик. API, сервисы, БД, серверная логика. UI-слой не трогай.',
+		allowedTools: ROLE_FULL_TOOLS,
+		defaultMaxSteps: 40,
+		defaultMaxWallClockMs: 180_000,
+		defaultMaxTokens: 40_000,
+	},
+	{
+		type: 'code-reviewer',
+		displayName: 'Ревьюер',
+		systemAppendix: 'Ты ревьюер кода. Проверяй корректность, безопасность, производительность. Только чтение — код НЕ меняй. Верни список находок с severity и расположением.',
+		allowedTools: ROLE_READONLY_TOOLS,
+		defaultMaxSteps: 20,
+		defaultMaxWallClockMs: 90_000,
+		defaultMaxTokens: 25_000,
+	},
+	{
+		type: 'qa',
+		displayName: 'QA',
+		systemAppendix: 'Ты QA-инженер. Прогоняй тесты, верифицируй поведение, формируй отчёт. Можешь запускать команды тестов. Не правь продакшен-код — заводи находки.',
+		allowedTools: ROLE_FULL_TOOLS,
+		defaultMaxSteps: 25,
+		defaultMaxWallClockMs: 180_000,
+		defaultMaxTokens: 25_000,
+	},
+	{
+		type: 'security',
+		displayName: 'Security',
+		systemAppendix: 'Ты security-аудитор. Ищи уязвимости (OWASP Top 10), утечки секретов, небезопасные зависимости. Только чтение, без правок. Верни отчёт с severity и рекомендациями.',
+		allowedTools: ROLE_READONLY_TOOLS,
+		defaultMaxSteps: 20,
+		defaultMaxWallClockMs: 90_000,
+		defaultMaxTokens: 25_000,
+	},
+];
+
 // ── Delegation heuristic constants ─────────────────────────────────────────────
 
 const CONTEXT_FILL_DELEGATE_THRESHOLD = 0.6; // delegate when context > 60% full
@@ -150,7 +235,7 @@ class VibeSubagentRegistryService extends Disposable implements IVibeSubagentReg
 	declare readonly _serviceBrand: undefined;
 
 	private readonly _presets = new Map<SubagentType, SubagentPreset>(
-		BUILT_IN_PRESETS.map(p => [p.type, p])
+		[...BUILT_IN_PRESETS, ...VIBE_AGENT_ROLE_PRESETS].map(p => [p.type, p])
 	);
 
 	constructor(

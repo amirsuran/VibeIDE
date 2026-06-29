@@ -27,7 +27,7 @@ import { autoModelFallbackProviderOrder, ChatMode, FeatureName, ModelSelection, 
 import { isVisionByNameHeuristic } from '../common/modelVisionHeuristics.js';
 import { detectVisionDropResponse } from '../common/visionDropDetector.js';
 import { IVibeideSettingsService } from '../common/vibeideSettingsService.js';
-import { BuiltinToolCallParams, BuiltinToolResultType, ToolCallParams, ToolName, ToolResult } from '../common/toolsServiceTypes.js';
+import { BuiltinToolCallParams, BuiltinToolResultType, TerminalResolveReason, ToolCallParams, ToolName, ToolResult } from '../common/toolsServiceTypes.js';
 import { approvalTypeOfBuiltinToolName } from '../common/prompt/tools/index.js';
 import { IToolsService } from './toolsService.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
@@ -397,7 +397,10 @@ export type IsRunningType =
 export type ThreadStreamState = {
 	[threadId: string]: undefined | {
 		isRunning: undefined;
-		error?: { message: string, fullError: Error | null, recoverable?: 'dismissPlan' | 'forceReset' | 'switchModel' };
+		error?: { message: string, fullError: Error | null, recoverable?: 'dismissPlan' | 'forceReset' | 'switchModel' | 'retry' };
+		// Provider rate-limit auto-pause: the run is waiting out a 429 retry-after and will resume the
+		// turn itself at `resumeAtMs`. Drives the inline countdown banner so the wait is visible.
+		pauseInfo?: { resumeAtMs: number; attempt: number; maxAttempts: number; reason: 'rateLimit' };
 		llmInfo?: undefined;
 		toolInfo?: undefined;
 		interrupt?: undefined;
@@ -567,6 +570,12 @@ export interface IChatThreadService {
 
 	// Recover from a stalled stream: discard the partial assistant output and re-send the last user message.
 	retryStalledStream(threadId: string): Promise<void>;
+	// Same as retryStalledStream, but arms one-shot auto-collection of the stall diagnostics report.
+	retryStalledStreamWithDiagnostics(threadId: string): Promise<void>;
+	// Plain-data snapshot (provider/model/timeout/last error) for the stall diagnostics report.
+	getStallDiagnosticsContext(threadId: string): { provider?: string; model?: string; hardStallSeconds: number; lastErrorMessage?: string };
+	// "Продолжить сейчас" on the rate-limit pause banner: skip the remaining wait and resume the turn now.
+	resumeRateLimitPauseNow(threadId: string): Promise<void>;
 
 	/**
 	 * Hard-reset a thread's stream state. Unlike abortRunning(), this does NOT
@@ -738,9 +747,15 @@ class ChatThreadService extends Disposable implements IChatThreadService {
 	// Consecutive auto-waits on minute-window rate limits per thread (autopilot resume).
 	// Bounded by `vibeide.chat.rateLimitAutoWaitMaxRetries`; reset on any successful reply.
 	private readonly _rateLimitAutoWaitStreak = new Map<string, number>()
+	// Pending rate-limit resume timers per thread, so "Продолжить сейчас" / a new submit / forceReset
+	// can cancel the scheduled auto-resume instead of letting it fire on top of manual action.
+	private readonly _rateLimitResumeTimers = new Map<string, ReturnType<typeof setTimeout>>()
 	// Consecutive hard-stall auto-retries per thread (`vibeide.chat.hardStallAutoRetry`).
 	// Capped at HARD_STALL_AUTO_RETRY_MAX; reset on any successful reply.
 	private readonly _hardStallAutoRetryStreak = new Map<string, number>()
+	// Threads where "Повторить с диагностикой" armed auto-collection — one-shot: if the next attempt
+	// also hard-stalls (terminal), the stall report is built automatically. Disarmed on fire/success.
+	private readonly _autoCollectStallDiagByThread = new Set<string>()
 	// Models auto-downgraded to XML after a «no endpoints support tool_choice» 404 —
 	// SESSION-wide by necessity: the post-downgrade retry starts a new run, so a
 	// run-local guard would reset and loop the downgrade forever.
@@ -1210,6 +1225,9 @@ class ChatThreadService extends Disposable implements IChatThreadService {
 			const event: NotifySoundEvent = stalled ? 'stalled' : 'complete'
 			this._notifySoundService.playForEvent(event)
 			this._desktopNotificationService.notifyForEvent(event)
+			// Same genuine-end gate as the sound (error / abort / suppression / awaiting-user already filtered
+			// above): if the user queued context mid-run that never drained, send it now as a fresh turn.
+			this._autoSendPendingInjectionsAsNewTurn(threadId)
 		}
 	}
 
@@ -3310,6 +3328,8 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 		}
 		// Clear the age tracker so the next send doesn't see this thread as "stuck".
 		this._streamStateSetAt.delete(threadId)
+		// Cancel any pending rate-limit auto-resume so it can't fire after a manual reset.
+		this._clearRateLimitResumeTimer(threadId)
 		// Final: flip streamState to undefined. _setStreamState fires
 		// onDidChangeStreamState so the UI's error block disappears.
 		this._setStreamState(threadId, undefined)
@@ -3322,6 +3342,58 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 			})
 		}
 		return actuallyResetSomething
+	}
+
+	/**
+	 * Recreate the main-process transport (local client caches + shared cloud undici pool) before a
+	 * stall retry, unless disabled via `vibeide.chat.hardStallAutoResetTransport`. A silent stall on a
+	 * cloud provider is usually a wedged keep-alive pool; the user's manual workaround (switch provider /
+	 * restart) just got a fresh pool — this automates it. Best-effort: a reset failure must not block the retry.
+	 */
+	private async _maybeResetTransportForStall(threadId: string, reason: 'auto-retry' | 'manual-retry'): Promise<void> {
+		if (this._configurationService.getValue<boolean>('vibeide.chat.hardStallAutoResetTransport') === false) { return }
+		try {
+			await this._llmMessageService.resetProviderClients()
+			recordChatTrace('llmTurn:transport-reset', { reason })
+			vibeLog.warn('chatThread', `[stall] transport reset before ${reason} (threadId=${threadId})`)
+		} catch (e) {
+			vibeLog.warn('chatThread', `[stall] transport reset failed (${reason}): ${getErrorMessage(e)}`)
+		}
+	}
+
+	/** Cancel a pending rate-limit auto-resume timer (if any) so it can't fire on top of manual action. */
+	private _clearRateLimitResumeTimer(threadId: string): void {
+		const t = this._rateLimitResumeTimers.get(threadId)
+		if (t !== undefined) { clearTimeout(t); this._rateLimitResumeTimers.delete(threadId) }
+	}
+
+	/** "Продолжить сейчас" on the rate-limit pause banner: skip the remaining wait and resume the turn now. */
+	async resumeRateLimitPauseNow(threadId: string): Promise<void> {
+		this._clearRateLimitResumeTimer(threadId)
+		if (this.streamState[threadId]?.isRunning !== undefined) { return } // already running / not paused
+		this._setStreamState(threadId, { isRunning: undefined }) // clear pauseInfo before resuming
+		this._runChatAgent({ threadId, ...this._currentModelSelectionProps() })
+	}
+
+	/** Plain-data snapshot for the stall diagnostics report (read by the collect command). */
+	getStallDiagnosticsContext(threadId: string): { provider?: string; model?: string; hardStallSeconds: number; lastErrorMessage?: string } {
+		const { modelSelection } = this._currentModelSelectionProps()
+		return {
+			provider: modelSelection?.providerName,
+			model: modelSelection?.modelName,
+			hardStallSeconds: readClampedNumberSetting(this._configurationService, 'vibeide.chat.streamHardStallSeconds', DEFAULT_HARD_STALL_SECONDS, 30, 1800),
+			lastErrorMessage: this.streamState[threadId]?.error?.message,
+		}
+	}
+
+	/** "Повторить с диагностикой": arm one-shot auto-collection, then retry (which resets transport). */
+	async retryStalledStreamWithDiagnostics(threadId: string): Promise<void> {
+		this._autoCollectStallDiagByThread.add(threadId)
+		this._notificationService.notify({
+			severity: Severity.Info,
+			message: localize('vibeide.chatThread.retryWithDiagnostics', 'Повтор в режиме диагностики: если стоп повторится, отчёт соберётся автоматически.'),
+		})
+		await this.retryStalledStream(threadId)
 	}
 
 	async retryStalledStream(threadId: string): Promise<void> {
@@ -3340,6 +3412,8 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 		// interrupt the current stream WITHOUT committing partial assistant content (unlike abortRunning)
 		// User-initiated edit-and-rerun: suppress the run-end notification sound for this thread.
 		this._suppressStopSound(threadId)
+		// A manual stall retry gets a fresh transport too (same wedged-pool reasoning as the auto-retry).
+		await this._maybeResetTransportForStall(threadId, 'manual-retry')
 		const interrupt = await this.streamState[threadId]?.interrupt
 		if (typeof interrupt === 'function') interrupt()
 
@@ -4423,7 +4497,14 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 		}
 
 		// 5. add to history and keep going
-		vibeLog.debug('toolExec', 'done', { tool: toolName, ms: Date.now() - _toolExecStartMs, ok: true }); recordChatTrace('toolExec:done', { tool: toolName, ms: Date.now() - _toolExecStartMs, ok: true }); this._updateLatestTool(threadId, { role: 'tool', type: 'success', params: toolParams, result: toolResult, name: toolName, content: toolResultStr, id: toolId, rawParams: opts.unvalidatedToolParams, mcpServerName })
+		// run_command / run_nl_command "time out" by KILLING the foreground terminal — output is partial and
+		// the step did NOT finish, so the diagnostic trace must not report ok:true (roadmap rc). Persistent /
+		// backgrounded commands resolve as 'done' (not 'timeout'), so this only catches the foreground-kill case.
+		const _foregroundTerminalTimedOut = (toolName === 'run_command' || toolName === 'run_nl_command')
+			&& typeof toolResult === 'object' && toolResult !== null && 'resolveReason' in toolResult
+			&& (toolResult as { resolveReason?: TerminalResolveReason }).resolveReason?.type === 'timeout'
+		const _toolOk = !_foregroundTerminalTimedOut
+		vibeLog.debug('toolExec', 'done', { tool: toolName, ms: Date.now() - _toolExecStartMs, ok: _toolOk }); recordChatTrace('toolExec:done', { tool: toolName, ms: Date.now() - _toolExecStartMs, ok: _toolOk }); this._updateLatestTool(threadId, { role: 'tool', type: 'success', params: toolParams, result: toolResult, name: toolName, content: toolResultStr, id: toolId, rawParams: opts.unvalidatedToolParams, mcpServerName })
 		this._agentActivityLog.logFinished(toolActivityLabel);
 
 		// Cache read_file results to prevent duplicate reads
@@ -5485,6 +5566,9 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 				const notifyStall = (kind: 'noFirstToken' | 'midStream') => {
 					clearStallNotification()
 					setInlineStall()
+					// Diagnostics: make the silent gap explicit in the chat-run trace timeline (it otherwise
+					// shows llmTurn:start → nothing until done/hard-stall). See vibeStallDiagnostics.
+					recordChatTrace('llmTurn:soft-stall', { kind, sec: kind === 'noFirstToken' ? firstTokenStallSeconds : midStreamStallSeconds, provider: modelSelection?.providerName, model: modelSelection?.modelName })
 					const msg = kind === 'noFirstToken'
 						? localize('agentStall.noFirstToken', 'Агент ждёт ответ модели (>{0}с). Модель может быть медленной, либо соединение зависло.', firstTokenStallSeconds)
 						: localize('agentStall.midStream', 'Стрим ответа модели приостановился (>{0}с без новых токенов). Модель могла зависнуть.', midStreamStallSeconds)
@@ -5516,6 +5600,11 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 					clearTimeout(hardStallTimer); hardStallTimer = undefined
 					clearStallNotification()
 
+					// Diagnostics: record the hard-stall in the chat-run trace (anyToken=false confirms a
+					// truly silent send-path hang vs a mid-stream freeze). See vibeStallDiagnostics.
+					recordChatTrace('llmTurn:hard-stall', { sec: hardStallSeconds, anyToken: firstTokenReceived, provider: modelSelection?.providerName, model: modelSelection?.modelName })
+					vibeLog.warn('chatThread', `[stall] hard-stall after ${hardStallSeconds}s, anyToken=${firstTokenReceived}, provider=${modelSelection?.providerName}, model=${modelSelection?.modelName}`)
+
 					// Single retry by design: a SECOND hard-stall right after a fresh attempt means
 					// the hang is systemic (payload/provider), not transient — surface it instead of
 					// burning another silent 120s window. Streak resets on any successful reply.
@@ -5531,7 +5620,13 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 						// Non-terminal clear: the turn is about to be re-sent — don't play a run-end sound.
 						this._suppressStopSound(threadId)
 						this._setStreamState(threadId, { isRunning: undefined })
-						const retryTimer = setTimeout(() => {
+						const retryTimer = setTimeout(async () => {
+							if (this.streamState[threadId]?.isRunning !== undefined) { return }
+							// Phase-3 durable fix: a silent stall on a cloud provider is most often a wedged
+							// shared undici keep-alive pool — reusing it would just stall again. Recreate the
+							// transport BEFORE the retry (the user's manual workaround was switching provider /
+							// restart, both of which got a fresh pool). Gated so it can be disabled.
+							await this._maybeResetTransportForStall(threadId, 'auto-retry')
 							if (this.streamState[threadId]?.isRunning === undefined) {
 								this._runChatAgent({ threadId, ...this._currentModelSelectionProps() })
 							}
@@ -5545,8 +5640,20 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 						error: {
 							message: localize('vibeide.chatThread.streamHardStall', 'Стрим завис — нет токенов уже {0}с. Провайдер может быть недоступен, перегружен или отклонил слишком большой запрос. Повторите попытку, переключите модель или сократите переписку.', String(hardStallSeconds)),
 							fullError: null,
+							// 'retry' marker so the terminal error renders a "Повторить запрос" button
+							// (retryStalledStream) — recovery without a window reload, since the StallBanner
+							// is gone once the stream is terminated here.
+							recoverable: 'retry',
 						},
 					})
+					// Diagnostic mode (armed by "Повторить с диагностикой"): auto-build the stall report so the
+					// user doesn't have to click after the second stall. One-shot — disarm after firing.
+					if (this._autoCollectStallDiagByThread.has(threadId)) {
+						this._autoCollectStallDiagByThread.delete(threadId)
+						// Literal (not imported) to avoid a circular import with vibeStallDiagnosticsAction,
+						// which imports IChatThreadService. Canonical id: VIBE_COLLECT_STALL_DIAGNOSTICS_ID.
+						void this._commandService.executeCommand('vibeide.chat.collectStallDiagnostics')
+					}
 				}
 				if (hardStallEnabled) hardStallTimer = setTimeout(onHardStall, hardStallSeconds * 1000)
 
@@ -5881,7 +5988,7 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 						// (onFinalMessage below). Type widened to include `recoverable`
 						// since the source `error` parameter (from LLMMessageService
 						// onError contract) doesn't expose that field.
-						type StreamError = { message: string; fullError: Error | null; recoverable?: 'dismissPlan' | 'forceReset' | 'switchModel' }
+						type StreamError = { message: string; fullError: Error | null; recoverable?: 'dismissPlan' | 'forceReset' | 'switchModel' | 'retry' }
 						let effectiveError: StreamError | undefined = error as StreamError | undefined
 						// Parse via shared helper — single source of truth with the four
 						// emission sites that build the message via `buildEmptyResponseError`.
@@ -5980,17 +6087,25 @@ Output ONLY the JSON, no other text. Start with { and end with }.`
 								const waitSec = Math.min(Math.max(retryAfterSec ?? 30, 5), waitMaxSec)
 								this._rateLimitAutoWaitStreak.set(threadId, streak + 1)
 								vibeLog.warn('chatThread', `Rate-limit auto-wait: resuming in ${waitSec}s (attempt ${streak + 1}/${waitMaxRetries}, threadId=${threadId}).`)
+								// Inline pauseInfo drives the visible countdown banner; the toast stays as an
+								// out-of-focus signal. resumeAtMs lets the UI tick down without extra state.
+								this._setStreamState(threadId, {
+									isRunning: undefined,
+									pauseInfo: { resumeAtMs: Date.now() + waitSec * 1000, attempt: streak + 1, maxAttempts: waitMaxRetries, reason: 'rateLimit' },
+								})
 								this._notificationService.notify({
 									severity: Severity.Info,
-									message: localize('vibeide.chatThread.rateLimitAutoWait', 'Минутный лимит провайдера — автопауза {0}с, затем продолжу автоматически (попытка {1} из {2}).', String(waitSec), String(streak + 1), String(waitMaxRetries)),
+									message: localize('vibeide.chatThread.rateLimitAutoWait', 'Провайдер взял паузу (лимит запросов) на {0}с — продолжу автоматически (попытка {1} из {2}).', String(waitSec), String(streak + 1), String(waitMaxRetries)),
 								})
-								this._setStreamState(threadId, { isRunning: undefined })
+								this._clearRateLimitResumeTimer(threadId)
 								const resumeTimer = setTimeout(() => {
+									this._rateLimitResumeTimers.delete(threadId)
 									// Resume only if the user hasn't already restarted the thread manually.
 									if (this.streamState[threadId]?.isRunning === undefined) {
 										this._runChatAgent({ threadId, ...this._currentModelSelectionProps() })
 									}
 								}, waitSec * 1000)
+								this._rateLimitResumeTimers.set(threadId, resumeTimer)
 								this._register(toDisposable(() => clearTimeout(resumeTimer)))
 								return
 							}
@@ -7815,6 +7930,10 @@ We only need to do it for files that were edited since `from`, ie files between 
 		const thread = this.state.allThreads[threadId]
 		if (!thread) return // should never happen
 
+		// A fresh submit supersedes any pending rate-limit auto-resume — cancel it so it can't
+		// fire a duplicate turn on top of this one.
+		this._clearRateLimitResumeTimer(threadId)
+
 		// Submit-level watchdog: start a safety timer covering the whole prep pipeline
 		// (file reads in chat_userMessageContent, search-mention resolution, PDF processing,
 		// router selection, prompt building) up to the moment the stream transitions to
@@ -8786,6 +8905,21 @@ We only need to do it for files that were edited since `from`, ie files between 
 		this._setThreadState(threadId, { pendingInjections: [] })
 		this._addMessageToThread(threadId, { role: 'user', content, displayContent: content, selections: [], images: [], pdfs: [], state: defaultMessageState })
 		vibeLog.warn('chatThreadService', `[inject] подмешан контекст к следующему хопу (${pending.length} заметок)`)
+	}
+
+	/** Run ended (genuine completion / «Продолжить» stall) but context the user queued mid-run never got
+	 *  drained — the agent finished before the next hop. Send it as a fresh turn instead of stranding it.
+	 *  Called from the _setStreamState transition funnel, which already excludes error / abort / awaiting-user. */
+	private _autoSendPendingInjectionsAsNewTurn(threadId: string): void {
+		if (this._configurationService.getValue<boolean>('vibeide.chat.autoSendPendingInjections') === false) { return }
+		const pending = this.state.allThreads[threadId]?.state.pendingInjections
+		if (!pending || pending.length === 0) { return }
+		const content = pending.join('\n\n')
+		this._setThreadState(threadId, { pendingInjections: [] }) // clear FIRST to avoid a re-entrant double-send
+		vibeLog.warn('chatThreadService', `[inject] ход завершён с непустым буфером — досылаю как новый ход (${pending.length} заметок)`)
+		// Deferred: we are inside the _setStreamState funnel; let the current state update settle before
+		// starting a new turn (which re-enters _setStreamState).
+		queueMicrotask(() => { void this._addUserMessageAndStreamResponse({ userMessage: content, threadId, displayContent: content }) })
 	}
 
 	private _addMessageToThread(threadId: string, message: ChatMessage) {

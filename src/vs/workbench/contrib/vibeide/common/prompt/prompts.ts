@@ -267,7 +267,8 @@ export const systemToolsXMLPrompt = (chatMode: ChatMode, mcpTools: InternalToolI
 
     Use the tool names exactly as shown in the Available tools list above. Use <uri> for file paths.
     For shell commands match the user's OS shown in <system_info> (PowerShell on Windows, bash on Linux/macOS),
-    and prefer <read_file> over reading files via shell.`)
+    and prefer <read_file> over reading files via shell, and <edit_file>/<rewrite_file> over editing or generating
+    files via shell (never node -e/redirects/here-strings for file contents, never throwaway script files).`)
 
 	return `\
     ${toolXMLDefinitions}

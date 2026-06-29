@@ -79,6 +79,138 @@ export class VibeideGlobalSettingsConfigurationContribution extends Disposable i
 			},
 		});
 
+		// Vibe Server — local preview server with live reload (roadmap VS.2).
+		registry.registerConfiguration({
+			id: 'vibeide.vibeServer',
+			title: localize('vibeide.vibeServer.title', 'VibeIDE — Vibe Server'),
+			type: 'object',
+			properties: {
+				'vibeide.vibeServer.port': {
+					type: 'number',
+					default: 5500,
+					minimum: 0,
+					maximum: 65535,
+					description: localize('vibeide.vibeServer.port.desc', 'Порт локального сервера предпросмотра. Если занят — берётся ближайший свободный выше. 0 — начать перебор с порта по умолчанию (5500).'),
+					scope: ConfigurationScope.RESOURCE,
+				},
+				'vibeide.vibeServer.host': {
+					type: 'string',
+					default: '127.0.0.1',
+					description: localize('vibeide.vibeServer.host.desc', 'Адрес привязки сервера. По умолчанию только локальная петля (127.0.0.1) — наружу в сеть сервер не виден.'),
+					scope: ConfigurationScope.RESOURCE,
+				},
+				'vibeide.vibeServer.root': {
+					type: 'string',
+					default: '',
+					description: localize('vibeide.vibeServer.root.desc', 'Корень раздачи относительно корня рабочей области. Пусто — корень рабочей области.'),
+					scope: ConfigurationScope.RESOURCE,
+				},
+				'vibeide.vibeServer.ignoreFiles': {
+					type: 'array',
+					items: { type: 'string' },
+					default: ['**/node_modules/**', '**/.git/**', '**/.vibe/**'],
+					description: localize('vibeide.vibeServer.ignoreFiles.desc', 'Glob-шаблоны, исключаемые из слежения за изменениями (не вызывают перезагрузку предпросмотра).'),
+					scope: ConfigurationScope.RESOURCE,
+				},
+				'vibeide.vibeServer.cssHotReload': {
+					type: 'boolean',
+					default: true,
+					description: localize('vibeide.vibeServer.cssHotReload.desc', 'Менять CSS без полной перезагрузки страницы (состояние и прокрутка сохраняются). При выключении любое изменение делает полную перезагрузку.'),
+					scope: ConfigurationScope.RESOURCE,
+				},
+				'vibeide.vibeServer.spaFallback': {
+					type: 'string',
+					default: '',
+					description: localize('vibeide.vibeServer.spaFallback.desc', 'Файл (относительно корня), отдаваемый для неизвестных путей — включает клиентский роутинг SPA (например, "index.html"). Пусто — отдавать 404.'),
+					scope: ConfigurationScope.RESOURCE,
+				},
+				'vibeide.vibeServer.previewTarget': {
+					type: 'string',
+					enum: ['embedded', 'external'],
+					enumDescriptions: [
+						localize('vibeide.vibeServer.previewTarget.embedded', 'Встроенный браузер внутри VibeIDE.'),
+						localize('vibeide.vibeServer.previewTarget.external', 'Внешний браузер по умолчанию.'),
+					],
+					default: 'embedded',
+					description: localize('vibeide.vibeServer.previewTarget.desc', 'Где открывать предпросмотр по умолчанию.'),
+					scope: ConfigurationScope.RESOURCE,
+				},
+				'vibeide.vibeServer.openAutomatically': {
+					type: 'boolean',
+					default: true,
+					description: localize('vibeide.vibeServer.openAutomatically.desc', 'Открывать предпросмотр сразу после запуска сервера.'),
+					scope: ConfigurationScope.RESOURCE,
+				},
+				'vibeide.vibeServer.showOnStatusbar': {
+					type: 'boolean',
+					default: true,
+					description: localize('vibeide.vibeServer.showOnStatusbar.desc', 'Показывать состояние Vibe Server в строке состояния.'),
+					scope: ConfigurationScope.RESOURCE,
+				},
+				'vibeide.vibeServer.reloadDebounceMs': {
+					type: 'number',
+					default: 100,
+					minimum: 0,
+					maximum: 5000,
+					description: localize('vibeide.vibeServer.reloadDebounceMs.desc', 'Окно подавления дребезга (мс): несколько изменений за это время объединяются в одну перезагрузку.'),
+					scope: ConfigurationScope.RESOURCE,
+				},
+				'vibeide.vibeServer.autoNavigate': {
+					type: 'boolean',
+					default: false,
+					description: localize('vibeide.vibeServer.autoNavigate.desc', 'Во встроенном браузере автоматически переходить на HTML-файл, который открыт в активном редакторе.'),
+					scope: ConfigurationScope.RESOURCE,
+				},
+				'vibeide.vibeServer.runtime': {
+					type: 'string',
+					enum: ['auto', 'static', 'devServer', 'docker'],
+					enumDescriptions: [
+						localize('vibeide.vibeServer.runtime.auto', 'Автоопределение: при наличии скрипта dev/start/serve в package.json — dev-сервер фреймворка, иначе статический сервер. Docker никогда не поднимается автоматически.'),
+						localize('vibeide.vibeServer.runtime.static', 'Всегда статический сервер (HTML/CSS/JS).'),
+						localize('vibeide.vibeServer.runtime.devServer', 'Всегда dev-сервер фреймворка (Vite/Next/CRA/Angular).'),
+						localize('vibeide.vibeServer.runtime.docker', 'Всегда Docker-окружение (docker-compose.yml / Dockerfile).'),
+					],
+					default: 'auto',
+					description: localize('vibeide.vibeServer.runtime.desc', 'Чем обслуживать проект для предпросмотра.'),
+					scope: ConfigurationScope.RESOURCE,
+				},
+				'vibeide.vibeServer.dockerStartTimeoutMs': {
+					type: 'number',
+					default: 120000,
+					minimum: 10000,
+					maximum: 1200000,
+					description: localize('vibeide.vibeServer.dockerStartTimeoutMs.desc', 'Сколько ждать (мс) готовности порта контейнера после поднятия окружения.'),
+					scope: ConfigurationScope.RESOURCE,
+				},
+				'vibeide.vibeServer.scrollSync': {
+					type: 'boolean',
+					default: false,
+					description: localize('vibeide.vibeServer.scrollSync.desc', 'Синхронизировать прокрутку между несколькими вкладками встроенного превью.'),
+					scope: ConfigurationScope.RESOURCE,
+				},
+				'vibeide.vibeServer.https': {
+					type: 'boolean',
+					default: false,
+					description: localize('vibeide.vibeServer.https.desc', 'Раздавать статический сервер по HTTPS с самоподписанным сертификатом (для secure-context: service workers, geolocation). Браузер покажет предупреждение о недоверенном сертификате.'),
+					scope: ConfigurationScope.RESOURCE,
+				},
+				'vibeide.vibeServer.devScript': {
+					type: 'string',
+					default: '',
+					description: localize('vibeide.vibeServer.devScript.desc', 'Имя npm-скрипта для запуска dev-сервера. Пусто — автоопределение (dev → start → serve).'),
+					scope: ConfigurationScope.RESOURCE,
+				},
+				'vibeide.vibeServer.devServerStartTimeoutMs': {
+					type: 'number',
+					default: 60000,
+					minimum: 5000,
+					maximum: 600000,
+					description: localize('vibeide.vibeServer.devServerStartTimeoutMs.desc', 'Сколько ждать (мс) URL от dev-сервера, прежде чем считать запуск неудачным.'),
+					scope: ConfigurationScope.RESOURCE,
+				},
+			},
+		});
+
 		// `vibeide.modelQuirks.*` — catalog of per-model behaviour overrides
 		// (temperature/topP/topK, reasoning placeholder enforcement, tool-call format).
 		// Catalog source: `resources/model-quirks.json` shipped with the IDE + CDN refresh
@@ -610,6 +742,18 @@ export class VibeideGlobalSettingsConfigurationContribution extends Disposable i
 					type: 'boolean',
 					default: true,
 					description: localize('vibeide.chat.hardStallAutoRetry', 'Авто-повтор хода после hard-stall: если стрим завис (нет токенов дольше `streamHardStallSeconds`), автоматически отправить тот же ход заново ОДИН раз вместо остановки с ошибкой. Наблюдаемый паттерн Zen: большие запросы (40–90k токенов) изредка держатся без единого байта, свежая попытка обычно проходит. Второй stall подряд — ошибка как раньше (зависание системное). Счётчик сбрасывается на успешном ответе.'),
+					scope: ConfigurationScope.APPLICATION,
+				},
+				'vibeide.chat.hardStallAutoResetTransport': {
+					type: 'boolean',
+					default: true,
+					description: localize('vibeide.chat.hardStallAutoResetTransport', 'Пересоздавать сетевой транспорт перед повтором при зависании стрима. «Тихий» стоп облачного провайдера (запрос ушёл, токенов нет, ошибок нет, биллинг не стартовал) — обычно заклинивший общий keep-alive пул undici; ручной обход был «сменить провайдера / перезапустить IDE», оба дают свежий пул. При включённом флаге авто-повтор и кнопка «Повторить запрос» сначала сбрасывают кэши клиентов и пересоздают пул. Выключите, если хотите повторять на том же соединении.'),
+					scope: ConfigurationScope.APPLICATION,
+				},
+				'vibeide.chat.autoSendPendingInjections': {
+					type: 'boolean',
+					default: true,
+					description: localize('vibeide.chat.autoSendPendingInjections', 'Авто-досыл подмешанного контекста: если, пока агент работал, вы по Enter поставили текст в очередь (полоска над полем ввода), но ход завершился раньше, чем очередь успела подмешаться, — отправить накопленное автоматически новым ходом вместо того, чтобы оставить его висеть. Срабатывает только на штатном завершении (выполнено / остановка с «Продолжить»); при ошибке, прерывании или ожидании ответа пользователя очередь не трогается. Выключите, если хотите досылать очередь вручную.'),
 					scope: ConfigurationScope.APPLICATION,
 				},
 				'vibeide.chat.rateLimitAutoWaitMaxSeconds': {
