@@ -104,6 +104,7 @@
 | [nightly-roadmap.md](git-and-tools/nightly-roadmap.md) | Cursor rule + skill ночного прогона |
 | [bin-scripts.md](git-and-tools/bin-scripts.md) | Каталог `bin/` и `scripts/` |
 | [support-discord.md](git-and-tools/support-discord.md) | Discord → roadmap |
+| [precommit-hygiene.md](git-and-tools/precommit-hygiene.md) | `tsx`-раннер hygiene/eslint, фильтры Unicode/indentation для vibeide, lint-staged без eslint, `--no-verify` на больших коммитах |
 
 ### [runtime-quirks/](runtime-quirks/) — runtime-ловушки
 
