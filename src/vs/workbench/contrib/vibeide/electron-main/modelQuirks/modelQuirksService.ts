@@ -34,6 +34,7 @@ import {
 	validateCatalog,
 } from '../../common/modelQuirks/modelQuirksTypes.js';
 import { loadBundledCatalog } from '../../common/modelQuirks/bundledCatalog.js';
+import { exeAdjacentFilePath } from '../../common/vibeUserDataPaths.js';
 
 const DEFAULT_CDN_URL = 'https://raw.githubusercontent.com/VibeBrains/VibeIDE/main/resources/model-quirks.json';
 const CACHE_FILENAME = 'model-quirks-cache.json';
@@ -134,8 +135,7 @@ const EXE_ADJACENT_FILENAME = 'model-quirks.json';
 /** Path of the user-dropped override next to the executable (max priority). */
 function exeAdjacentPath(): string | null {
 	try {
-		const dir = path.dirname(process.execPath);
-		return dir ? path.join(dir, EXE_ADJACENT_FILENAME) : null;
+		return exeAdjacentFilePath(process.execPath, EXE_ADJACENT_FILENAME);
 	} catch {
 		return null;
 	}

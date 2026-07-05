@@ -42,6 +42,7 @@ import { fetch as undiciFetch } from 'undici';
 import * as fs from 'fs';
 import * as path from '../../../../../base/common/path.js';
 import { LOCAL_SNAPSHOT_FILENAME, MODELS_DEV_URL } from '../../common/modelsDevCatalogConstants.js';
+import { resolveVibeUserDataPath, snapshotCandidatePaths, SnapshotCandidate } from '../../common/vibeUserDataPaths.js';
 
 const FETCH_TIMEOUT_MS = 10_000;
 // Disk-cache TTL for the userData snapshot. Within this window we serve from
@@ -149,22 +150,9 @@ const persistSnapshotToUserData = async (rawText: string): Promise<void> => {
 	} catch { /* best-effort, ignore */ }
 };
 
-// Mirror of telemetryStorage.ts userData resolution — keeps modelsDevCatalog a
-// dependency-free module without pulling in IEnvironmentMainService DI.
-const resolveUserDataDir = (): string | null => {
-	const envOverride = process.env.VSCODE_USER_DATA_PATH;
-	if (envOverride) { return envOverride; }
-	if (process.platform === 'darwin' && process.env.HOME) {
-		return path.join(process.env.HOME, 'Library', 'Application Support', 'VibeIDE');
-	}
-	if (process.platform === 'win32' && process.env.APPDATA) {
-		return path.join(process.env.APPDATA, 'VibeIDE');
-	}
-	if (process.env.HOME) {
-		return path.join(process.env.HOME, '.config', 'VibeIDE');
-	}
-	return null;
-};
+// Shared single-source resolution (also used by telemetryStorage) — env comes from
+// `process` here; the helper stays pure and DI-free.
+const resolveUserDataDir = (): string | null => resolveVibeUserDataPath(process.env, process.platform);
 
 /**
  * Snapshot candidate priority (user policy: "drop next to exe"):
@@ -179,21 +167,17 @@ const resolveUserDataDir = (): string | null => {
  * not the primary path — which used to confuse corporate users who saw a
  * "loaded from Roaming/..." message and didn't know what that file was.
  */
-const localSnapshotCandidates = (): { path: string; source: 'exeDir' | 'bundled' | 'userData' }[] => {
-	const out: { path: string; source: 'exeDir' | 'bundled' | 'userData' }[] = [];
-	try {
-		const exeDir = path.dirname(process.execPath);
-		if (exeDir) { out.push({ path: path.join(exeDir, LOCAL_SNAPSHOT_FILENAME), source: 'exeDir' }); }
-	} catch { /* process.execPath unavailable — skip */ }
+const localSnapshotCandidates = (): SnapshotCandidate[] => {
 	// `resourcesPath` is injected by Electron and absent from the Node `process` typings.
 	const resourcesPath: unknown = (process as NodeJS.Process & { resourcesPath?: unknown }).resourcesPath;
-	if (typeof resourcesPath === 'string' && resourcesPath) {
-		out.push({ path: path.join(resourcesPath, 'app', 'resources', 'vibeide', LOCAL_SNAPSHOT_FILENAME), source: 'bundled' });
-		out.push({ path: path.join(resourcesPath, 'vibeide', LOCAL_SNAPSHOT_FILENAME), source: 'bundled' });
-	}
-	const userData = resolveUserDataDir();
-	if (userData) { out.push({ path: path.join(userData, LOCAL_SNAPSHOT_FILENAME), source: 'userData' }); }
-	return out;
+	let execPath: string | undefined;
+	try { execPath = process.execPath; } catch { /* unavailable — skip the exeDir tier */ }
+	return snapshotCandidatePaths({
+		filename: LOCAL_SNAPSHOT_FILENAME,
+		execPath,
+		resourcesPath: typeof resourcesPath === 'string' && resourcesPath ? resourcesPath : undefined,
+		userDataDir: resolveUserDataDir(),
+	});
 };
 
 const tryReadLocalSnapshot = async (): Promise<{ catalog: CatalogIndex; from: string; source: 'exeDir' | 'bundled' | 'userData' } | null> => {

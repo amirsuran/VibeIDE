@@ -5,6 +5,7 @@
 
 
 import { vibeLog } from '../vibeLog.js';
+import { resolveVibeUserDataPath } from '../vibeUserDataPaths.js';
 import { TelemetryEvent, RoutingDecisionEvent, AnyTelemetryEvent, TelemetryQuery } from './telemetryTypes.js';
 
 // Node builtins are loaded lazily via require() because this module lives in the
@@ -38,17 +39,13 @@ export class TelemetryStorageService {
 			// Browser context - will need alternative storage
 			fsModule = null;
 		}
-		this.fs = fsModule;
 
-		// Get storage directory from environment or use default
-		const userDataPath = process.env.VSCODE_USER_DATA_PATH ||
-			(process.platform === 'darwin'
-				? path.join(process.env.HOME || '', 'Library', 'Application Support', 'VibeIDE')
-				: process.platform === 'win32'
-					? path.join(process.env.APPDATA || '', 'VibeIDE')
-					: path.join(process.env.HOME || '', '.config', 'VibeIDE'));
-
-		this.storageDir = path.join(userDataPath, 'telemetry');
+		// Storage directory from environment or platform default (shared resolution with
+		// modelsDevCatalog). Unresolvable (HOME/APPDATA unset) → disable disk storage the
+		// same way as browser context, instead of writing to a bogus relative path.
+		const userDataPath = resolveVibeUserDataPath(process.env, process.platform);
+		this.fs = userDataPath ? fsModule : null;
+		this.storageDir = userDataPath ? path.join(userDataPath, 'telemetry') : '';
 		this._ensureStorageDir();
 	}
 
