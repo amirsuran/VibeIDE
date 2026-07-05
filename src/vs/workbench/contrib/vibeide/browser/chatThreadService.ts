@@ -64,6 +64,7 @@ import { suggestAlternateTool as suggestAlternateToolPure } from '../common/tool
 import { IEditRiskScoringService, EditContext, EditRiskScore } from '../common/editRiskScoringService.js';
 import { IModelService } from '../../../../editor/common/services/model.js';
 import { TextEdit } from '../../../../editor/common/core/edits/textEdit.js';
+import { toAction } from '../../../../base/common/actions.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { localize } from '../../../../nls.js';
 import { QueryMetrics } from './repoIndexerService.js';
@@ -794,6 +795,43 @@ class ChatThreadService extends Disposable implements IChatThreadService {
 
 	isProviderDegraded(providerName: string, modelName: string): boolean {
 		return this._modelHealthTracker.isDegraded(providerName, modelName);
+	}
+
+	/**
+	 * Durable half of «Починить связь»: when transport-kind failures hit ≥2 DISTINCT
+	 * providers in one window (one flaky route can't explain that — a wedged shared
+	 * dispatcher or stale client caches can), resets the LLM transport automatically,
+	 * exactly like the status-bar wrench. Config-gated; the tracker's cooldown keeps
+	 * it to one reset per window. Fire-and-forget from the error path.
+	 */
+	private _maybeAutoResetTransport(): void {
+		if (this._configurationService.getValue<boolean>('vibeide.llm.autoResetTransport') === false) {
+			return;
+		}
+		if (!this._modelHealthTracker.shouldAutoResetTransport()) {
+			return;
+		}
+		void (async () => {
+			try {
+				await this._llmMessageService.resetProviderClients();
+			} catch (err) {
+				vibeLog.error('chatThread', '[autoResetTransport] reset failed', err);
+				return;
+			}
+			vibeLog.warn('chatThread', '[autoResetTransport] transport-kind failures on 2+ providers in one window — LLM client caches cleared and dispatcher recreated automatically.');
+			this._metricsService.capture('Auto Reset Transport', {});
+			this._notificationService.notify({
+				severity: Severity.Warning,
+				message: localize('vibeide.chatThread.autoResetTransport', "Сбои сразу у нескольких провайдеров — сетевой транспорт LLM пересоздан автоматически (кэши клиентов очищены, соединение переустановлено). Следующий запрос пойдёт по свежему соединению."),
+				actions: {
+					primary: [toAction({
+						id: 'vibeide.chatThread.autoResetTransport.check',
+						label: localize('vibeide.chatThread.autoResetTransport.checkLabel', "Проверка провайдеров"),
+						run: () => this._commandService.executeCommand('vibeide.commands.checkProviders'),
+					})],
+				},
+			});
+		})();
 	}
 
 	// Submit-level watchdog: started in _addUserMessageAndStreamResponse, cleared in
@@ -6255,6 +6293,12 @@ Output ONLY the JSON, no other text. Start with { and end with }.`;
 								threshold: HEALTH_FAILURE_THRESHOLD,
 							});
 							vibeLog.warn('chatThread', `Model health degraded: ${healthMatch.providerName}/${healthMatch.modelName} (${count} failures in ${windowMin} min).`);
+						}
+
+						// Transport-kind failures only (empty-response / provider-error): probe the
+						// cross-provider "shared transport wedged" signature and self-heal if it fires.
+						if (emptyMatch || providerErrKind) {
+							this._maybeAutoResetTransport();
 						}
 
 						// Translate well-known RAW provider error texts to Russian (deterministic

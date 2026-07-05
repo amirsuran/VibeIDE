@@ -61,6 +61,22 @@ export const HEALTH_FAILURE_THRESHOLD = 3;
 /** Don't re-recommend the same combo within this window after the last recommendation. */
 export const SUPPRESSION_WINDOW_MS = 5 * 60 * 1000;
 
+/**
+ * Failure kinds that can be caused by the SHARED transport (wedged undici keep-alive pool,
+ * stale client caches) rather than one model/route misbehaving. `context-overflow` and
+ * `invalid-params` are model-level by definition and never implicate the transport.
+ */
+const TRANSPORT_FAILURE_KINDS: ReadonlySet<FailureKind> = new Set(['empty-response', 'provider-error']);
+
+/** Distinct providers that must be failing simultaneously to suspect the shared transport. */
+export const TRANSPORT_RESET_MIN_PROVIDERS = 2;
+
+/** Transport-kind failures per provider (within the window) to count it as failing. */
+export const TRANSPORT_RESET_MIN_FAILURES_PER_PROVIDER = 2;
+
+/** Don't auto-reset the transport again within this window after the last reset. */
+export const TRANSPORT_RESET_COOLDOWN_MS = 10 * 60 * 1000;
+
 interface FailureRecord {
 	timestamp: number;
 	kind: FailureKind;
@@ -78,6 +94,7 @@ interface CombinedState {
  */
 export class ModelHealthTracker {
 	private readonly _state = new Map<string, CombinedState>();
+	private _lastTransportResetAt: number | undefined;
 
 	private static key(providerName: string, modelName: string): string {
 		return `${providerName}:${modelName}`;
@@ -144,8 +161,43 @@ export class ModelHealthTracker {
 		return this.getFailureCount(providerName, modelName, now) >= HEALTH_FAILURE_THRESHOLD;
 	}
 
+	/**
+	 * Detects the "shared transport is wedged" signature: transport-kind failures
+	 * ({@link TRANSPORT_FAILURE_KINDS}) on at least {@link TRANSPORT_RESET_MIN_PROVIDERS}
+	 * DISTINCT providers within the rolling window — one flaky model/route cannot explain
+	 * that, but a stuck shared undici pool or stale client caches can. Returns true at most
+	 * once per {@link TRANSPORT_RESET_COOLDOWN_MS}; the caller is expected to reset the
+	 * transport when it does (the tracker itself owns no I/O).
+	 */
+	shouldAutoResetTransport(now: number = Date.now()): boolean {
+		if (this._lastTransportResetAt !== undefined && now - this._lastTransportResetAt < TRANSPORT_RESET_COOLDOWN_MS) {
+			return false;
+		}
+		const cutoff = now - HEALTH_WINDOW_MS;
+		const transportFailuresByProvider = new Map<string, number>();
+		for (const [key, state] of this._state) {
+			const count = state.failures.filter(f => f.timestamp >= cutoff && TRANSPORT_FAILURE_KINDS.has(f.kind)).length;
+			if (count > 0) {
+				const providerName = key.slice(0, key.indexOf(':'));
+				transportFailuresByProvider.set(providerName, (transportFailuresByProvider.get(providerName) ?? 0) + count);
+			}
+		}
+		let failingProviders = 0;
+		for (const count of transportFailuresByProvider.values()) {
+			if (count >= TRANSPORT_RESET_MIN_FAILURES_PER_PROVIDER) {
+				failingProviders++;
+			}
+		}
+		if (failingProviders < TRANSPORT_RESET_MIN_PROVIDERS) {
+			return false;
+		}
+		this._lastTransportResetAt = now;
+		return true;
+	}
+
 	/** Test-only — wipe all state. */
 	clear(): void {
 		this._state.clear();
+		this._lastTransportResetAt = undefined;
 	}
 }

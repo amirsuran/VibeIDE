@@ -22,6 +22,7 @@ import { getSendableReasoningInfo, getModelCapabilities, getProviderCapabilities
 import { extractReasoningWrapper, extractXMLToolsWrapper } from './extractGrammar.js';
 import { availableTools, InternalToolInfo } from '../../common/prompt/prompts.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';
+import { hash } from '../../../../../base/common/hash.js';
 import { ensureSystemCADispatcher, resetSystemCADispatcher } from './systemCAFetch.js';
 import { sendViaAISdk } from './aiSdkAdapter.js';
 import { getGoogleApiKey, assertHttpHeaderSafe } from './llmHelpers.js';
@@ -49,34 +50,16 @@ const openAIClientCache = new Map<string, OpenAI>();
 const ollamaClientCache = new Map<string, Ollama>();
 
 /**
- * Simple hash function for API keys (for cache key generation).
- * Only used for local providers where security is less critical.
- */
-const hashApiKey = (apiKey: string | undefined): string => {
-	if (!apiKey) { return 'noop'; }
-	// Simple hash - just use first 8 chars for cache key (not for security)
-	return apiKey.substring(0, 8);
-};
-
-
-/**
  * Build cache key for OpenAI-compatible client.
- * Format: `${providerName}:${endpoint}:${apiKeyHash}`
+ * Format: `${providerName}:${hash(providerSettings)}` — hashing the WHOLE provider settings
+ * object (endpoint, apiKey, custom headers, everything the client constructor consumes) so
+ * ANY config change produces a new key. The previous endpoint+key-prefix key went stale on
+ * header edits in `.vibe/providers.json` ("no tokens until restart", provider-diagnostics.md).
+ * Stale entries are left behind until the next reset/restart — a handful of idle SDK objects,
+ * not a leak worth an eviction scheme.
  */
 const buildOpenAICacheKey = (providerName: ProviderName, settingsOfProvider: SettingsOfProvider): string => {
-	let endpoint = '';
-	let apiKey = 'noop';
-
-	if (providerName === 'openAI') {
-		apiKey = settingsOfProvider[providerName]?.apiKey || '';
-	} else if (providerName === 'ollama' || providerName === 'vLLM' || providerName === 'lmStudio') {
-		endpoint = settingsOfProvider[providerName]?.endpoint || '';
-	} else if (providerName === 'openAICompatible' || providerName === 'liteLLM' || providerName === 'lmRoute') {
-		endpoint = settingsOfProvider[providerName]?.endpoint || '';
-		apiKey = settingsOfProvider[providerName]?.apiKey || '';
-	}
-
-	return `${providerName}:${endpoint}:${hashApiKey(apiKey)}`;
+	return `${providerName}:${hash(JSON.stringify(settingsOfProvider[providerName] ?? null))}`;
 };
 
 /**

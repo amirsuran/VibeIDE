@@ -10,6 +10,7 @@ import {
 	HEALTH_WINDOW_MS,
 	HEALTH_FAILURE_THRESHOLD,
 	SUPPRESSION_WINDOW_MS,
+	TRANSPORT_RESET_COOLDOWN_MS,
 } from '../../common/modelHealthTracker.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 
@@ -156,5 +157,57 @@ suite('ModelHealthTracker — failure kinds tracked together', () => {
 		t.recordFailure('p', 'm', 'invalid-params', T0 + 2000);
 		assert.strictEqual(t.getFailureCount('p', 'm', T0 + 3000), 3);
 		assert.strictEqual(t.shouldNotify('p', 'm', T0 + 3000), true);
+	});
+});
+
+suite('ModelHealthTracker — transport auto-reset signature', () => {
+
+	ensureNoDisposablesAreLeakedInTestSuite();
+
+	test('two providers with transport-kind failures → reset once, then cooldown', () => {
+		const t = new ModelHealthTracker();
+		t.recordFailure('openAI', 'gpt-5', 'empty-response', T0);
+		t.recordFailure('openAI', 'gpt-5', 'provider-error', T0 + 1000);
+		t.recordFailure('anthropic', 'claude', 'empty-response', T0 + 2000);
+		t.recordFailure('anthropic', 'claude', 'empty-response', T0 + 3000);
+		assert.deepStrictEqual(
+			[
+				t.shouldAutoResetTransport(T0 + 4000),                                  // signature met
+				t.shouldAutoResetTransport(T0 + 5000),                                  // cooldown suppresses
+				t.shouldAutoResetTransport(T0 + 4000 + TRANSPORT_RESET_COOLDOWN_MS),    // cooldown elapsed, but the old failures left the rolling window → no re-fire
+			],
+			[true, false, false],
+		);
+	});
+
+	test('one provider alone never implicates the transport, however many failures', () => {
+		const t = new ModelHealthTracker();
+		for (let i = 0; i < 10; i++) {
+			t.recordFailure('openAI', 'gpt-5', 'empty-response', T0 + i * 1000);
+		}
+		assert.strictEqual(t.shouldAutoResetTransport(T0 + 20_000), false);
+	});
+
+	test('model-level kinds (context-overflow / invalid-params) do not count', () => {
+		const t = new ModelHealthTracker();
+		t.recordFailure('openAI', 'gpt-5', 'context-overflow', T0);
+		t.recordFailure('openAI', 'gpt-5', 'invalid-params', T0 + 1000);
+		t.recordFailure('anthropic', 'claude', 'context-overflow', T0 + 2000);
+		t.recordFailure('anthropic', 'claude', 'invalid-params', T0 + 3000);
+		assert.strictEqual(t.shouldAutoResetTransport(T0 + 4000), false);
+	});
+
+	test('failures outside the rolling window are ignored; models aggregate per provider', () => {
+		const t = new ModelHealthTracker();
+		// Stale pair on provider A (outside window at check time).
+		t.recordFailure('openAI', 'gpt-5', 'empty-response', T0);
+		t.recordFailure('openAI', 'gpt-5', 'empty-response', T0 + 1000);
+		// Fresh pairs: provider B via TWO different models (must aggregate), provider C.
+		const late = T0 + HEALTH_WINDOW_MS + 60_000;
+		t.recordFailure('openCodeGo', 'minimax-m2.7', 'provider-error', late);
+		t.recordFailure('openCodeGo', 'kimi-k2.6', 'provider-error', late + 1000);
+		t.recordFailure('anthropic', 'claude', 'empty-response', late + 2000);
+		t.recordFailure('anthropic', 'claude', 'empty-response', late + 3000);
+		assert.strictEqual(t.shouldAutoResetTransport(late + 4000), true);
 	});
 });

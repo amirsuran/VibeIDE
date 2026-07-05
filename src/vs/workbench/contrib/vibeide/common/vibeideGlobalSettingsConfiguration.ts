@@ -536,6 +536,12 @@ export class VibeideGlobalSettingsConfigurationContribution extends Disposable i
 					description: localize('vibeide.llm.repairBrokenToolCalls', 'Авто-починка битых XML tool-call\'ов: если модель прислала tool-call в некорректном/обрезанном XML (частая проблема deepseek/minimax через aggregator), агент вливает корректирующий ход и даёт модели переотправить вызов в каноне (1 попытка на ход), вместо того чтобы «заткнуться». **Режим отладки совместимости** — добавляет доп. обращение к модели (медленнее) на битых ходах. ON по умолчанию; выключите, если важнее предсказуемая скорость/стоимость.'),
 					scope: ConfigurationScope.APPLICATION,
 				},
+				'vibeide.llm.autoResetTransport': {
+					type: 'boolean',
+					default: true,
+					description: localize('vibeide.llm.autoResetTransport', 'Автоматически пересоздавать сетевой транспорт LLM (кэши клиентов + общее соединение), когда сетевые сбои идут сразу у двух и более провайдеров в одном окне — сигнатура «залипшего» общего пула соединений, которую один провайдер объяснить не может. То же действие, что кнопка «Починить связь с провайдерами», но без участия пользователя; не чаще одного раза в 10 минут. При выключении остаётся ручная кнопка в статус-баре.'),
+					scope: ConfigurationScope.APPLICATION,
+				},
 				'vibeide.llm.timeoutMs.local': {
 					type: 'integer',
 					minimum: 1000,
