@@ -1576,7 +1576,8 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 
 		// Create cache key from relevant factors. modelFamily is folded in so that
 		// future family-specific prompt branches don't bleed across providers.
-		const cacheKey = `${chatMode}|${specialToolFormat}|${providerName ?? ''}|${modelName ?? ''}|${workspaceFolders.join(',')}|${openedURIs.join(',')}|${activeURI || ''}|pj:${preferJsonToolArguments}`;
+		const minimalismMode = this.vibeideSettingsService.state.globalSettings.minimalismMode ?? 'lite';
+		const cacheKey = `${chatMode}|${specialToolFormat}|${providerName ?? ''}|${modelName ?? ''}|${workspaceFolders.join(',')}|${openedURIs.join(',')}|${activeURI || ''}|pj:${preferJsonToolArguments}|min:${minimalismMode}`;
 
 		// Check cache
 		const cached = this._systemMessageCache.get(cacheKey);
@@ -1634,7 +1635,7 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 			}
 		}
 
-		const systemMessage = chat_systemMessage({ workspaceFolders, openedURIs, directoryStr, activeURI, persistentTerminalIDs, chatMode, mcpTools, includeXMLToolDefinitions, relevantMemories, strictJsonToolArguments: preferJsonToolArguments, modelFamily });
+		const systemMessage = chat_systemMessage({ workspaceFolders, openedURIs, directoryStr, activeURI, persistentTerminalIDs, chatMode, mcpTools, includeXMLToolDefinitions, relevantMemories, strictJsonToolArguments: preferJsonToolArguments, minimalismMode, modelFamily });
 
 		// Cache the result
 		this._systemMessageCache.set(cacheKey, { message: systemMessage, timestamp: now });
@@ -1951,7 +1952,7 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 				}
 			}
 
-			systemMessage = chat_systemMessage_local({ workspaceFolders, openedURIs, directoryStr, activeURI, persistentTerminalIDs, chatMode, mcpTools, includeXMLToolDefinitions, relevantMemories, strictJsonToolArguments: preferJsonToolArguments, modelFamily });
+			systemMessage = chat_systemMessage_local({ workspaceFolders, openedURIs, directoryStr, activeURI, persistentTerminalIDs, chatMode, mcpTools, includeXMLToolDefinitions, relevantMemories, strictJsonToolArguments: preferJsonToolArguments, minimalismMode: this.vibeideSettingsService.state.globalSettings.minimalismMode ?? 'lite', modelFamily });
 		} else {
 			// Use full system message for cloud models
 			systemMessage = await this._generateChatMessagesSystemMessage(chatMode, specialToolFormat, validProviderName, modelName);

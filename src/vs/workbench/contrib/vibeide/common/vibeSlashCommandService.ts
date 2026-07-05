@@ -84,11 +84,20 @@ const BUILTIN_COMMANDS: SlashCommand[] = [
 		category: 'builtin',
 		execute: (args) => `Add clear documentation and comments to ${args || 'this code'}. Use the appropriate doc format (JSDoc, docstring, etc.).`,
 	},
+	{
+		name: 'simplify',
+		description: localize('vibeide.slash.simplify.desc', 'Ревью диффа на оверинжиниринг: делит-лист'),
+		category: 'builtin',
+		execute: (args) => `Review ${args || 'the current git diff'} for over-engineering. ${args ? '' : 'First run \`git diff HEAD\` via run_command (fall back to \`git diff\` / \`git show HEAD\` if empty) to get the changes. '}\
+Walk the minimalism ladder over every addition: does it need to exist at all (YAGNI); does the codebase, stdlib, platform, or an installed dependency already do it; could it be smaller.
+Return a DELETE-LIST: for each finding — file:line, what to delete or simplify, why, and the estimated lines saved. Order by lines saved, largest first. Do NOT change any files — this is a review.
+Skip findings that would trim validation, error handling, security, or accessibility. If the diff is already minimal, say so briefly instead of inventing findings.`,
+	},
 ];
 
 /**
  * VibeIDE Slash Commands Service.
- * Built-in: /fix, /tests, /explain, /refactor, /review, /docs
+ * Built-in: /fix, /tests, /explain, /refactor, /review, /docs, /simplify
  * User prompts: /my:template-name
  * Workflows: /workflow:name
  * Agent skills: /skill:skill-id (from .vibe/skills/.../SKILL.md)

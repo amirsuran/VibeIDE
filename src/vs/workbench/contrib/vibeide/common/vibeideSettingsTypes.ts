@@ -551,6 +551,14 @@ export const isFeatureNameDisabled = (featureName: FeatureName, settingsState: V
 
 export type ChatMode = 'agent' | 'gather' | 'normal' | 'plan';
 
+/**
+ * Code-minimalism discipline injected into the agent system prompt.
+ * 'off' — no discipline block; 'lite' — reuse-first + YAGNI reminder;
+ * 'full' — the complete minimalism ladder + vibe-later markers;
+ * 'ultra' — full ladder + smallest-reviewable-diff pressure.
+ */
+export type MinimalismMode = 'off' | 'lite' | 'full' | 'ultra';
+
 
 export type GlobalSettings = {
 	autoRefreshModels: boolean;
@@ -614,6 +622,8 @@ export type GlobalSettings = {
 	createVibeReadmeOnWorkspaceInit: boolean;
 	/** When true, render date/time under each chat message and next to checkpoints. Single switch for all chat timestamps. */
 	showChatTimestamps: boolean;
+	/** Mirrors `vibeide.global.minimalismMode` (VS Code config is the source of truth, like localFirstAI). */
+	minimalismMode: MinimalismMode;
 };
 
 export const defaultGlobalSettings: GlobalSettings = {
@@ -673,6 +683,7 @@ export const defaultGlobalSettings: GlobalSettings = {
 	chatAgentAutopilot: true, // ON by default (paired with iterations counter defaulting to 0/∞); explicit user choice is persisted and wins
 	createVibeReadmeOnWorkspaceInit: true,
 	showChatTimestamps: true,
+	minimalismMode: 'lite', // Gentle reuse-first discipline by default; 'full'/'ultra' are explicit opt-ins
 };
 
 export type GlobalSettingName = keyof GlobalSettings;

@@ -15,7 +15,7 @@ import { IConfigurationService } from '../../../../platform/configuration/common
 import { IMetricsService } from './metricsService.js';
 import { defaultProviderSettings, getModelCapabilities, ModelOverrides, VibeideStaticModelInfo } from './modelCapabilities.js';
 import { VOID_SETTINGS_STORAGE_KEY } from './storageKeys.js';
-import { autoModelFallbackProviderOrder, defaultSettingsOfProvider, FeatureName, ProviderName, ModelSelectionOfFeature, SettingsOfProvider, SettingName, providerNames, ModelSelection, modelSelectionsEqual, featureNames, VibeideStatefulModelInfo, GlobalSettings, GlobalSettingName, defaultGlobalSettings, ModelSelectionOptions, OptionsOfModelSelection, ChatMode, OverridesOfModel, defaultOverridesOfModel, MCPUserStateOfName as MCPUserStateOfName, MCPUserState } from './vibeideSettingsTypes.js';
+import { autoModelFallbackProviderOrder, defaultSettingsOfProvider, FeatureName, ProviderName, ModelSelectionOfFeature, SettingsOfProvider, SettingName, providerNames, ModelSelection, modelSelectionsEqual, featureNames, VibeideStatefulModelInfo, GlobalSettings, GlobalSettingName, defaultGlobalSettings, ModelSelectionOptions, OptionsOfModelSelection, ChatMode, OverridesOfModel, defaultOverridesOfModel, MCPUserStateOfName as MCPUserStateOfName, MCPUserState, MinimalismMode } from './vibeideSettingsTypes.js';
 
 
 // name is the name in the dropdown
@@ -497,8 +497,9 @@ class VoidSettingsService extends Disposable implements IVibeideSettingsService 
 		this.waitForInitState = new Promise((res, rej) => resolver = res);
 		this._resolver = resolver;
 
-		// Subscribe to VS Code configuration changes for localFirstAI
-		// This ensures state stays in sync when user changes the setting in VS Code Settings UI
+		// Subscribe to VS Code configuration changes for config-mirrored globalSettings keys
+		// (localFirstAI, minimalismMode). This ensures state stays in sync when user changes
+		// the setting in VS Code Settings UI.
 		this._register(
 			this._configurationService.onDidChangeConfiguration(e => {
 				if (e.affectsConfiguration('vibeide.global.localFirstAI')) {
@@ -510,6 +511,21 @@ class VoidSettingsService extends Disposable implements IVibeideSettingsService 
 							globalSettings: {
 								...this.state.globalSettings,
 								localFirstAI: configValue
+							}
+						};
+						this.state = _validatedModelState(newState);
+						// Don't write to storage - VS Code config is the source of truth
+						this._onDidChangeState.fire();
+					}
+				}
+				if (e.affectsConfiguration('vibeide.global.minimalismMode')) {
+					const configValue = this._configurationService.getValue<MinimalismMode>('vibeide.global.minimalismMode') ?? defaultGlobalSettings.minimalismMode;
+					if (this.state.globalSettings.minimalismMode !== configValue) {
+						const newState: VibeideSettingsState = {
+							...this.state,
+							globalSettings: {
+								...this.state.globalSettings,
+								minimalismMode: configValue
 							}
 						};
 						this.state = _validatedModelState(newState);
@@ -663,6 +679,12 @@ class VoidSettingsService extends Disposable implements IVibeideSettingsService 
 		const configLocalFirstAI = this._configurationService.getValue<boolean>('vibeide.global.localFirstAI');
 		if (configLocalFirstAI !== undefined) {
 			this.state.globalSettings.localFirstAI = configLocalFirstAI;
+		}
+
+		// Override minimalismMode from VS Code configuration (source of truth, same pattern)
+		const configMinimalismMode = this._configurationService.getValue<MinimalismMode>('vibeide.global.minimalismMode');
+		if (configMinimalismMode !== undefined) {
+			this.state.globalSettings.minimalismMode = configMinimalismMode;
 		}
 
 		this._resolver();

@@ -605,6 +605,19 @@ export class VibeideGlobalSettingsConfigurationContribution extends Disposable i
 					description: localize('vibeide.global.localFirstAI', 'Предпочитать локальные LLM-провайдеры (Ollama, LM Studio, vLLM) поверх облачных при routing-выборе модели. Off-by-default (cloud-first); включение разворачивает порядок: сначала локальные, при их отсутствии — облако.'),
 					scope: ConfigurationScope.APPLICATION,
 				},
+				'vibeide.global.minimalismMode': {
+					type: 'string',
+					enum: ['off', 'lite', 'full', 'ultra'],
+					enumDescriptions: [
+						localize('vibeide.global.minimalismMode.off', 'Выключено — агент пишет код без дисциплины минимализма.'),
+						localize('vibeide.global.minimalismMode.lite', 'Лайт — мягкая дисциплина: сначала переиспользовать существующий код/stdlib/зависимости, без спекулятивных абстракций (YAGNI).'),
+						localize('vibeide.global.minimalismMode.full', 'Фулл — полная «лестница минимализма»: агент проходит 7 ступеней перед написанием нового кода и помечает отложенные упрощения комментарием vibe-later.'),
+						localize('vibeide.global.minimalismMode.ultra', 'Ультра — лестница + требование минимального ревьюабельного диффа: агент оспаривает избыточные требования и явно перечисляет, что сознательно не реализовал.'),
+					],
+					default: 'lite',
+					description: localize('vibeide.global.minimalismMode.description', 'Дисциплина минимализма кода для AI-агента: перед генерацией нового кода — переиспользование существующего, stdlib, платформы, установленных зависимостей. Валидация, обработка ошибок и безопасность не урезаются ни в одном режиме. Правила проекта (.vibe/rules, AGENTS.md) приоритетнее дисциплины.'),
+					scope: ConfigurationScope.APPLICATION,
+				},
 			},
 		});
 

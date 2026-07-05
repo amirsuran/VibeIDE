@@ -12,7 +12,7 @@ import { os } from '../helpers/systemInfo.js';
 import { RawToolParamsObj } from '../sendLLMMessageTypes.js';
 import { BuiltinToolName, ToolName } from '../toolsServiceTypes.js';
 import { approvalTypeOfBuiltinToolName, builtinToolDefs } from './tools/index.js';
-import { ChatMode } from '../vibeideSettingsTypes.js';
+import { ChatMode, MinimalismMode } from '../vibeideSettingsTypes.js';
 import type { ModelFamily } from './modelFamily.js';
 import { DIVIDER, FINAL, ORIGINAL, searchReplaceBlockTemplate, tripleTick } from './tools/_constants.js';
 
@@ -276,10 +276,52 @@ export const systemToolsXMLPrompt = (chatMode: ChatMode, mcpTools: InternalToolI
     ${toolCallXMLGuidelines}`;
 };
 
+// ======================================================== code minimalism discipline ========================================================
+
+// Non-negotiables shared by every minimalism level: discipline trims output code,
+// never correctness or safety. Kept as one string so all levels stay in sync.
+const MINIMALISM_NON_NEGOTIABLES = `Non-negotiable regardless of minimalism: input validation, error handling, security, accessibility and existing tests are never trimmed.`;
+
+const MINIMALISM_RULES_PRECEDENCE = `Project rules in \`.vibe/rules\` / \`AGENTS.md\` take precedence over this discipline.`;
+
+/**
+ * Renders the `<code_minimalism>` system-prompt block for the given mode,
+ * or null for 'off'. Pure function — unit-tested in test/common.
+ */
+export const minimalismBlock = (mode: MinimalismMode): string | null => {
+	if (mode === 'off') { return null; }
+
+	if (mode === 'lite') {
+		return `<code_minimalism level="lite">
+Prefer the smallest change that solves the task. Before writing new code, check whether this codebase, the standard library, or an already-installed dependency covers it — reuse beats rewriting. Do not add abstractions, options, or helpers for hypothetical future needs (YAGNI).
+${MINIMALISM_NON_NEGOTIABLES}
+${MINIMALISM_RULES_PRECEDENCE}
+</code_minimalism>`;
+	}
+
+	const ultraExtra = mode === 'ultra' ? `
+Challenge every requirement: if a task smells over-specified, implement the lean core and explicitly list what you left out and why. Target the smallest reviewable diff — fewer lines beat cleverness, deleting code beats adding it.` : '';
+
+	return `<code_minimalism level="${mode}">
+First understand the problem: read the affected code and trace the real execution flow. Then, before generating any code, walk this ladder top-down and stop at the first rung that solves the task:
+- Does this need to exist at all? If not, skip it (YAGNI).
+- Does this codebase already do it? Reuse it, don't rewrite it.
+- Does the standard library do it? Use it.
+- Does the platform or framework do it natively? Use it.
+- Does an already-installed dependency do it? Use it.
+- Can it be one line? Keep it one line.
+- Only then write new code — the minimum that works.
+When editing, prefer removing code over adding it. If you consciously defer a worthwhile simplification, mark the spot with a \`vibe-later: <what and why>\` comment so it can be harvested later.
+Be lazy about the solution, never about reading: minimalism applies to the code you output, not to understanding the codebase.${ultraExtra}
+${MINIMALISM_NON_NEGOTIABLES}
+${MINIMALISM_RULES_PRECEDENCE}
+</code_minimalism>`;
+};
+
 // ======================================================== chat (normal, gather, agent) ========================================================
 
 
-export const chat_systemMessage = ({ workspaceFolders, openedURIs, activeURI, persistentTerminalIDs, directoryStr, chatMode: mode, mcpTools, includeXMLToolDefinitions, relevantMemories, strictJsonToolArguments, modelFamily: _modelFamily }: { workspaceFolders: string[]; directoryStr: string; openedURIs: string[]; activeURI: string | undefined; persistentTerminalIDs: string[]; chatMode: ChatMode; mcpTools: InternalToolInfo[] | undefined; includeXMLToolDefinitions: boolean; relevantMemories?: string; strictJsonToolArguments?: boolean; modelFamily?: ModelFamily }) => {
+export const chat_systemMessage = ({ workspaceFolders, openedURIs, activeURI, persistentTerminalIDs, directoryStr, chatMode: mode, mcpTools, includeXMLToolDefinitions, relevantMemories, strictJsonToolArguments, minimalismMode, modelFamily: _modelFamily }: { workspaceFolders: string[]; directoryStr: string; openedURIs: string[]; activeURI: string | undefined; persistentTerminalIDs: string[]; chatMode: ChatMode; mcpTools: InternalToolInfo[] | undefined; includeXMLToolDefinitions: boolean; relevantMemories?: string; strictJsonToolArguments?: boolean; minimalismMode?: MinimalismMode; modelFamily?: ModelFamily }) => {
 	const header = (`You are an expert coding ${mode === 'agent' ? 'agent' : 'assistant'} running inside VibeIDE whose job is \
 ${mode === 'agent' ? `to help the user develop, run, and make changes to their codebase.`
 			: mode === 'gather' ? `to search, understand, and reference files in the user's codebase.`
@@ -393,6 +435,12 @@ ${toolDefinitions}
 `);
 	}
 	ansStrs.push(importantDetails);
+	// Minimalism discipline applies where code gets written (agent) or planned (plan/normal);
+	// gather mode is read-only, the block would be dead weight there.
+	const minimalism = mode !== 'gather' ? minimalismBlock(minimalismMode ?? 'off') : null;
+	if (minimalism) {
+		ansStrs.push(minimalism);
+	}
 	if (memoriesSection) {
 		ansStrs.push(memoriesSection);
 	}
@@ -404,7 +452,7 @@ ${toolDefinitions}
 
 // Minimal chat system message for local models (drastically reduced)
 // Used for local models to minimize token usage and latency
-export const chat_systemMessage_local = ({ workspaceFolders, openedURIs, activeURI, chatMode: mode, includeXMLToolDefinitions, relevantMemories, mcpTools, strictJsonToolArguments, modelFamily: _modelFamily }: { workspaceFolders: string[]; directoryStr: string; openedURIs: string[]; activeURI: string | undefined; persistentTerminalIDs: string[]; chatMode: ChatMode; mcpTools: InternalToolInfo[] | undefined; includeXMLToolDefinitions: boolean; relevantMemories?: string; strictJsonToolArguments?: boolean; modelFamily?: ModelFamily }) => {
+export const chat_systemMessage_local = ({ workspaceFolders, openedURIs, activeURI, chatMode: mode, includeXMLToolDefinitions, relevantMemories, mcpTools, strictJsonToolArguments, minimalismMode, modelFamily: _modelFamily }: { workspaceFolders: string[]; directoryStr: string; openedURIs: string[]; activeURI: string | undefined; persistentTerminalIDs: string[]; chatMode: ChatMode; mcpTools: InternalToolInfo[] | undefined; includeXMLToolDefinitions: boolean; relevantMemories?: string; strictJsonToolArguments?: boolean; minimalismMode?: MinimalismMode; modelFamily?: ModelFamily }) => {
 	const header = mode === 'agent'
 		? 'Coding agent. Use tools for actions.'
 		: mode === 'gather'
@@ -427,6 +475,11 @@ export const chat_systemMessage_local = ({ workspaceFolders, openedURIs, activeU
 		details.push('Use tools. One at a time.');
 	} else if (mode === 'plan') {
 		details.push('PLAN MODE: No mutations. Read files, output numbered Markdown plan only.');
+	}
+
+	// Single-line minimalism reminder — local models are token-sensitive, the full ladder is too heavy here.
+	if (minimalismMode && minimalismMode !== 'off' && mode !== 'gather') {
+		details.push('Minimalism: reuse this codebase/stdlib/installed deps before writing new code; no speculative abstractions; smallest diff that works. Never trim validation, error handling or security.');
 	}
 
 	const importantDetails = details.length > 0 ? `\n${details.join('\n')}` : '';

@@ -456,6 +456,9 @@ import './vibeIdleWatchdogTimelineCommand.js';
 import './vibeIdleWatchdogAiDiagnosisAction.js';
 import './vibeStallDiagnosticsAction.js';
 
+// VibeIDE: Deferred-simplifications ledger (vibe-later markers) Action2
+import './vibeSimplificationsLedgerContribution.js';
+
 // VibeIDE: VibeModal — workbench-level themed modal framework
 import './vibeModalServiceImpl.js';
 import './vibeModalRootContribution.js';
