@@ -1976,8 +1976,11 @@ const openRouterSettings: VoidStaticProviderInfo = {
 // chain-of-thought in `reasoning_content`. Context spec: 204,800 tokens.
 // Reference: https://platform.minimax.io/docs/api-reference/text-chat-openai
 const minimaxModelOptions = {
-	// M3: 1M-token context (MSA architecture), toggleable interleaved thinking, native
-	// multimodality. Ref: https://www.minimax.io/models/text/m3
+	// M3: 1M-token context (MSA architecture), native multimodality, three thinking modes via
+	// `thinking:{type}`: 'adaptive' (model decides per request; the API default), 'enabled'
+	// (always think), 'disabled'. The MiniMax API has no reasoning_effort — the slider values
+	// ARE the thinking modes; includeInPayload below maps them to the `thinking` object.
+	// Ref: https://www.minimax.io/models/text/m3 + platform.minimax.io text-chat-openai docs.
 	'MiniMax-M3': {
 		contextWindow: 1_000_000,
 		reservedOutputTokenSpace: 8_192,
@@ -1987,7 +1990,7 @@ const minimaxModelOptions = {
 		supportsVision: true,
 		specialToolFormat: 'openai-style',
 		supportsSystemMessage: 'system-role',
-		reasoningCapabilities: { supportsReasoning: true, canTurnOffReasoning: true, canIOReasoning: true, stripThinkTagsFromContent: ['<think>', '</think>'], reasoningSlider: { type: 'effort_slider', values: ['low', 'high'], default: 'low' } },
+		reasoningCapabilities: { supportsReasoning: true, canTurnOffReasoning: true, canIOReasoning: true, stripThinkTagsFromContent: ['<think>', '</think>'], reasoningSlider: { type: 'effort_slider', values: ['adaptive', 'enabled'], default: 'adaptive' } },
 	},
 	'MiniMax-M2': {
 		contextWindow: 204_800,
@@ -2021,13 +2024,20 @@ const minimaxSettings: VoidStaticProviderInfo = {
 		return { modelName, recognizedModelName: recognized, ...minimaxModelOptions[recognized] };
 	},
 	providerReasoningIOSettings: {
-		// Input: when reasoning is OFF, MiniMax-M3 disables thinking via `thinking:{type:disabled}`;
-		// when ON, the effort slider maps to `reasoning_effort: 'low'|'high'`.
+		// Input: when reasoning is OFF, thinking is disabled via `thinking:{type:'disabled'}`.
+		// When ON, M3's slider values ('adaptive'|'enabled') go out as the native `thinking`
+		// object — the MiniMax API has no reasoning_effort. Anything else (M2's legacy
+		// 'low'/'high') falls through to reasoning_effort for OpenAI-compatible gateways.
 		input: {
 			includeInPayload: (reasoningInfo) => {
 				if (!reasoningInfo) { return null; }
 				if (!reasoningInfo.isReasoningEnabled) { return { thinking: { type: 'disabled' } }; }
-				if (reasoningInfo.type === 'effort_slider_value') { return { reasoning_effort: reasoningInfo.reasoningEffort }; }
+				if (reasoningInfo.type === 'effort_slider_value') {
+					if (reasoningInfo.reasoningEffort === 'adaptive' || reasoningInfo.reasoningEffort === 'enabled') {
+						return { thinking: { type: reasoningInfo.reasoningEffort } };
+					}
+					return { reasoning_effort: reasoningInfo.reasoningEffort };
+				}
 				return null;
 			},
 		},
