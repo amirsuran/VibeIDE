@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="LICENSE.txt"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License" /></a>
-  <a href="https://github.com/VibeBrains/VibeIDE/releases"><img src="https://img.shields.io/badge/версия-1.5.2-green.svg" alt="Версия" /></a>
+  <a href="https://github.com/VibeBrains/VibeIDE/releases"><img src="https://img.shields.io/badge/версия-1.5.3-green.svg" alt="Версия" /></a>
   <a href="https://github.com/VibeBrains/VibeIDE/issues"><img src="https://img.shields.io/github/issues/VibeBrains/VibeIDE.svg" alt="Issues" /></a>
   <a href="https://open-vsx.org"><img src="https://img.shields.io/badge/extensions-Open%20VSX-purple.svg" alt="Open VSX" /></a>
 </p>
@@ -54,6 +54,7 @@ VibeIDE — форк [VS Code open source (Code-OSS)](https://github.com/microso
 - **Свои LLM-провайдеры без пересборки** — `.vibe/providers.json`: добавить, переопределить или выключить провайдера и модели, живой каталог моделей из API; работают как встроенные.
 - **Любой провайдер на свой ключ** + локальные модели (Ollama, LM Studio) встроены.
 - **Агент с автопилотом** — доводит задачу до конца сам; мультиагентная оркестрация с блокировками; персистентные планы переживают перезапуск IDE.
+- **Минимализм кода** — режимы лайт/фулл/ультра: агент сначала переиспользует существующее (кодбаза → stdlib → зависимости) и пишет минимум нового — меньше токенов, дешевле и быстрее; `/simplify` возвращает делит-лист по диффу, маркеры `vibe-later` собираются в леджер упрощений.
 - **Vibe Server — превью без деплоя** — локальный предпросмотр прямо в IDE: статика, dev-сервер фреймворка (Vite/Next/…) или Docker-окружение, живая перезагрузка, QR для телефона, ошибки превью одной кнопкой в чат агенту.
 - **Vibe Deploy — выкат в облако через агента** (Timeweb Cloud первым, провайдеро-агностично) с подтверждением перед каждым внешним действием.
 - **Skills system** — переиспользуемые AI-правила на уровне проекта.
@@ -66,6 +67,7 @@ VibeIDE — форк [VS Code open source (Code-OSS)](https://github.com/microso
 - **Команды проекта** — `.vibe/commands.json` с авто-хоткеями, едут в репозитории вместе с проектом.
 - **Приватность по умолчанию** — нет телеметрии Microsoft, ключи в системном хранилище (`safeStorage`), детекция секретов перед отправкой в LLM.
 - **Полная совместимость с VS Code** + Open VSX без аккаунта Microsoft.
+- **Windows и macOS (Apple Silicon)** — установщик/winget на Windows, DMG на маке.
 
 ---
 
