@@ -23,6 +23,7 @@ import type { SecretMatch } from './secretDetection.js';
 import { INotificationService } from '../../../../platform/notification/common/notification.js';
 
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+import { NormalizeCounterKey } from './xmlToolNormalize.js';
 
 // calls channel to implement features
 export const ILLMMessageService = createDecorator<ILLMMessageService>('llmMessageService');
@@ -37,6 +38,10 @@ export interface ILLMMessageService {
 	resetProviderClients: () => Promise<void>;
 	/** Diagnostic: live shared-dispatcher generation/age (for the stall report). */
 	getTransportDiagnostics: () => Promise<TransportDiagnostics>;
+	/** Diagnostic: live tool-call normalization layer hit counters from main (since IDE start / last reset). */
+	getNormalizeCounters: () => Promise<Readonly<Record<NormalizeCounterKey, number>>>;
+	/** Diagnostic: zero the normalization counters (for switch-model A/B checks). */
+	resetNormalizeCounters: () => Promise<void>;
 }
 
 /** Live shared-dispatcher generation snapshot — see `getDispatcherDiagnostics` in systemCAFetch. */
@@ -155,6 +160,14 @@ export class LLMMessageService extends Disposable implements ILLMMessageService 
 
 	getTransportDiagnostics(): Promise<TransportDiagnostics> {
 		return this.channel.call('getTransportDiagnostics');
+	}
+
+	getNormalizeCounters(): Promise<Readonly<Record<NormalizeCounterKey, number>>> {
+		return this.channel.call('getNormalizeCounters');
+	}
+
+	resetNormalizeCounters(): Promise<void> {
+		return this.channel.call('resetNormalizeCounters');
 	}
 
 	sendLLMMessage(params: ServiceSendLLMMessageParams) {

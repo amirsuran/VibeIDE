@@ -498,7 +498,7 @@ export const normalizeAlternativeToolSyntax = (text: string): string => {
 //
 // Lives in common because the producer (transforms above) is common-layer
 // pure code; the consumer can be wired from any process.
-type NormalizeCounterKey = 'fullPath' | 'dsml' | 'wrapper' | 'invoke' | 'pairedAttr' | 'selfClosing' | 'jsonArray' | 'safetyNetPaired' | 'safetyNetSelfClosing' | 'safetyNetVendor';
+export type NormalizeCounterKey = 'fullPath' | 'dsml' | 'wrapper' | 'invoke' | 'pairedAttr' | 'selfClosing' | 'jsonArray' | 'safetyNetPaired' | 'safetyNetSelfClosing' | 'safetyNetVendor';
 const normalizeCounters: Record<NormalizeCounterKey, number> = {
 	fullPath: 0,
 	dsml: 0,

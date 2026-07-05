@@ -5,6 +5,7 @@
 
 
 import { vibeLog } from '../../../../common/vibeLog.js';
+import { NormalizeCounterKey } from '../../../../common/xmlToolNormalize.js';
 import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react'; // Added useRef import just in case it was missed, though likely already present
 import { ProviderName, SettingName, displayInfoOfSettingName, providerNames, VibeideStatefulModelInfo, customSettingNamesOfProvider, RefreshableProviderName, refreshableProviderNames, displayInfoOfProviderName, nonlocalProviderNames, localProviderNames, GlobalSettingName, featureNames, displayInfoOfFeatureName, isProviderNameDisabled, FeatureName, hasDownloadButtonsOnModelsProviderNames, subTextMdOfProviderName } from '../../../../common/vibeideSettingsTypes.js';
 import { remoteCatalogCapableProviderNames } from '../../../../common/remoteCatalogService.js';
@@ -2659,6 +2660,89 @@ const AutoDowngradeOverridesPanel = () => {
 	);
 };
 
+// Observability — tool-call normalization layer hit counters (roadmap «Observability-панель
+// нормализации»). Counters live in electron-main (the LLM stream parser runs there) and are
+// fetched over the LLM channel; global across models since IDE start / last reset. Reset +
+// re-check on one model = see which protection layer carries it.
+const ToolNormalizeCountersPanel = () => {
+	const accessor = useAccessor();
+	const llmMessageService = accessor.get('ILLMMessageService');
+	const notificationService = accessor.get('INotificationService');
+
+	const [counters, setCounters] = useState<Readonly<Record<NormalizeCounterKey, number>> | null>(null);
+
+	const layerLabel: Record<NormalizeCounterKey, string> = {
+		fullPath: safetyS.normalizeLayerFullPath,
+		dsml: safetyS.normalizeLayerDsml,
+		wrapper: safetyS.normalizeLayerWrapper,
+		invoke: safetyS.normalizeLayerInvoke,
+		pairedAttr: safetyS.normalizeLayerPairedAttr,
+		selfClosing: safetyS.normalizeLayerSelfClosing,
+		jsonArray: safetyS.normalizeLayerJsonArray,
+		safetyNetPaired: safetyS.normalizeLayerSafetyNetPaired,
+		safetyNetSelfClosing: safetyS.normalizeLayerSafetyNetSelfClosing,
+		safetyNetVendor: safetyS.normalizeLayerSafetyNetVendor,
+	};
+
+	const refresh = useCallback(async () => {
+		try {
+			setCounters(await llmMessageService.getNormalizeCounters());
+		} catch (e) {
+			notificationService.notify({ severity: Severity.Error, message: `${safetyS.normalizeLoadError}: ${e instanceof Error ? e.message : String(e)}` });
+		}
+	}, [llmMessageService, notificationService]);
+
+	const onReset = useCallback(async () => {
+		try {
+			await llmMessageService.resetNormalizeCounters();
+			await refresh();
+		} catch (e) {
+			notificationService.notify({ severity: Severity.Error, message: `${safetyS.normalizeLoadError}: ${e instanceof Error ? e.message : String(e)}` });
+		}
+	}, [llmMessageService, notificationService, refresh]);
+
+	useEffect(() => { void refresh(); }, [refresh]);
+
+	const rows = counters ? (Object.keys(layerLabel) as NormalizeCounterKey[]).map(key => ({ key, hits: counters[key] ?? 0 })) : [];
+	const allZero = rows.length > 0 && rows.every(r => r.hits === 0);
+
+	return (
+		<div className='max-w-[800px]'>
+			<h2 className='text-xl mb-2'>{safetyS.normalizeTitle}</h2>
+			<h4 className='text-vibe-fg-3 mb-4'>{safetyS.normalizeIntro}</h4>
+			<div className='flex items-center gap-x-2 mb-3'>
+				<VibeButtonBgDarken className='px-3 py-1 max-w-fit' onClick={() => { void refresh(); }}>
+					{safetyS.normalizeRefresh}
+				</VibeButtonBgDarken>
+				<VibeButtonBgDarken className='px-3 py-1 max-w-fit' onClick={() => { void onReset(); }}>
+					{safetyS.normalizeReset}
+				</VibeButtonBgDarken>
+				<span className='text-vibe-fg-3 text-xs'>{safetyS.normalizeResetHint}</span>
+			</div>
+			{allZero ? (
+				<div className='text-vibe-fg-3 text-sm'>{safetyS.normalizeEmpty}</div>
+			) : (
+				<table className='w-full text-sm border-collapse'>
+					<thead>
+						<tr className='text-left text-vibe-fg-3'>
+							<th className='py-1 pr-4 font-normal'>{safetyS.normalizeColLayer}</th>
+							<th className='py-1 font-normal'>{safetyS.normalizeColHits}</th>
+						</tr>
+					</thead>
+					<tbody>
+						{rows.map(r => (
+							<tr key={r.key} className='border-t border-vibe-border-3'>
+								<td className='py-1 pr-4 text-vibe-fg-2'>{layerLabel[r.key]}</td>
+								<td className={`py-1 ${r.hits > 0 ? 'text-vibe-fg-1' : 'text-vibe-fg-3'}`}>{r.hits}</td>
+							</tr>
+						))}
+					</tbody>
+				</table>
+			)}
+		</div>
+	);
+};
+
 const SafetyPanel = () => {
 	const accessor = useAccessor();
 	const configService = accessor.get('IConfigurationService');
@@ -2747,6 +2831,10 @@ const SafetyPanel = () => {
 
 			<ErrorBoundary>
 				<AutoDowngradeOverridesPanel />
+			</ErrorBoundary>
+
+			<ErrorBoundary>
+				<ToolNormalizeCountersPanel />
 			</ErrorBoundary>
 		</div>
 	);

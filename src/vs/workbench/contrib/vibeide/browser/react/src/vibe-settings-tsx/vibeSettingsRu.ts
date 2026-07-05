@@ -770,6 +770,27 @@ export const safetyS = {
 	autoDowngradeReasonMissingField: 'Пропущенные обязательные параметры',
 	autoDowngradeReasonWrongName: 'Несуществующие имена тулов',
 	autoDowngradeReasonOther: 'Прочие повторные ошибки tool-call',
+
+	// Tool-call normalization counters panel (Observability)
+	normalizeTitle: 'Нормализация tool-call: какой слой несёт нагрузку',
+	normalizeIntro: 'Живые счётчики слоёв парсера, чинящих «нестандартные» вызовы инструментов от моделей. Счёт — с запуска IDE (или с последнего сброса), по всем моделям вместе. Если у слоя растёт счётчик — текущая модель эмитит именно эту форму, и её тащит соответствующая защита.',
+	normalizeEmpty: 'Все счётчики по нулям — модели шлют канонические tool-call, слои защиты не задействованы.',
+	normalizeColLayer: 'Слой',
+	normalizeColHits: 'Срабатываний',
+	normalizeRefresh: 'Обновить',
+	normalizeReset: 'Сбросить счётчики',
+	normalizeResetHint: 'Обнулить и посмотреть, какой слой тащит конкретную модель: сбросьте, поработайте на ней, обновите.',
+	normalizeLoadError: 'Не удалось получить счётчики',
+	normalizeLayerFullPath: 'Полные пути имён — тул назван путём/неймспейсом (functions.read_file), имя приведено к каноничному',
+	normalizeLayerDsml: 'DSML-разметка (deepseek) — конвертирована в канонический XML',
+	normalizeLayerWrapper: 'Vendor-обёртки вокруг вызова (например <minimax:tool_call>) — сняты',
+	normalizeLayerInvoke: 'Форма <invoke name=\u2026> — конвертирована в канон',
+	normalizeLayerPairedAttr: 'Парный тег с аргументами в атрибутах — развёрнут в канон',
+	normalizeLayerSelfClosing: 'Self-closing тег (<read_file path=\u2026 />) — развёрнут в канон',
+	normalizeLayerJsonArray: 'JSON-массив вызовов в тексте — конвертирован в канон',
+	normalizeLayerSafetyNetPaired: 'Safety-net: непризнанный парный тул-тег срезан из ответа (плейсхолдер)',
+	normalizeLayerSafetyNetSelfClosing: 'Safety-net: непризнанный self-closing тул-тег срезан из ответа',
+	normalizeLayerSafetyNetVendor: 'Safety-net: vendor-мусор вокруг вызова вычищен',
 } as const;
 
 export const modelsS = {
