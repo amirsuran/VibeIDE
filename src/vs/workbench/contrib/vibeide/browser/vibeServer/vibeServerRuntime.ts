@@ -153,6 +153,10 @@ export class StaticRuntime extends Disposable implements IVibeServerRuntime {
 const DEV_URL_RE = /(https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]):\d+[^\s'"]*)/i;
 const DEFAULT_DEV_TIMEOUT_MS = 60000;
 
+/** Shell exit codes meaning "command not found": POSIX sh and Windows cmd respectively. */
+const EXIT_COMMAND_NOT_FOUND_POSIX = 127;
+const EXIT_COMMAND_NOT_FOUND_WINDOWS = 9009;
+
 // ESC built via char code so no control byte sits in the source.
 const ANSI_RE = new RegExp(String.fromCharCode(27) + '\\[[0-9;]*[A-Za-z]', 'g');
 
@@ -229,7 +233,13 @@ export class DevServerRuntime extends Disposable implements IVibeServerRuntime {
 		store.add(this._proc.onDidExit(e => {
 			if (e.id !== id) { return; }
 			this._onDidLog.fire(`Процесс завершился (код ${e.code}).`);
-			if (!settled) { settled = true; rejectUrl(new Error(`Dev-server завершился до готовности (код ${e.code})`)); }
+			if (!settled) {
+				settled = true;
+				const notFound = e.code === EXIT_COMMAND_NOT_FOUND_POSIX || e.code === EXIT_COMMAND_NOT_FOUND_WINDOWS;
+				rejectUrl(new Error(notFound
+					? `Команда «${command}» не найдена (код ${e.code}). ${command === 'npm' ? 'Убедитесь, что установлен Node.js (nodejs.org)' : `Убедитесь, что установлены Node.js и ${command}`}, и перезапустите VibeIDE. Если Node установлен через менеджер версий (nvm/fnm) или Homebrew — проверьте, что «${command}» доступна в вашем шелле.`
+					: `Dev-server завершился до готовности (код ${e.code})`));
+			}
 		}));
 
 		this._onDidLog.fire(`${command} run ${script} (${this._rootUri.fsPath})`);

@@ -17,6 +17,11 @@
 
 /** Markdown highlights keyed by exact `vibeVersion` (e.g. "1.1.0"). */
 export const WHATS_NEW_BY_VERSION: Readonly<Record<string, string>> = {
+	'1.5.2': [
+		'## 🐛 Исправления',
+		'',
+		'- **Vibe Server на macOS: dev-сервер снова запускается.** Приложению, открытому из Dock/Finder, не доставался PATH вашего шелла, поэтому `npm run dev` мгновенно падал с «код 127». Теперь VibeIDE подхватывает окружение логин-шелла и сам находит Node в стандартных местах установки (fnm/nvm/volta/Homebrew/nodejs.org), а если Node.js действительно не установлен — прямо говорит об этом и подсказывает, что сделать.',
+	].join('\n'),
 	'1.5.0': [
 		'## ✨ Vibe Server — увидеть код локально, без деплоя',
 		'',

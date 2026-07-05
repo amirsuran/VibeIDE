@@ -124,6 +124,7 @@ export function registerVibeideMainProcessChannels(
 	const vibeServerProcessService = disposables.add(new VibeServerProcessService(
 		accessor.get(ILogService),
 		accessor.get(IEnvironmentMainService),
+		accessor.get(IConfigurationService),
 	));
 	mainProcessElectronServer.registerChannel(
 		VIBE_SERVER_PROCESS_CHANNEL,

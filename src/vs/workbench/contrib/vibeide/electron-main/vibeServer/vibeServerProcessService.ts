@@ -22,14 +22,17 @@
  */
 
 import { spawn, spawnSync, ChildProcess } from 'child_process';
-import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'fs';
-import { join } from '../../../../../base/common/path.js';
+import { existsSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'fs';
+import { homedir } from 'os';
+import { delimiter, join } from '../../../../../base/common/path.js';
 import * as net from 'net';
 import { Emitter } from '../../../../../base/common/event.js';
 import { Disposable } from '../../../../../base/common/lifecycle.js';
-import { isWindows } from '../../../../../base/common/platform.js';
+import { IProcessEnvironment, isWindows } from '../../../../../base/common/platform.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
+import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { IEnvironmentMainService } from '../../../../../platform/environment/electron-main/environmentMainService.js';
+import { getResolvedShellEnv } from '../../../../../platform/shell/node/shellEnv.js';
 import { IVibeServerProcessMain, IVibeServerProcExit, IVibeServerProcOutput, IVibeServerProcSpec } from '../../common/vibeServer/vibeServerProcessIpc.js';
 
 /** Persisted identity of a spawned dev-server, used to reap orphans across launches. */
@@ -63,10 +66,11 @@ export class VibeServerProcessService extends Disposable implements IVibeServerP
 
 	constructor(
 		@ILogService private readonly _log: ILogService,
-		@IEnvironmentMainService environmentMainService: IEnvironmentMainService,
+		@IEnvironmentMainService private readonly _environmentMainService: IEnvironmentMainService,
+		@IConfigurationService private readonly _configurationService: IConfigurationService,
 	) {
 		super();
-		this._pidfile = join(environmentMainService.userDataPath, 'vibeServer.orphans.json');
+		this._pidfile = join(this._environmentMainService.userDataPath, 'vibeServer.orphans.json');
 		this._reaped = this._reapOrphans();
 	}
 
@@ -75,7 +79,16 @@ export class VibeServerProcessService extends Disposable implements IVibeServerP
 		// shifts the new dev-server to a different (and possibly dead) port → blank preview.
 		await this._reaped;
 		await this.stop(spec.id);
-		const env = { ...process.env, ...(spec.env ?? {}) };
+		// GUI-launched apps on macOS/Linux inherit a bare PATH (no nvm/fnm/Homebrew), so `npm`
+		// resolves to nothing and the shell exits with 127. Merge the user's login-shell env
+		// (cached, no-op on Windows/CLI launches) before spawning. The login shell only helps
+		// when the user's profile hooks their Node manager — many setups don't, so well-known
+		// Node install locations are appended to PATH as a last resort.
+		const shellEnv = await this._resolveShellEnv();
+		const env = { ...process.env, ...shellEnv, ...(spec.env ?? {}) };
+		if (!isWindows) {
+			env.PATH = this._withNodeFallbackDirs(env.PATH ?? '');
+		}
 		let child: ChildProcess;
 		try {
 			child = spawn(spec.command, spec.args.slice(), {
@@ -105,6 +118,60 @@ export class VibeServerProcessService extends Disposable implements IVibeServerP
 			this._forget(spec.id);
 			this._onDidExit.fire({ id: spec.id, code: code ?? null, signal: signal ?? null });
 		});
+	}
+
+	/**
+	 * Appends existing well-known Node.js install locations (fnm/nvm/volta/Homebrew/nodejs.org)
+	 * that PATH is missing. Appended, not prepended, so an explicitly configured PATH wins.
+	 */
+	private _withNodeFallbackDirs(path: string): string {
+		const home = homedir();
+		const candidates = [
+			join(home, '.local/share/fnm/aliases/default/bin'),
+			join(home, 'Library/Application Support/fnm/aliases/default/bin'),
+			join(home, '.fnm/aliases/default/bin'),
+			this._nvmDefaultBin(home),
+			join(home, '.volta/bin'),
+			'/opt/homebrew/bin',
+			'/usr/local/bin',
+		];
+		const present = new Set(path.split(delimiter));
+		const missing = candidates.filter((dir): dir is string => !!dir && !present.has(dir) && existsSync(dir));
+		return missing.length === 0 ? path : [path, ...missing].join(delimiter);
+	}
+
+	/** Bin dir of nvm's default alias, or its newest installed version; undefined when nvm is absent. */
+	private _nvmDefaultBin(home: string): string | undefined {
+		const versionsDir = join(home, '.nvm/versions/node');
+		try {
+			const alias = readFileSync(join(home, '.nvm/alias/default'), 'utf8').trim();
+			const aliased = join(versionsDir, alias.startsWith('v') ? alias : `v${alias}`, 'bin');
+			if (existsSync(aliased)) {
+				return aliased;
+			}
+		} catch { /* no default alias — fall through to newest installed */ }
+		try {
+			const newest = readdirSync(versionsDir)
+				.filter(name => /^v\d+\.\d+\.\d+$/.test(name))
+				.sort((a, b) => {
+					const pa = a.slice(1).split('.').map(Number);
+					const pb = b.slice(1).split('.').map(Number);
+					return (pb[0] - pa[0]) || (pb[1] - pa[1]) || (pb[2] - pa[2]);
+				})[0];
+			return newest ? join(versionsDir, newest, 'bin') : undefined;
+		} catch {
+			return undefined;
+		}
+	}
+
+	/** Login-shell environment for spawned dev-servers; empty on failure so start still proceeds. */
+	private async _resolveShellEnv(): Promise<typeof process.env> {
+		try {
+			return await getResolvedShellEnv(this._configurationService, this._log, this._environmentMainService.args, process.env as IProcessEnvironment);
+		} catch (err) {
+			this._log.warn('[VibeServerProcess] could not resolve shell environment', err);
+			return {};
+		}
 	}
 
 	async notePort(id: string, _host: string, port: number): Promise<void> {
