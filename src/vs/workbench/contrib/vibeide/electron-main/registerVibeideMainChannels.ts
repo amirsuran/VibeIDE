@@ -32,6 +32,8 @@ import { VibeServerMainService } from './vibeServer/vibeServerMainService.js';
 import { VIBE_SERVER_CHANNEL } from '../common/vibeServer/vibeServerIpc.js';
 import { VibeServerProcessService } from './vibeServer/vibeServerProcessService.js';
 import { VIBE_SERVER_PROCESS_CHANNEL } from '../common/vibeServer/vibeServerProcessIpc.js';
+import { VibeLogAdminMainService } from './vibeLogAdminMainService.js';
+import { VIBE_LOG_ADMIN_CHANNEL } from '../common/vibeLogAdminIpc.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { IWindowsMainService } from '../../../../platform/windows/electron-main/windows.js';
 
@@ -56,6 +58,10 @@ export function registerVibeideMainProcessChannels(
 
 	const llmChannel = new LLMMessageChannel(metricsMainService);
 	mainProcessElectronServer.registerChannel('vibeide-channel-llmMessage', llmChannel);
+
+	// Logging-config push: renderer mirrors `vibeide.logging.*` + secret-detection snapshot
+	// into main's vibeLog (see vibeLogConfigContribution.ts / vibeLogAdminMainService.ts).
+	mainProcessElectronServer.registerChannel(VIBE_LOG_ADMIN_CHANNEL, ProxyChannel.fromService(new VibeLogAdminMainService(), disposables));
 
 	const requestServiceMain = accessor.get(IRequestService);
 	mainProcessElectronServer.registerChannel(

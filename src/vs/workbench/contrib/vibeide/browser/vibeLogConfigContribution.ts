@@ -6,14 +6,28 @@
 
 // Bridges the `vibeide.logging.*` settings into the `vibeLog` singleton (vibeLog.ts).
 // The singleton is process-global and DI-free, so this renderer contribution reads
-// the live config on startup and re-applies it on every change. Other processes
-// (electron-main) run on vibeLog's defaults until IPC wiring lands.
+// the live config on startup and re-applies it on every change. Desktop additionally
+// mirrors the same snapshot into electron-main's own vibeLog — that wiring lives in
+// `electron-browser/vibeLogMainSyncContribution.ts` (IMainProcessService is not web-safe).
 
 import { Disposable } from '../../../../base/common/lifecycle.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { ISecretDetectionService } from '../common/secretDetectionService.js';
-import { vibeLog } from '../common/vibeLog.js';
+import { vibeLog, VibeLogConfigInput } from '../common/vibeLog.js';
+
+/** Snapshot of `vibeide.logging.*` in the shape `vibeLog.configure` consumes (also mirrored to main). */
+export function readVibeLoggingInput(c: IConfigurationService): VibeLogConfigInput {
+	return {
+		enabled: c.getValue<boolean>('vibeide.logging.enabled'),
+		level: c.getValue<string>('vibeide.logging.level'),
+		categories: c.getValue<string[]>('vibeide.logging.categories'),
+		categoryLevels: c.getValue<{ [category: string]: string }>('vibeide.logging.categoryLevels'),
+		timestamps: c.getValue<boolean>('vibeide.logging.timestamps'),
+		bufferSize: c.getValue<number>('vibeide.logging.bufferSize'),
+		dedupe: c.getValue<boolean>('vibeide.logging.collapseRepeats'),
+	};
+}
 
 class VibeLogConfigContribution extends Disposable implements IWorkbenchContribution {
 	static readonly ID = 'workbench.contrib.vibeLogConfig';
@@ -47,16 +61,7 @@ class VibeLogConfigContribution extends Disposable implements IWorkbenchContribu
 	}
 
 	private apply(): void {
-		const c = this.configurationService;
-		vibeLog.configure({
-			enabled: c.getValue<boolean>('vibeide.logging.enabled'),
-			level: c.getValue<string>('vibeide.logging.level'),
-			categories: c.getValue<string[]>('vibeide.logging.categories'),
-			categoryLevels: c.getValue<{ [category: string]: string }>('vibeide.logging.categoryLevels'),
-			timestamps: c.getValue<boolean>('vibeide.logging.timestamps'),
-			bufferSize: c.getValue<number>('vibeide.logging.bufferSize'),
-			dedupe: c.getValue<boolean>('vibeide.logging.collapseRepeats'),
-		});
+		vibeLog.configure(readVibeLoggingInput(this.configurationService));
 	}
 }
 
