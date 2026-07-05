@@ -44,6 +44,9 @@ import './vibeProjects.contribution.js';
 // Local preview server with live reload (Vibe Server)
 import './vibeServer/vibeServer.contribution.js';
 
+// Add/remove from .gitignore (explorer + editor-tab context menus)
+import './vibeGitignoreActions.js';
+
 // Deploy to cloud via the vibe-deploy skill (Vibe Deploy)
 import './vibeDeploy.contribution.js';
 
