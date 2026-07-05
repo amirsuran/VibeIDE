@@ -56,16 +56,21 @@ export class VibeServerStatusBarContribution extends Disposable implements IWork
 		const name = localize('vibeServer.statusName', "Vibe Server");
 		const status = this._vibeServerService.status;
 		if (status.state === 'running' && status.started) {
+			const fallbackNote = status.started.requestedPort !== undefined
+				? ` ${localize('vibeServer.statusFallbackPort', "(вместо {0})", status.started.requestedPort)}`
+				: '';
 			const address = `${status.started.host}:${status.started.port}`;
 			const problems = this._vibeServerService.problemCount();
 			const badge = problems > 0 ? ` $(warning) ${problems}` : '';
 			return {
 				name,
-				text: `$(zap) ${address}${badge}`,
+				text: `$(zap) ${address}${fallbackNote}${badge}`,
 				ariaLabel: localize('vibeServer.statusRunningAria', "Vibe Server запущен на {0}", address),
 				tooltip: problems > 0
 					? localize('vibeServer.statusRunningProblems', "Vibe Server запущен — {0} ошибок в превью; открыть превью", problems)
-					: localize('vibeServer.statusRunningTooltip', "Vibe Server запущен — открыть превью"),
+					: status.started.requestedPort !== undefined
+						? localize('vibeServer.statusRunningFallback', "Vibe Server запущен на {0} — порт {1} был занят; открыть превью", status.started.port, status.started.requestedPort)
+						: localize('vibeServer.statusRunningTooltip', "Vibe Server запущен — открыть превью"),
 				command: VibeServerCommands.openPreview,
 			};
 		}

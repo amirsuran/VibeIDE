@@ -201,6 +201,12 @@ export class VibeideGlobalSettingsConfigurationContribution extends Disposable i
 					description: localize('vibeide.vibeServer.devScript.desc', 'Имя npm-скрипта для запуска dev-сервера. Пусто — автоопределение (dev → start → serve).'),
 					scope: ConfigurationScope.RESOURCE,
 				},
+				'vibeide.vibeServer.portConflictPrompt': {
+					type: 'boolean',
+					default: true,
+					description: localize('vibeide.vibeServer.portConflictPrompt.desc', 'Показывать модальное окно, когда порт проекта занят: освободить порт (завершить занявший его процесс), работать на порту, который выбрал фреймворк, или отменить запуск. При выключении dev-сервер молча работает на подменённом порту. Порт в конфигурации проекта не меняется никогда.'),
+					scope: ConfigurationScope.RESOURCE,
+				},
 				'vibeide.vibeServer.devServerStartTimeoutMs': {
 					type: 'number',
 					default: 60000,

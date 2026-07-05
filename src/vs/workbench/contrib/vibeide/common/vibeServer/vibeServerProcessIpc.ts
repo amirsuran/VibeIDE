@@ -37,6 +37,18 @@ export interface IVibeServerProcExit {
 	readonly signal: string | null;
 }
 
+/** A process listening on a loopback port (for the port-conflict dialog). */
+export interface IVibeServerPortOwner {
+	readonly pid: number;
+	/** Command line of the owner; empty when the process listing did not resolve it. */
+	readonly commandLine: string;
+	/**
+	 * Project directory when the owner is a dev-server managed by this VibeIDE instance
+	 * (any window) — lets the dialog warn before killing a sibling project's server.
+	 */
+	readonly vibeCwd?: string;
+}
+
 export interface IVibeServerProcessMain {
 	/** Fires for every chunk of child stdout/stderr. */
 	readonly onDidOutput: Event<IVibeServerProcOutput>;
@@ -52,6 +64,10 @@ export interface IVibeServerProcessMain {
 	notePort(id: string, host: string, port: number): Promise<void>;
 	/** Terminates the process and its child tree. Safe when already gone. */
 	stop(id: string): Promise<void>;
+	/** Describes the processes listening on a loopback port; empty when the port is free. */
+	describePortOwners(port: number): Promise<IVibeServerPortOwner[]>;
+	/** Kills every process (with its tree) listening on the port. Safe when the port is free. */
+	killPort(port: number): Promise<void>;
 	/** Polls a TCP port until it accepts a connection or the timeout elapses (readiness check). */
 	waitForPort(host: string, port: number, timeoutMs: number): Promise<boolean>;
 }

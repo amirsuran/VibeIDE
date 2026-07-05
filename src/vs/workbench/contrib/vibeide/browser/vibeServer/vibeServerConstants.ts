@@ -43,6 +43,7 @@ export const VibeServerConfigKeys = {
 	runtime: 'vibeide.vibeServer.runtime',
 	devScript: 'vibeide.vibeServer.devScript',
 	devServerStartTimeoutMs: 'vibeide.vibeServer.devServerStartTimeoutMs',
+	portConflictPrompt: 'vibeide.vibeServer.portConflictPrompt',
 	dockerStartTimeoutMs: 'vibeide.vibeServer.dockerStartTimeoutMs',
 	scrollSync: 'vibeide.vibeServer.scrollSync',
 	https: 'vibeide.vibeServer.https',

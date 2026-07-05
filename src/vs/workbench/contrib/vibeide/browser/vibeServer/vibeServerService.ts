@@ -26,13 +26,14 @@ import { IOpenerService } from '../../../../../platform/opener/common/opener.js'
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
 import { IClipboardService } from '../../../../../platform/clipboard/common/clipboardService.js';
 import { IContextKeyService, IContextKey } from '../../../../../platform/contextkey/common/contextkey.js';
+import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IChatThreadService } from '../chatThreadService.js';
 import { IVibeServerMain, IVibeServerStarted, VIBE_SERVER_CHANNEL, VibeServerRuntimeKind } from '../../common/vibeServer/vibeServerIpc.js';
-import { IVibeServerProcessMain, VIBE_SERVER_PROCESS_CHANNEL } from '../../common/vibeServer/vibeServerProcessIpc.js';
-import { IVibeServerRuntime, StaticRuntime, DevServerRuntime } from './vibeServerRuntime.js';
+import { IVibeServerPortOwner, IVibeServerProcessMain, VIBE_SERVER_PROCESS_CHANNEL } from '../../common/vibeServer/vibeServerProcessIpc.js';
+import { IVibeServerRuntime, StaticRuntime, DevServerRuntime, DevServerPortBusyError } from './vibeServerRuntime.js';
 import { DockerRuntime } from './vibeDockerRuntime.js';
 import { VibeBrowserManager } from './vibeBrowserManager.js';
 import { VibeServerConfigKeys, VibeServerPreviewTarget, VIBE_SERVER_RUNNING_CONTEXT_KEY } from './vibeServerConstants.js';
@@ -90,6 +91,8 @@ class VibeServerService extends Disposable implements IVibeServerService {
 	private readonly _externalUris = this._register(new DisposableStore());
 	/** Embedded browser; created on first embedded preview and reused across restarts. */
 	private readonly _browser = this._register(new MutableDisposable<VibeBrowserManager>());
+	/** Subscription to the active runtime's unexpected-exit signal; cleared on stop. */
+	private readonly _runtimeExitListener = this._register(new MutableDisposable());
 	private readonly _runningKey: IContextKey<boolean>;
 	private _status: IVibeServerStatus = { state: 'stopped' };
 	/** Runtime kind forced by the last start (e.g. Docker via startEnvironment) — preserved on restart. */
@@ -104,6 +107,7 @@ class VibeServerService extends Disposable implements IVibeServerService {
 		@INotificationService private readonly _notificationService: INotificationService,
 		@IClipboardService private readonly _clipboardService: IClipboardService,
 		@IContextKeyService contextKeyService: IContextKeyService,
+		@IDialogService private readonly _dialogService: IDialogService,
 		@IEditorService private readonly _editorService: IEditorService,
 		@IFileService private readonly _fileService: IFileService,
 		@IChatThreadService private readonly _chatThreadService: IChatThreadService,
@@ -161,12 +165,29 @@ class VibeServerService extends Disposable implements IVibeServerService {
 		} catch (err) {
 			runtime.dispose();
 			this._setStatus({ state: 'stopped' });
+			if (err instanceof DevServerPortBusyError && this._portConflictPromptEnabled()) {
+				await this._promptBusyPortNoFallback(err.busyPort, forced);
+				return;
+			}
 			this._notificationService.error(localize('vibeServer.startFailed', "Не удалось запустить Vibe Server: {0}", String(err)));
 			return;
 		}
 
 		this._runtime.value = runtime;
+		if (runtime.onDidExitUnexpectedly) {
+			this._runtimeExitListener.value = runtime.onDidExitUnexpectedly(() => {
+				this._notificationService.warn(localize('vibeServer.devServerDied', "Dev-server неожиданно завершился — Vibe Server остановлен."));
+				void this.stop();
+			});
+		}
 		this._setStatus({ state: 'running', started, kind: runtime.kind });
+
+		if (started.requestedPort !== undefined && this._portConflictPromptEnabled()) {
+			const keepFallback = await this._promptPortFallback(started, forced);
+			if (!keepFallback) {
+				return; // freed+restarted (preview opens in the nested start) or stopped
+			}
+		}
 
 		if (this._configurationService.getValue<boolean>(VibeServerConfigKeys.openAutomatically) !== false) {
 			await this.openPreview();
@@ -178,11 +199,95 @@ class VibeServerService extends Disposable implements IVibeServerService {
 			return;
 		}
 		this._externalUris.clear();
+		this._runtimeExitListener.clear();
 		const runtime = this._runtime.value;
 		await runtime?.stop();
 		this._runtime.clear(); // disposes the runtime
 		this._setStatus({ state: 'stopped' });
 		// The embedded browser is intentionally kept open: a later start reuses the same tab.
+	}
+
+	private _portConflictPromptEnabled(): boolean {
+		return this._configurationService.getValue<boolean>(VibeServerConfigKeys.portConflictPrompt) !== false;
+	}
+
+	/**
+	 * The dev-server fell back to another port because the project's port is busy. Asks the user
+	 * to free the project port (kill the owner + restart), keep working on the fallback port for
+	 * this session, or cancel (stop — the user untangles it themselves). Returns `true` when the
+	 * fallback port stays in use and the caller should proceed to open the preview.
+	 */
+	private async _promptPortFallback(started: IVibeServerStarted, forced: VibeServerRuntimeKind | undefined): Promise<boolean> {
+		const requested = started.requestedPort!;
+		const owners = await this._describePortOwnersSafe(requested);
+		const vibeCwd = owners.find(o => o.vibeCwd)?.vibeCwd;
+		const freeButton = {
+			label: localize('vibeServer.conflict.free', "Освободить порт {0}", requested),
+			run: () => 'free' as const,
+		};
+		const keepButton = {
+			label: localize('vibeServer.conflict.keep', "Работать на {0}", started.port),
+			run: () => 'keep' as const,
+		};
+		const { result } = await this._dialogService.prompt<'free' | 'keep'>({
+			type: 'warning',
+			message: localize('vibeServer.conflict.message', "Порт {0} занят — dev-сервер запущен на порту {1}", requested, started.port),
+			detail: this._portConflictDetail(requested, started.port, owners, vibeCwd),
+			// When the port is held by another VibeIDE-managed project, default to coexisting on
+			// the fallback port instead of killing a sibling dev-server.
+			buttons: vibeCwd ? [keepButton, freeButton] : [freeButton, keepButton],
+			cancelButton: true,
+		});
+		if (result === 'keep') {
+			return true;
+		}
+		if (result === 'free') {
+			await this._procMain.killPort(requested);
+			await this.stop();
+			await this._startWithKind(forced);
+			return false;
+		}
+		// Cancelled: the user resolves the conflict themselves — leave nothing running.
+		await this.stop();
+		return false;
+	}
+
+	/** The dev-server crashed on a busy port (no framework fallback): offer to free it and retry. */
+	private async _promptBusyPortNoFallback(busyPort: number, forced: VibeServerRuntimeKind | undefined): Promise<void> {
+		const owners = await this._describePortOwnersSafe(busyPort);
+		const vibeCwd = owners.find(o => o.vibeCwd)?.vibeCwd;
+		const { confirmed } = await this._dialogService.confirm({
+			type: 'warning',
+			message: localize('vibeServer.busyPort.message', "Порт {0} занят — dev-сервер не смог запуститься", busyPort),
+			detail: this._portConflictDetail(busyPort, undefined, owners, vibeCwd),
+			primaryButton: localize('vibeServer.busyPort.free', "Освободить порт {0}", busyPort),
+		});
+		if (!confirmed) {
+			return;
+		}
+		await this._procMain.killPort(busyPort);
+		await this._startWithKind(forced);
+	}
+
+	private async _describePortOwnersSafe(port: number): Promise<IVibeServerPortOwner[]> {
+		try {
+			return await this._procMain.describePortOwners(port);
+		} catch (err) {
+			this._logService.warn('[VibeServer] could not describe port owners', err);
+			return [];
+		}
+	}
+
+	private _portConflictDetail(requested: number, fallbackPort: number | undefined, owners: IVibeServerPortOwner[], vibeCwd: string | undefined): string {
+		const who = vibeCwd
+			? localize('vibeServer.conflict.ownVibe', "Порт держит dev-сервер проекта «{0}», запущенный в VibeIDE.", vibeCwd)
+			: owners.length > 0
+				? localize('vibeServer.conflict.foreign', "Порт держит процесс PID {0}: {1}", owners[0].pid, owners[0].commandLine.length > 120 ? `${owners[0].commandLine.slice(0, 120)}…` : owners[0].commandLine || localize('vibeServer.conflict.unknownCmd', "команда неизвестна"))
+				: localize('vibeServer.conflict.unknown', "Процесс, занимающий порт, определить не удалось.");
+		const note = fallbackPort !== undefined
+			? localize('vibeServer.conflict.note', "Порт в конфигурации проекта не меняется: «Работать на {0}» использует новый порт только в этой сессии.", fallbackPort)
+			: localize('vibeServer.busyPort.note', "«Освободить порт {0}» завершит этот процесс и запустит dev-сервер заново.", requested);
+		return `${who}\n\n${note}`;
 	}
 
 	async openPreview(target?: VibeServerPreviewTarget): Promise<void> {

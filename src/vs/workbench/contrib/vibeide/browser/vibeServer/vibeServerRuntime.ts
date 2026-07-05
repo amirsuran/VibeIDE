@@ -22,16 +22,26 @@ import { IConfigurationService } from '../../../../../platform/configuration/com
 import { IUriIdentityService } from '../../../../../platform/uriIdentity/common/uriIdentity.js';
 import { IVibeServerMain, IVibeServerStarted, VibeServerChangeKind, VibeServerRuntimeKind } from '../../common/vibeServer/vibeServerIpc.js';
 import { IVibeServerProcessMain } from '../../common/vibeServer/vibeServerProcessIpc.js';
+import { detectBusyPort } from '../../common/vibeServer/devServerPortConflict.js';
 import { VibeServerConfigKeys } from './vibeServerConstants.js';
 
 export interface IVibeServerRuntime extends Disposable {
 	readonly kind: VibeServerRuntimeKind;
 	/** Human-readable progress/diagnostic lines (server start, errors). */
 	readonly onDidLog: Event<string>;
+	/** Fires when the backing process dies after a successful start (crash or external kill). */
+	readonly onDidExitUnexpectedly?: Event<void>;
 	/** Starts the runtime and resolves with the address to preview. */
 	start(): Promise<IVibeServerStarted>;
 	/** Stops the runtime and releases resources. Safe to call more than once. */
 	stop(): Promise<void>;
+}
+
+/** `start()` rejection meaning "the project's port is busy and the framework did not fall back". */
+export class DevServerPortBusyError extends Error {
+	constructor(readonly busyPort: number) {
+		super(`Порт ${busyPort} занят — dev-server не смог запуститься`);
+	}
 }
 
 /** Default debounce window (ms) for coalescing file-change bursts into one reload. */
@@ -183,6 +193,9 @@ export class DevServerRuntime extends Disposable implements IVibeServerRuntime {
 	private readonly _onDidLog = this._register(new Emitter<string>());
 	readonly onDidLog = this._onDidLog.event;
 
+	private readonly _onDidExitUnexpectedly = this._register(new Emitter<void>());
+	readonly onDidExitUnexpectedly = this._onDidExitUnexpectedly.event;
+
 	private readonly _session = this._register(new MutableDisposable<DisposableStore>());
 	private _id: string | undefined;
 
@@ -218,12 +231,17 @@ export class DevServerRuntime extends Disposable implements IVibeServerRuntime {
 		}, this._timeoutMs());
 		store.add(toDisposable(() => clearTimeout(timer)));
 
+		// The port the project wanted but found busy (framework warning or EADDRINUSE crash).
+		let busyPort: number | undefined;
 		store.add(this._proc.onDidOutput(o => {
 			if (o.id !== id) { return; }
 			const clean = stripAnsi(o.data);
 			for (const line of clean.split(/\r?\n/)) {
 				const trimmed = line.trim();
 				if (trimmed) { this._onDidLog.fire(trimmed); }
+			}
+			if (busyPort === undefined) {
+				busyPort = detectBusyPort(clean);
 			}
 			if (!settled) {
 				const match = DEV_URL_RE.exec(clean);
@@ -235,11 +253,19 @@ export class DevServerRuntime extends Disposable implements IVibeServerRuntime {
 			this._onDidLog.fire(`Процесс завершился (код ${e.code}).`);
 			if (!settled) {
 				settled = true;
+				if (busyPort !== undefined) {
+					rejectUrl(new DevServerPortBusyError(busyPort));
+					return;
+				}
 				const notFound = e.code === EXIT_COMMAND_NOT_FOUND_POSIX || e.code === EXIT_COMMAND_NOT_FOUND_WINDOWS;
 				rejectUrl(new Error(notFound
 					? `Команда «${command}» не найдена (код ${e.code}). ${command === 'npm' ? 'Убедитесь, что установлен Node.js (nodejs.org)' : `Убедитесь, что установлены Node.js и ${command}`}, и перезапустите VibeIDE. Если Node установлен через менеджер версий (nvm/fnm) или Homebrew — проверьте, что «${command}» доступна в вашем шелле.`
 					: `Dev-server завершился до готовности (код ${e.code})`));
+				return;
 			}
+			// Already running → the server died underneath us (crash or killed from another
+			// window's conflict dialog); the orchestrator flips the status to stopped.
+			this._onDidExitUnexpectedly.fire();
 		}));
 
 		this._onDidLog.fire(`${command} run ${script} (${this._rootUri.fsPath})`);
@@ -257,7 +283,7 @@ export class DevServerRuntime extends Disposable implements IVibeServerRuntime {
 		// Hand the bound port to main so termination/orphan-reaping can target the port owner —
 		// reliable even after intermediate shells (npm/cmd) exit and detach the worker PID.
 		await this._proc.notePort(id, parsed.hostname, port);
-		return { host: parsed.hostname, port, url };
+		return { host: parsed.hostname, port, url, requestedPort: busyPort !== undefined && busyPort !== port ? busyPort : undefined };
 	}
 
 	async stop(): Promise<void> {

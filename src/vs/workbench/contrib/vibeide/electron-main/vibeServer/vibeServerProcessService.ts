@@ -33,7 +33,7 @@ import { ILogService } from '../../../../../platform/log/common/log.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { IEnvironmentMainService } from '../../../../../platform/environment/electron-main/environmentMainService.js';
 import { getResolvedShellEnv } from '../../../../../platform/shell/node/shellEnv.js';
-import { IVibeServerProcessMain, IVibeServerProcExit, IVibeServerProcOutput, IVibeServerProcSpec } from '../../common/vibeServer/vibeServerProcessIpc.js';
+import { IVibeServerPortOwner, IVibeServerProcessMain, IVibeServerProcExit, IVibeServerProcOutput, IVibeServerProcSpec } from '../../common/vibeServer/vibeServerProcessIpc.js';
 
 /** Persisted identity of a spawned dev-server, used to reap orphans across launches. */
 interface IRecordedProc {
@@ -195,6 +195,27 @@ export class VibeServerProcessService extends Disposable implements IVibeServerP
 		if (child?.pid !== undefined) {
 			await this._killTreeByPid(child.pid);
 		}
+	}
+
+	async describePortOwners(port: number): Promise<IVibeServerPortOwner[]> {
+		const pids = await this._portOwners(port);
+		if (pids.length === 0) {
+			return [];
+		}
+		const live = await this._listLiveProcesses();
+		// The main process is shared across windows, so `_recorded` sees every VibeIDE-managed
+		// dev-server — match by reported port or by project cwd in the owner's command line.
+		const records = [...this._recorded.values()];
+		return pids.map(pid => {
+			const commandLine = live.get(pid) ?? '';
+			const managed = records.find(rec => rec.port === port || (commandLine.length > 0 && commandLine.includes(rec.cwd)));
+			return { pid, commandLine, vibeCwd: managed?.cwd };
+		});
+	}
+
+	async killPort(port: number): Promise<void> {
+		this._log.info(`[VibeServerProcess] freeing port ${port} on user request`);
+		await this._killByPort(port);
 	}
 
 	waitForPort(host: string, port: number, timeoutMs: number): Promise<boolean> {

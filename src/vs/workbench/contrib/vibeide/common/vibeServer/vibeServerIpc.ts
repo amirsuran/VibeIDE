@@ -40,6 +40,11 @@ export interface IVibeServerStarted {
 	readonly port: number;
 	/** `http://host:port/` — loopback URL of the running server. */
 	readonly url: string;
+	/**
+	 * The port the project asked for but found busy, when the dev-server fell back to `port`
+	 * instead. Drives the port-conflict dialog; absent when the server got its own port.
+	 */
+	readonly requestedPort?: number;
 }
 
 /**
