@@ -7,7 +7,20 @@
 
 ---
 
-## Приоритет на следующую итерацию (2026-06-08, после v0.19.4)
+## Приоритет на следующую итерацию (2026-07-06, после v1.5.4 — фичи в ветке `next`)
+
+Очередь согласована («по порядку»). Фичи — в ветке `next`, фиксы — в `main` (правило веток — CLAUDE.md «Git: ветки и дисциплина фич»):
+
+1. **Диагностика провайдеров — Фаза 2 (глубина)** — L5 сквозной тест + кольцевой лог-буфер send-path → секция «Диагностика провайдеров».
+2. **Звуковой пикер — Фаза 2** — React-пикер в Settings (превью по клику, «Обзор», слайдер громкости, чекбоксы событий) → пункт «Звуковое уведомление…» ниже.
+3. **Auto-feed model-quirks из телеметрии** — счётчики `safetyNet*` → data-driven пополнение каталога квирков → секция N.
+4. **Vibe Server: cookie-авторизация в превью (SameSite)** → VS.6.
+5. **Vibe Agents: модель на роль** — через `modelSelectionOfFeature` → секция Vibe Agents.
+6. **Уведомления: клик из Центра уведомлений Windows** — `ToastActivatorCLSID` в InnoSetup → секция desktop-уведомлений.
+
+Параллельно, без ветки (наблюдения на живых сессиях): обкатка токен-бюджетной компакции; перепроверка зависаний Zen; подтверждение `cache_control` через OpenRouter.
+
+### Хвост приоритета 2026-06-08 (после v0.19.4) — история
 
 Делать одними из первых:
 
@@ -3503,6 +3516,7 @@ Backlog (data-gated — не плодить спекулятивно, урок #
 - [x] **QR-код для LAN** (2026-06-29): свой энкодер `common/vibeQrEncode.ts` (byte-mode, EC level M, версии 1–3 single-block — без интерливинга, покрывает URL ≤42 байт; GF(256)/RS, маскирование, BCH format-info) + тест `test/common/vibeQrEncode.test.ts`; рендер SVG в webview (`vibeServerQr.ts`), команда «QR для телефона». *(Алгоритм по спецификации ISO/IEC 18004; финальную сканируемость подтвердить устройством.)*
 - [ ] **Screenshot превью** — **блокер: нет API.** iframe cross-origin (vscode-webview ↔ localhost) → canvas-capture невозможен; у core-webview нет content-capture API. Нужен нативный путь захвата.
 - [ ] **Dev-tunnels / публичный шеринг** — **блокер: инфра.** Публичные dev-tunnels требуют account-auth tunnel-сервис (remoteTunnel/shared process); `ITunnelService.openTunnel` даёт лишь локальный форвард, не публичный URL. `resolveExternalUri({allowTunneling})` уже покрывает remote-проброс.
+- [ ] **Cookie-авторизация в превью (SameSite)** — превью ломает cookie-логин дев-сайта: страница живёт в cross-site iframe (top-level в Electron всегда `vscode-file://`), браузер режет `Set-Cookie` без `SameSite=None; Secure`; прокси-обход top-level схему не меняет — не лечит. Согласованные варианты (репорт 2026-07-05): (а) перезапись `Set-Cookie` в main-прокси — дописывать `SameSite=None; Secure` (требует HTTPS-режима превью); (б) top-level `WebContentsView` вместо iframe — обходит проблему целиком, но крупнее; (в) минимум — предупреждение в UI, когда сайт ставит куки без `SameSite=None`. Выбор — на дизайн-проходе фичи (пункт 4 приоритетной очереди).
 - [x] **HTTPS self-signed** (2026-06-29): добавлена зависимость `selfsigned` (MIT); main-сервер генерирует in-memory self-signed cert (SAN localhost/127.0.0.1) и поднимает `https.createServer`, схема URL → `https`; ws → wss (inject-скрипт уже выбирает протокол). Настройка `vibeide.vibeServer.https` (default off). *(Браузер покажет предупреждение о недоверенном сертификате — ожидаемо.)*
 
 ### VS.7 Безопасность (сквозное — модель livepreview)
