@@ -2140,27 +2140,19 @@ const SingleDiffEditor = ({ block, lang }: { block: ExtractedSearchReplaceBlock;
 
 	const languageSelection = useMemo(() => languageService.createById(lang), [lang, languageService]);
 
-	// Create models for original and modified
-	const originalModel = useMemo(() =>
-		modelService.createModel(block.orig, languageSelection),
-		[block.orig, languageSelection, modelService]
-	);
-	const modifiedModel = useMemo(() =>
-		modelService.createModel(block.final, languageSelection),
-		[block.final, languageSelection, modelService]
-	);
-
-	// Models are disposed inside the editor effect's cleanup AFTER the widget is torn
-	// down — disposing them earlier triggers `TextModel got disposed before DiffEditorWidget
-	// model got reset` from DiffEditorWidget's onWillDispose listener.
-
 	// Imperatively mount the DiffEditorWidget
 	const divRef = useRef<HTMLDivElement | null>(null);
 	const editorRef = useRef<any>(null);
 
+	// Effect 1 — WIDGET lifecycle: created once per mount, survives content changes.
+	// Previously models lived in useMemo while THIS effect's cleanup disposed them: a
+	// streaming chunk changed only `block.final`, useMemo rebuilt only the modified
+	// model, and the cleanup disposed BOTH old models — including the original the next
+	// effect kept using (same useMemo object). A click then made wordHighlighter touch
+	// the disposed model → `TextModel got disposed before DiffEditorWidget model got
+	// reset` (roadmap bug #2). Resource ownership now lives entirely inside effects.
 	useEffect(() => {
-		if (!divRef.current) {return;}
-		// Create the diff editor instance
+		if (!divRef.current) { return; }
 		const editor = instantiationService.createInstance(
 			DiffEditorWidget,
 			divRef.current,
@@ -2181,6 +2173,9 @@ const SingleDiffEditor = ({ block, lang }: { block: ExtractedSearchReplaceBlock;
 				hover: { enabled: false },
 				folding: false,
 				selectionHighlight: false,
+				// Belt & suspenders for bug #2: a read-only preview needs no occurrence
+				// highlighting — this removes the wordHighlighter click-trigger entirely.
+				occurrencesHighlight: 'off',
 				renderLineHighlight: 'none',
 				overviewRulerLanes: 0,
 				hideCursorInOverviewRuler: true,
@@ -2193,7 +2188,24 @@ const SingleDiffEditor = ({ block, lang }: { block: ExtractedSearchReplaceBlock;
 			},
 			{ originalEditor: { isSimpleWidget: true }, modifiedEditor: { isSimpleWidget: true } }
 		);
-		editor.setModel({ original: originalModel, modified: modifiedModel });
+		editorRef.current = editor;
+		return () => {
+			editorRef.current = null;
+			// Detach models before disposing the widget so DiffEditorWidget releases
+			// its onWillDispose subscription cleanly.
+			editor.setModel(null);
+			editor.dispose();
+		};
+	}, [instantiationService]);
+
+	// Effect 2 — MODELS lifecycle: keyed by the content STRINGS (not model objects), so a
+	// streaming chunk swaps models on the live widget instead of recreating everything.
+	// Invariant: detach (setModel) BEFORE disposing the outgoing models — in either
+	// cleanup order relative to effect 1 this holds, which is what keeps bug #2 dead.
+	useEffect(() => {
+		const originalModel = modelService.createModel(block.orig, languageSelection);
+		const modifiedModel = modelService.createModel(block.final, languageSelection);
+		editorRef.current?.setModel({ original: originalModel, modified: modifiedModel });
 
 		// Calculate the height based on content
 		const updateHeight = () => {
@@ -2206,12 +2218,11 @@ const SingleDiffEditor = ({ block, lang }: { block: ExtractedSearchReplaceBlock;
 			const height = Math.min(Math.max(contentHeight, 100), 300);
 			if (divRef.current) {
 				divRef.current.style.height = `${height}px`;
-				editor.layout();
+				editorRef.current?.layout();
 			}
 		};
 
 		updateHeight();
-		editorRef.current = editor;
 
 		// Update height when content changes
 		const disposable1 = originalModel.onDidChangeContent(() => updateHeight());
@@ -2220,15 +2231,11 @@ const SingleDiffEditor = ({ block, lang }: { block: ExtractedSearchReplaceBlock;
 		return () => {
 			disposable1.dispose();
 			disposable2.dispose();
-			// Detach models before disposing the widget so DiffEditorWidget releases
-			// its onWillDispose subscription cleanly.
-			editor.setModel(null);
-			editor.dispose();
-			editorRef.current = null;
+			editorRef.current?.setModel(null);
 			originalModel.dispose();
 			modifiedModel.dispose();
 		};
-	}, [originalModel, modifiedModel, instantiationService]);
+	}, [block.orig, block.final, languageSelection, modelService]);
 
 	return (
 		<div className="w-full bg-vibe-bg-3 @@bg-editor-style-override" ref={divRef} />
