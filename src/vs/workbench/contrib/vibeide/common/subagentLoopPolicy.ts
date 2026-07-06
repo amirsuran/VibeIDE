@@ -34,12 +34,15 @@ export interface SubagentLoopState {
 	readonly tokensUsedEst: number;
 	readonly deniedActions: number;
 	readonly nowMs: number;
+	/** Cooperative cancellation (audit A): parent disposed the subagent — highest-priority stop. */
+	readonly cancelled: boolean;
 }
 
-export type SubagentStopReason = 'max-steps' | 'deadline' | 'token-budget' | 'denied-actions';
+export type SubagentStopReason = 'cancelled' | 'max-steps' | 'deadline' | 'token-budget' | 'denied-actions';
 
 /** Decide whether the loop must stop BEFORE the next LLM hop. `undefined` = keep going. */
 export function decideStop(state: SubagentLoopState, limits: SubagentLoopLimits): SubagentStopReason | undefined {
+	if (state.cancelled) { return 'cancelled'; }
 	if (state.stepsDone >= limits.maxSteps) { return 'max-steps'; }
 	if (limits.deadlineAtMs > 0 && state.nowMs >= limits.deadlineAtMs) { return 'deadline'; }
 	if (limits.maxTokensEst > 0 && state.tokensUsedEst >= limits.maxTokensEst) { return 'token-budget'; }
@@ -49,6 +52,7 @@ export function decideStop(state: SubagentLoopState, limits: SubagentLoopLimits)
 
 export function stopReasonToRussian(reason: SubagentStopReason): string {
 	switch (reason) {
+		case 'cancelled': return 'отменён родителем';
 		case 'max-steps': return 'исчерпан лимит шагов';
 		case 'deadline': return 'исчерпан лимит времени';
 		case 'token-budget': return 'исчерпана токен-квота';

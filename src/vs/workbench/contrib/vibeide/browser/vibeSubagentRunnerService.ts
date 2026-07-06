@@ -59,7 +59,12 @@ class VibeSubagentRunnerService extends Disposable implements IVibeSubagentRunne
 
 	async run(req: SubagentRunRequest): Promise<SubagentRunOutcome> {
 		const preset = this._registry.getPreset(req.type);
-		const modelSelection = req.modelSelection ?? this._settings.state.modelSelectionOfFeature?.['Chat'];
+		// Model priority (VA.2 «модель на роль»): explicit request → per-role mapping from
+		// settings → the session's Chat model. Read-only roles are the cost-routing case:
+		// a light model plans/reviews fine while the Chat model does the heavy lifting.
+		const modelSelection = req.modelSelection
+			?? this._settings.state.modelSelectionOfRole?.[req.type]
+			?? this._settings.state.modelSelectionOfFeature?.['Chat'];
 		if (!modelSelection || modelSelection.providerName === 'auto') {
 			return this._outcome(req, 'failed', 'Не выбрана модель для субагента (настройте модель чата).', [], 0, false, 'нет модели', []);
 		}
@@ -87,7 +92,7 @@ class VibeSubagentRunnerService extends Disposable implements IVibeSubagentRunne
 		this._activityLog.logStarted(`Subagent ${req.type} (${req.subagentId}): ${chatMode}-режим, шагов ≤${req.maxSteps}, модель ${modelSelection.providerName}/${modelSelection.modelName}`);
 
 		while (true) {
-			const stop = decideStop({ stepsDone, tokensUsedEst, deniedActions, nowMs: Date.now() }, limits);
+			const stop = decideStop({ stepsDone, tokensUsedEst, deniedActions, nowMs: Date.now(), cancelled: req.cancellationToken?.isCancellationRequested === true }, limits);
 			if (stop) {
 				const reason = stopReasonToRussian(stop);
 				this._activityLog.logError(`Subagent ${req.subagentId}: остановлен — ${reason}`);
@@ -198,10 +203,12 @@ class VibeSubagentRunnerService extends Disposable implements IVibeSubagentRunne
 		return new Promise<HopOutcome>(resolve => {
 			let settled = false;
 			let timer: ReturnType<typeof setTimeout> | undefined;
+			let cancelSub: { dispose(): void } | undefined;
 			const finish = (v: HopOutcome) => {
 				if (settled) { return; }
 				settled = true;
 				if (timer !== undefined) { clearTimeout(timer); }
+				cancelSub?.dispose();
 				resolve(v);
 			};
 			const requestId = this._llm.sendLLMMessage({
@@ -215,7 +222,7 @@ class VibeSubagentRunnerService extends Disposable implements IVibeSubagentRunne
 				onText: () => { },
 				onFinalMessage: p => finish({ kind: 'final', fullText: p.fullText, toolCall: p.toolCall }),
 				onError: e => finish({ kind: 'error', message: e.message || String(e) }),
-				onAbort: () => finish({ kind: 'error', message: 'запрос прерван (лимит времени субагента)' }),
+				onAbort: () => finish({ kind: 'error', message: 'запрос прерван (отмена или лимит времени субагента)' }),
 				logging: { loggingName: `Subagent/${opts.req.type}` },
 			});
 			if (requestId === null) { return; } // onError has already fired synchronously
@@ -223,6 +230,9 @@ class VibeSubagentRunnerService extends Disposable implements IVibeSubagentRunne
 				const remainingMs = Math.max(1_000, opts.deadlineAtMs - Date.now());
 				timer = setTimeout(() => this._llm.abort(requestId), remainingMs);
 			}
+			// Audit A: parent cancellation kills the IN-FLIGHT request too, not just the next
+			// hop — otherwise a disposed subagent still finishes (and pays for) this hop.
+			cancelSub = opts.req.cancellationToken?.onCancellationRequested(() => this._llm.abort(requestId));
 		});
 	}
 

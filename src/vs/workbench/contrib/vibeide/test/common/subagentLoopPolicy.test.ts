@@ -9,7 +9,7 @@ import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/tes
 import { decideStop, estimateTokensFromChars, truncateSummary, chatModeForAllowedTools, collectPathsFromRawParams, buildExploreReport, buildSubagentTaskMessage } from '../../common/subagentLoopPolicy.js';
 
 const LIMITS = { maxSteps: 5, maxTokensEst: 1000, deadlineAtMs: 10_000, maxDeniedActions: 3 };
-const OK_STATE = { stepsDone: 1, tokensUsedEst: 100, deniedActions: 0, nowMs: 5000 };
+const OK_STATE = { stepsDone: 1, tokensUsedEst: 100, deniedActions: 0, nowMs: 5000, cancelled: false };
 
 suite('subagentLoopPolicy — headless tool-loop decisions (Phase 3b)', () => {
 
@@ -24,8 +24,9 @@ suite('subagentLoopPolicy — headless tool-loop decisions (Phase 3b)', () => {
 				decideStop({ ...OK_STATE, tokensUsedEst: 1000 }, LIMITS),
 				decideStop({ ...OK_STATE, deniedActions: 3 }, LIMITS),
 				decideStop({ ...OK_STATE, nowMs: 999_999, tokensUsedEst: 999_999 }, { ...LIMITS, deadlineAtMs: 0, maxTokensEst: 0 }),
+				decideStop({ ...OK_STATE, cancelled: true }, LIMITS),
 			],
-			[undefined, 'max-steps', 'deadline', 'token-budget', 'denied-actions', undefined],
+			[undefined, 'max-steps', 'deadline', 'token-budget', 'denied-actions', undefined, 'cancelled'],
 		);
 	});
 

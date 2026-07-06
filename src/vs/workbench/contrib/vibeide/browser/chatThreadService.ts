@@ -2940,6 +2940,9 @@ class ChatThreadService extends Disposable implements IChatThreadService {
 		return toolMatchesPlanHints(String(toolName), step.tools);
 	}
 
+	/** One drift toast per plan step (audit B) — keyed `${threadId}:${planIdx}:${stepIdx}`; session-scoped. */
+	private readonly _driftNotifiedSteps = new Set<string>();
+
 	/** Returns true if execution should stop (plan paused for drift). */
 	private _pauseRunningPlanStepForToolDrift(threadId: string, toolName: ToolName): boolean {
 		const stepState = this._getCurrentStep(threadId, true);
@@ -2959,11 +2962,18 @@ class ChatThreadService extends Disposable implements IChatThreadService {
 		const autopilotOn = this._settingsService.state.globalSettings.chatAgentAutopilot === true;
 		const shouldPause = driftMode === 'always' ? true : driftMode === 'never' ? false : !autopilotOn;
 		if (!shouldPause) {
+			// Every drifting call lands in the activity log, but the toast fires ONCE per plan
+			// step (audit B) — a step whose tools all drift would otherwise spam a notification
+			// per tool call, recreating the annoyance this mode exists to remove.
 			this._agentActivityLog.logStarted(`Plan drift auto-continue: инструмент "${String(toolName)}" вне списка шага (${driftMode === 'never' ? 'режим never' : 'автопилот'})`);
-			this._notificationService.notify({
-				severity: Severity.Info,
-				message: localize('vibeide.planToolDriftAutoContinue', 'Шаг плана: инструмент "{0}" вне запланированных — продолжаю без паузы ({1}). Строгий режим: настройка vibeide.plans.toolDriftPause = always.', String(toolName), driftMode === 'never' ? 'режим never' : 'автопилот'),
-			});
+			const driftKey = `${threadId}:${stepState.planIdx}:${stepState.stepIdx}`;
+			if (!this._driftNotifiedSteps.has(driftKey)) {
+				this._driftNotifiedSteps.add(driftKey);
+				this._notificationService.notify({
+					severity: Severity.Info,
+					message: localize('vibeide.planToolDriftAutoContinue', 'Шаг плана: инструмент "{0}" вне запланированных — продолжаю без паузы ({1}). Строгий режим: настройка vibeide.plans.toolDriftPause = always.', String(toolName), driftMode === 'never' ? 'режим never' : 'автопилот'),
+				});
+			}
 			return false;
 		}
 		const { planIdx, stepIdx } = stepState;

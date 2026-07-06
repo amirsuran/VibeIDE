@@ -131,14 +131,19 @@ export class VibeProviderStatusBarContribution extends Disposable implements IWo
 	}
 
 	private _getCostEntryProps(): IStatusbarEntry {
-		const pricing = this._costForecastService.getPricing('gpt-4o-mini');
+		// Audit C (Void legacy): pricing was hardcoded to 'gpt-4o-mini' regardless of the
+		// model actually selected — price the CURRENT Chat model instead.
+		const chatModelName = this._settingsService.state.modelSelectionOfFeature?.['Chat']?.modelName;
+		const pricing = chatModelName ? this._costForecastService.getPricing(chatModelName) : undefined;
 		const text = pricing
 			? `$(symbol-currency) in ${pricing.inputPer1kTokens.toFixed(3)}/1k`
 			: '$(symbol-currency)';
 		return {
 			name: localize('vibeTokenCost', 'Стоимость токенов VibeIDE'),
 			text,
-			tooltip: localize('vibeTokenCostTooltip', 'Прогноз стоимости токенов. Запустите задачу, чтобы увидеть оценку.'),
+			tooltip: pricing && chatModelName
+				? localize('vibeTokenCostTooltipModel', 'Прогноз стоимости токенов для {0}.', chatModelName)
+				: localize('vibeTokenCostTooltip', 'Прогноз стоимости токенов. Запустите задачу, чтобы увидеть оценку.'),
 			command: 'vibeide.tokenBudget.status',
 			ariaLabel: localize('vibeTokenCostAria', 'Прогноз стоимости токенов'),
 		};

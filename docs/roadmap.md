@@ -15,10 +15,17 @@
 2. ✅ **Звуковой пикер — Фаза 2** — ревизия 2026-07-06: уже реализовано ранее (`NotificationSoundPanel` в Settings + редактор «VibeIDE Звуки»), TODO-пометка была устаревшей → пункт «Звуковое уведомление…» ниже.
 3. ✅ **Auto-feed model-quirks из телеметрии** — сделано 2026-07-06 (ветка `next`; сигнатура = повторные кросс-сессионные авто-даунгрейды) → секция N.
 4. ✅ **Vibe Server: cookie-авторизация в превью (SameSite)** — сделано 2026-07-06 (ветка `next`; ждёт live-smoke) → VS.6.
-5. 🔓 **Vibe Agents: модель на роль** — блокер снят 2026-07-06: **Phase 3b реализован** (real headless-раннер `vibeSubagentRunnerService`, ветка `next`); поле `modelSelection` в `SubagentRunRequest` уже готово. Остался хвост фичи: `modelSelectionOfRole` в settings-state (НЕ расширение `FeatureName`) + UI → секция Vibe Agents.
+5. ✅ **Vibe Agents: модель на роль** — сделано 2026-07-06 (аудит-проход, пункт D): `modelSelectionOfRole` в settings-state + секция «Роли агентов» в Settings + резолв в раннере → секция Vibe Agents / аудит-блок ниже.
 6. **Уведомления: клик из Центра уведомлений Windows** — `ToastActivatorCLSID` в InnoSetup → секция desktop-уведомлений.
 
 Параллельно, без ветки (наблюдения на живых сессиях): обкатка токен-бюджетной компакции; перепроверка зависаний Zen; подтверждение `cache_control` через OpenRouter.
+
+### Аудит-проход 2026-07-06 (вечер) — самопроверка сделанного за день
+
+- [x] **A (фикс, критичный после Phase 3b): отмена субагентов** — ✅ `CancellationTokenSource` per subagent в `vibeSubagentService` (`_ctsById`): `disposeSubagent` отменяет; раннер проверяет токен на границе хопа (`decideStop` → `'cancelled'`, высший приоритет) И абортит in-flight LLM-запрос через `onCancellationRequested → llm.abort(requestId)`. Токены больше не жгутся после dispose.
+- [x] **B (фикс): дедуп инфо-уведомлений план-дрифта** — ✅ тост один раз на шаг плана (`_driftNotifiedSteps`, ключ `threadId:planIdx:stepIdx`); каждый дрифт по-прежнему в activity-log.
+- [x] **C (легаси-хардкод, Void-наследие): статус-бар стоимости** — ✅ прайс берётся для текущей Chat-модели вместо захардкоженного `gpt-4o-mini`; тултип называет модель.
+- [x] **D (фича, хвост №5): модель на роль** — ✅ `modelSelectionOfRole` в `VibeideSettingsState` (ключ — SubagentType, отсутствие/null = модель чата; сеттер `setModelSelectionOfRole`, миграция-safe optional-поле) + секция «Роли агентов — модель на роль» в Settings (select по `_modelOptions` + «как в чате», бейдж «только чтение» у read-only ролей — подсказка cost-routing); раннер: приоритет явный запрос → маппинг роли → модель чата. №5 приоритетной очереди закрыт.
 
 ### Хвост приоритета 2026-06-08 (после v0.19.4) — история
 
@@ -3690,7 +3697,7 @@ Backlog (data-gated — не плодить спекулятивно, урок #
 - [x] **Permission-модель на роль** = `allowedTools`: read-only (orchestrator/planner/code-reviewer/security — только read/list/grep/glob/semantic_search) vs full (designer/frontend/backend/qa — +write/edit/terminal). Зеркалится в реестре и в runtime-whitelist.
 - [x] orchestrator = read-only координатор (делегирует, не пишет, не запускает).
 - [x] **Phase 3b — real headless-раннер субагентов** — ✅ (2026-07-06, ветка `next`). Заглушка `_runSubagent` (50мс setTimeout + стаб) удалена; реальный LLM↔tools цикл: контракт `common/vibeSubagentRunner.ts` (`IVibeSubagentRunner`, DI в `vibeSubagentService`), pure-политика `common/subagentLoopPolicy.ts` (decideStop по шагам/дедлайну/токен-оценке/отказам, chatMode по whitelist'у — read-only роли идут в `gather` (approval-тулы отсутствуют в промпте by-design), full — в `agent`; сборка task-message, explore-report; тесты) + `browser/vibeSubagentRunnerService.ts`: изолированный транскрипт (in-memory `ChatMessage[]`, тред-стор не трогается — изоляция по I.0), `prepareLLMChatMessages` → `sendLLMMessage` (промис-обёртка, дедлайн-abort) → runtime-enforcement whitelist (запрет = корректирующий `invalid_params` в контекст) → `validateParams`/`callTool`/`stringOfResult`; approval-тулы full-ролей — явный confirm-диалог («раннер никогда не пишет молча»); `vibe_complete`/проза = завершение; `tokensUsed` — оценка chars/4; прогресс в activity-log. **Бонус-фикс:** whitelist-таблицы ролей (`TOOL_WHITELIST` + `ROLE_*_TOOLS` в реестре) содержали НЕСУЩЕСТВУЮЩИЕ имена тулов (`list_dir`/`write_file`/`semantic_search`/`run_terminal_command`) — заглушка это скрывала; приведены к реальным builtin-именам (`ls_dir`/`rewrite_file`+`create_file_or_folder`/`search_for_files`/`run_command`). Вне объёма (следующие фазы): worktree для implement-step, inline-карточки, unattended (J), процессная изоляция LLM-цикла (осознанно: петле нужны renderer-сервисы; изоляция = транскрипт+бюджет). **Live-smoke обязателен.**
-- [ ] Модели на роль — через отдельный `modelSelectionOfRole` в settings-state (роль→предпочтительная модель; НЕ расширение `FeatureName`): **разблокирован Phase 3b** (2026-07-06) — поле `modelSelection` в `SubagentRunRequest` готово, роль пока наследует модель чата. Осталось: маппинг в settings-state + UI-дропдауны ролей.
+- [x] Модели на роль — ✅ (2026-07-06, аудит-проход D, ветка `next`): `modelSelectionOfRole` в `VibeideSettingsState` (persist через общий стор; отсутствие ключа/null = модель чата) + `setModelSelectionOfRole` + секция «Роли агентов — модель на роль» в Settings (select по `_modelOptions`, бейдж «только чтение» как подсказка cost-routing) + резолв в `vibeSubagentRunnerService` (приоритет: явный запрос → роль → Chat).
 
 ### VA.3 Фаза 2 — оркестрация и права
 

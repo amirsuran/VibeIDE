@@ -20,6 +20,7 @@
  */
 
 import { Disposable } from '../../../../base/common/lifecycle.js';
+import { CancellationTokenSource } from '../../../../base/common/cancellation.js';
 import { Emitter, Event } from '../../../../base/common/event.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { registerSingleton, InstantiationType } from '../../../../platform/instantiation/common/extensions.js';
@@ -193,6 +194,8 @@ class VibeSubagentService extends Disposable implements IVibeSubagentService {
 
 	private readonly _registry = new Map<string, SubagentEntry>();
 	private readonly _waiters = new Map<string, { resolve: (r: SubagentResult) => void; reject: (e: Error) => void }>();
+	/** Cancellation per live subagent (audit A) — disposeSubagent cancels the runner's loop. */
+	private readonly _ctsById = new Map<string, CancellationTokenSource>();
 
 	private readonly _onStatusChanged = this._register(new Emitter<SubagentEntry>());
 	readonly onSubagentStatusChanged: Event<SubagentEntry> = this._onStatusChanged.event;
@@ -219,6 +222,7 @@ class VibeSubagentService extends Disposable implements IVibeSubagentService {
 			handoff,
 		};
 		this._registry.set(id, entry);
+		this._ctsById.set(id, new CancellationTokenSource());
 
 		this._log.info(`[VibeSubagent] Spawning ${handoff.type} subagent ${id} for thread ${handoff.parentThreadId}`);
 		this._audit.append({ ts: Date.now(), action: 'subagent_spawned', ok: true, meta: { subagentId: id, type: handoff.type, parentThreadId: handoff.parentThreadId } });
@@ -263,6 +267,14 @@ class VibeSubagentService extends Disposable implements IVibeSubagentService {
 		entry.status = 'disposed';
 		this._registry.delete(subagentId);
 		this._waiters.delete(subagentId);
+		// Audit A: a live runner loop must die with its registry entry — cancel stops it at
+		// the hop boundary and aborts the in-flight LLM request (no more token burn).
+		const cts = this._ctsById.get(subagentId);
+		if (cts) {
+			cts.cancel();
+			cts.dispose();
+			this._ctsById.delete(subagentId);
+		}
 		this._log.info(`[VibeSubagent] Disposed ${subagentId}`);
 	}
 
@@ -322,6 +334,7 @@ class VibeSubagentService extends Disposable implements IVibeSubagentService {
 			maxSteps,
 			maxTokensEst: Math.max(0, maxTokens),
 			maxWallClockMs: handoff.maxWallClockMs ?? 0,
+			cancellationToken: this._ctsById.get(entry.id)?.token,
 		});
 
 		const result: SubagentResult = {
@@ -339,6 +352,12 @@ class VibeSubagentService extends Disposable implements IVibeSubagentService {
 	}
 
 	private _completeWithResult(entry: SubagentEntry, result: SubagentResult): void {
+		// The loop is over — release the cancellation source (dispose-after-complete is a no-op path).
+		const cts = this._ctsById.get(entry.id);
+		if (cts) {
+			cts.dispose();
+			this._ctsById.delete(entry.id);
+		}
 		entry.result = result;
 		entry.status = result.status === 'success' ? 'completed' : (result.status === 'skipped' ? 'skipped' : 'failed');
 		this._onStatusChanged.fire(entry);

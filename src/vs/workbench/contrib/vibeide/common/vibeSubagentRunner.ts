@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
+import type { CancellationToken } from '../../../../base/common/cancellation.js';
 import type { ModelSelection } from './vibeideSettingsTypes.js';
 import type { SubagentType, ExploreSubagentReport } from './vibeSubagentService.js';
 
@@ -32,6 +33,11 @@ export interface SubagentRunRequest {
 	readonly maxWallClockMs: number;
 	/** Per-role model (roadmap VA.2 «модель на роль»); null/undefined → the session's Chat model. */
 	readonly modelSelection?: ModelSelection | null;
+	/**
+	 * Cooperative cancellation (audit A): checked at every hop boundary AND aborts the
+	 * in-flight LLM request. Without it a disposed subagent kept burning tokens to its limits.
+	 */
+	readonly cancellationToken?: CancellationToken;
 }
 
 export interface SubagentRunOutcome {

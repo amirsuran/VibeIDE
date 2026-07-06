@@ -155,7 +155,7 @@ const ROLE_READONLY_TOOLS = ['read_file', 'ls_dir', 'grep', 'glob', 'search_for_
 /** Full tool whitelist — roles that build (write/edit/run). */
 const ROLE_FULL_TOOLS = [...ROLE_READONLY_TOOLS, 'edit_file', 'rewrite_file', 'create_file_or_folder', 'run_command'];
 
-const VIBE_AGENT_ROLE_PRESETS: SubagentPreset[] = [
+export const VIBE_AGENT_ROLE_PRESETS: SubagentPreset[] = [
 	{
 		type: 'orchestrator',
 		displayName: 'Оркестратор',
