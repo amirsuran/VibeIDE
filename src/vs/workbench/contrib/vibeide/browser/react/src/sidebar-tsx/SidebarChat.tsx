@@ -4420,16 +4420,30 @@ const _ChatBubble = React.memo(({ threadId, chatMessage, currCheckpointIdx, isCo
 		prev._scrollToBottom === next._scrollToBottom;
 });
 
-const CommandBarInChat = () => {
+const CommandBarInChat = ({ onJumpToPlan }: { onJumpToPlan?: (messageIdx: number) => void }) => {
 	const { stateOfURI: commandBarStateOfURI, sortedURIs: sortedCommandBarURIs } = useCommandBarState();
 	const numFilesChanged = sortedCommandBarURIs.length;
 
 	const accessor = useAccessor();
 	const editCodeService = accessor.get('IEditCodeService');
 	const commandService = accessor.get('ICommandService');
+	const chatThreadService = accessor.get('IChatThreadService');
 	const chatThreadsState = useChatThreadsState();
 	const commandBarState = useCommandBarState();
 	const chatThreadsStreamState = useChatThreadsStreamState(chatThreadsState.currentThreadId);
+
+	// Paused persisted plan (tool drift etc.): surface a resume chip HERE, next to the input —
+	// without it the user has to scroll up to the plan card for the «Возобновить» button on
+	// every pause. Latest paused plan wins (that's the one blocking progress).
+	const pausedPlanIdx = useMemo(() => {
+		const threadId = chatThreadsState.currentThreadId;
+		const messages = (threadId ? chatThreadsState.allThreads[threadId]?.messages : undefined) ?? [];
+		for (let i = messages.length - 1; i >= 0; i--) {
+			const m = messages[i];
+			if (m.role === 'plan' && (m as PlanMessage).steps?.some(s => s.status === 'paused')) { return i; }
+		}
+		return undefined;
+	}, [chatThreadsState]);
 
 	// Chat → Markdown: Copy keeps tool-results truncated (small clipboard payload), Export writes
 	// the full log to a .md file. Both serialize collapsed reasoning blocks regardless of UI state.
@@ -4722,6 +4736,32 @@ const CommandBarInChat = () => {
 						data-tooltip-place='top'
 						data-tooltip-content={chatS.exportChatExportTooltip}
 					/>
+					{pausedPlanIdx !== undefined && (
+						<div className="flex items-center gap-0.5 ml-1">
+							<button
+								type='button'
+								className="flex items-center gap-1 px-1.5 py-0.5 rounded text-amber-400 bg-amber-500/10 border border-amber-500/20 hover:bg-amber-500/20 cursor-pointer transition-all duration-200"
+								onClick={() => { void chatThreadService.resumeAgentExecution({ threadId: chatThreadsState.currentThreadId }); }}
+								data-tooltip-id='vibe-tooltip'
+								data-tooltip-place='top'
+								data-tooltip-content='Шаг плана на паузе — возобновить выполнение, не листая к карточке'
+							>
+								⏸ План на паузе — возобновить
+							</button>
+							{onJumpToPlan && (
+								<button
+									type='button'
+									className="px-1 py-0.5 rounded text-amber-400/80 hover:text-amber-400 hover:bg-amber-500/10 cursor-pointer transition-all duration-200"
+									onClick={() => onJumpToPlan(pausedPlanIdx)}
+									data-tooltip-id='vibe-tooltip'
+									data-tooltip-place='top'
+									data-tooltip-content='Показать карточку плана'
+								>
+									↑
+								</button>
+							)}
+						</div>
+					)}
 				</div>
 				{/* Status indicator FIRST so the accept/reject-all buttons stay pinned to the
 				    right edge and never shift horizontally when the status label width changes
@@ -6204,7 +6244,7 @@ export const SidebarChat = () => {
 
 	const threadPageInput = <div key={'input' + chatThreadsState.currentThreadId}>
 		<div className='px-4'>
-			<CommandBarInChat />
+			<CommandBarInChat onJumpToPlan={(messageIdx) => { virtuosoRef.current?.scrollToIndex({ index: messageIdx, behavior: 'smooth', align: 'start' }); }} />
 		</div>
 		<div className='px-2 pb-2'>
 			{inputChatArea}
