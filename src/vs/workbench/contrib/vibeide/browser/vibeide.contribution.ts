@@ -138,6 +138,8 @@ import './codeReviewCommands.js';
 
 // model-quirks auto-feed: durable-quirk suggestion on repeated cross-session auto-downgrades
 import './vibeQuirkAutoFeedService.js';
+// headless subagent tool-loop runner (Phase 3b) — real executor behind vibeSubagentService
+import './vibeSubagentRunnerService.js';
 
 // notification sounds on agent stop / completion / awaiting-user
 import './vibeNotifySoundService.js';

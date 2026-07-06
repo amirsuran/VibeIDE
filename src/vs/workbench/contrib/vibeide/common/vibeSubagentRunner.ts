@@ -1,0 +1,58 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
+import type { ModelSelection } from './vibeideSettingsTypes.js';
+import type { SubagentType, ExploreSubagentReport } from './vibeSubagentService.js';
+
+/**
+ * Headless subagent runner contract (Phase 3b). Declared in `common` so
+ * `vibeSubagentService` (common) can depend on it; the implementation — a real
+ * LLM↔tools loop over renderer services — lives in `browser/vibeSubagentRunnerService.ts`.
+ *
+ * Context isolation follows roadmap § I.0: the subagent gets its OWN transcript
+ * (an in-memory message buffer, never the thread store) and its own budgets.
+ */
+
+export interface SubagentRunRequest {
+	readonly subagentId: string;
+	/** Role/type — the runner resolves its preset (framing, display name) from the registry. */
+	readonly type: SubagentType;
+	readonly goal: string;
+	readonly acceptanceCriteria?: string;
+	readonly contextItems?: readonly string[];
+	/** Runtime-enforced tool whitelist (constraints inheritance — never weakened). */
+	readonly allowedTools: readonly string[];
+	readonly maxSteps: number;
+	/** Estimated-token quota (0 = unlimited). */
+	readonly maxTokensEst: number;
+	/** Wall-clock limit in ms (0 = no limit). */
+	readonly maxWallClockMs: number;
+	/** Per-role model (roadmap VA.2 «модель на роль»); null/undefined → the session's Chat model. */
+	readonly modelSelection?: ModelSelection | null;
+}
+
+export interface SubagentRunOutcome {
+	readonly status: 'success' | 'failed';
+	/** Compact summary (≤500 chars — the handoff contract). */
+	readonly summary: string;
+	/** File paths touched by write-tools during the run. */
+	readonly artifacts: string[];
+	/** ESTIMATED tokens spent (chars/4 heuristic) — not provider-reported usage. */
+	readonly tokensUsedEst: number;
+	/** True when a step/deadline/token/denied-actions limit ended the run early. */
+	readonly truncated: boolean;
+	/** Human-readable stop cause for logs/summary. */
+	readonly stopReason: string;
+	readonly exploreReport?: ExploreSubagentReport;
+}
+
+export const IVibeSubagentRunner = createDecorator<IVibeSubagentRunner>('vibeSubagentRunner');
+
+export interface IVibeSubagentRunner {
+	readonly _serviceBrand: undefined;
+	/** Execute the isolated tool-loop for one subagent and return its compact outcome. */
+	run(request: SubagentRunRequest): Promise<SubagentRunOutcome>;
+}

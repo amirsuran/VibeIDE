@@ -27,6 +27,7 @@ import { ILogService } from '../../../../platform/log/common/log.js';
 import { IVibeTokenBudgetService } from './vibeTokenBudgetService.js';
 import { IAuditLogService } from './auditLogService.js';
 import { IVibeConstraintsService } from './vibeConstraintsService.js';
+import { IVibeSubagentRunner } from './vibeSubagentRunner.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -162,20 +163,27 @@ const DEFAULT_MAX_TOKENS = 20_000;
 
 // ── Tool whitelists per type ──────────────────────────────────────────────────
 
+// Tool names MUST be real builtin tool ids (`builtinToolDefs` keys) — the Phase 3b runner
+// enforces this whitelist at every call, so a phantom name here silently bricks the role.
+// (Pre-3b these tables carried nonexistent names — list_dir/write_file/semantic_search/
+// run_terminal_command — which the MVP stub never exercised.)
+const READONLY_TOOLS: string[] = ['read_file', 'ls_dir', 'grep', 'glob', 'search_for_files', 'search_pathnames_only'];
+const FULL_TOOLS: string[] = [...READONLY_TOOLS, 'edit_file', 'rewrite_file', 'create_file_or_folder', 'run_command'];
+
 const TOOL_WHITELIST: Record<SubagentType, string[]> = {
-	'explore': ['read_file', 'list_dir', 'grep', 'glob', 'semantic_search'],
-	'implement-step': ['read_file', 'write_file', 'edit_file', 'run_terminal_command', 'list_dir', 'grep'],
-	'recover-or-skip': ['read_file', 'run_terminal_command', 'grep'],
+	'explore': READONLY_TOOLS,
+	'implement-step': FULL_TOOLS,
+	'recover-or-skip': ['read_file', 'run_command', 'grep'],
 	// Vibe Agents (VA) — must mirror allowedTools in vibeSubagentRegistryService presets.
 	// Read-only roles (orchestrator/planner/code-reviewer/security) cannot write or run.
-	'orchestrator': ['read_file', 'list_dir', 'grep', 'glob', 'semantic_search'],
-	'planner': ['read_file', 'list_dir', 'grep', 'glob', 'semantic_search'],
-	'code-reviewer': ['read_file', 'list_dir', 'grep', 'glob', 'semantic_search'],
-	'security': ['read_file', 'list_dir', 'grep', 'glob', 'semantic_search'],
-	'designer': ['read_file', 'write_file', 'edit_file', 'run_terminal_command', 'list_dir', 'grep', 'glob'],
-	'frontend-dev': ['read_file', 'write_file', 'edit_file', 'run_terminal_command', 'list_dir', 'grep', 'glob'],
-	'backend-dev': ['read_file', 'write_file', 'edit_file', 'run_terminal_command', 'list_dir', 'grep', 'glob'],
-	'qa': ['read_file', 'write_file', 'edit_file', 'run_terminal_command', 'list_dir', 'grep', 'glob'],
+	'orchestrator': READONLY_TOOLS,
+	'planner': READONLY_TOOLS,
+	'code-reviewer': READONLY_TOOLS,
+	'security': READONLY_TOOLS,
+	'designer': FULL_TOOLS,
+	'frontend-dev': FULL_TOOLS,
+	'backend-dev': FULL_TOOLS,
+	'qa': FULL_TOOLS,
 };
 
 // ── Implementation ────────────────────────────────────────────────────────────
@@ -194,6 +202,7 @@ class VibeSubagentService extends Disposable implements IVibeSubagentService {
 		@IVibeTokenBudgetService private readonly _budget: IVibeTokenBudgetService,
 		@IAuditLogService private readonly _audit: IAuditLogService,
 		@IVibeConstraintsService private readonly _constraints: IVibeConstraintsService,
+		@IVibeSubagentRunner private readonly _runner: IVibeSubagentRunner,
 	) {
 		super();
 	}
@@ -288,67 +297,42 @@ class VibeSubagentService extends Disposable implements IVibeSubagentService {
 		const allowedTools = TOOL_WHITELIST[entry.type];
 
 		// Constraints / permissions are ALWAYS inherited from parent — never weakened.
-		// The subagent's tool-loop will call _constraints.checkWriteAllowed() before any write,
-		// exactly as the parent agent does. No additional constraint downgrade is possible.
-		// This check is a pre-flight: ensure the constraints service is reachable.
+		// The runner executes tools through the same IToolsService as the parent agent, so
+		// every constraints check (checkWriteAllowed etc.) applies identically; on top of
+		// that the runner enforces the role's tool whitelist at each call.
 		const constraintsOk = !!this._constraints;
 
-		// Worktree binding: implement-step subagents can run in an isolated git worktree
-		// Phase 3b: create worktree via IVibeGitWorktreeService before spawning tool-loop
+		// Worktree binding: implement-step subagents can run in an isolated git worktree.
+		// Still a later phase: create worktree via IVibeGitWorktreeService before the loop.
 		const worktreeInfo = (entry.type === 'implement-step' && handoff.useWorktree)
-			? `worktree=${handoff.worktreeBranch ?? 'auto'}`
+			? `worktree=${handoff.worktreeBranch ?? 'auto'} (not yet created — later phase)`
 			: 'no-worktree';
 
 		this._log.info(`[VibeSubagent] ${entry.id} — type=${entry.type} maxTokens=${maxTokens} maxSteps=${maxSteps} tools=${allowedTools.join(',')} constraintsInherited=${constraintsOk} ${worktreeInfo}`);
 
-		// Wall-clock timeout enforcement
-		const maxWallClockMs = handoff.maxWallClockMs ?? 0;
-		let timedOut = false;
-		let wallClockTimer: ReturnType<typeof setTimeout> | undefined;
-		if (maxWallClockMs > 0) {
-			wallClockTimer = setTimeout(() => {
-				timedOut = true;
-				this._log.warn(`[VibeSubagent] ${entry.id} wall-clock limit hit (${maxWallClockMs}ms) — truncating result`);
-			}, maxWallClockMs);
-		}
-
-		// Phase 3b: wire into real agent runner with isolated context window.
-		// MVP: simulate a compact placeholder result so the service contract is exercisable.
-		// The real implementation delegates to a headless tool-loop runner
-		// (same executor as chatThreadService, but in an isolated context)
-		// and returns a SubagentResult bound by MAX_RESULT_SUMMARY_CHARS.
-		//
-		// Wall-clock and step limits are checked in the tool-loop at each iteration.
-
-		// Simulate minimal async work (Phase 3b: real tool-loop execution)
-		await new Promise(r => setTimeout(r, 50));
-
-		if (wallClockTimer) { clearTimeout(wallClockTimer); }
-
-		const isExplore = entry.type === 'explore';
-		const exploreReport: ExploreSubagentReport | undefined = isExplore ? {
-			paths: handoff.contextItems ?? [],
-			citations: [],
-			confidence: timedOut ? 0.3 : 0.5,
-			truncated: timedOut,
-			truncationSuggestion: timedOut ? 'retry' : undefined,
-		} : undefined;
+		// Phase 3b: the real headless tool-loop. Step / wall-clock / token limits are
+		// enforced inside the runner at every iteration; the outcome is already compact.
+		const outcome = await this._runner.run({
+			subagentId: entry.id,
+			type: entry.type,
+			goal: handoff.goal,
+			acceptanceCriteria: handoff.acceptanceCriteria,
+			contextItems: handoff.contextItems,
+			allowedTools,
+			maxSteps,
+			maxTokensEst: Math.max(0, maxTokens),
+			maxWallClockMs: handoff.maxWallClockMs ?? 0,
+		});
 
 		const result: SubagentResult = {
 			subagentId: entry.id,
-			status: 'success',
-			summary: this._truncate(
-				timedOut
-					? `[Truncated — wall-clock limit] Subagent ${entry.type} for: ${handoff.goal}. Use exploreReport for partial findings.`
-					: `[MVP stub] Subagent ${entry.type} for: ${handoff.goal}. ` +
-					`Allowed tools: ${allowedTools.join(', ')}. ` +
-					`Full isolated execution available in Phase 3b.`,
-				MAX_RESULT_SUMMARY_CHARS,
-			),
-			artifacts: [],
-			tokensUsed: 0,
-			truncated: timedOut,
-			exploreReport,
+			status: outcome.status,
+			summary: this._truncate(outcome.summary, MAX_RESULT_SUMMARY_CHARS),
+			artifacts: outcome.artifacts,
+			tokensUsed: outcome.tokensUsedEst,
+			truncated: outcome.truncated || undefined,
+			...(outcome.status === 'failed' ? { reason: outcome.stopReason } : {}),
+			...(outcome.exploreReport ? { exploreReport: outcome.exploreReport } : {}),
 		};
 
 		this._completeWithResult(entry, result);

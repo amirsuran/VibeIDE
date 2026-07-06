@@ -144,10 +144,16 @@ const BUILT_IN_PRESETS: SubagentPreset[] = [
 // planner, code-reviewer, security) physically cannot write or run commands. Merged
 // into the preset map at construction time (see class field) to avoid const TDZ.
 
+/**
+ * Tool names MUST be real builtin tool ids (`builtinToolDefs` keys) — the Phase 3b runner
+ * enforces these whitelists at every call. Kept in sync with TOOL_WHITELIST in
+ * `vibeSubagentService.ts`. (Pre-3b these carried nonexistent names — list_dir/write_file/
+ * semantic_search/run_terminal_command — which the MVP stub never exercised.)
+ */
 /** Read-only tool whitelist — roles that must not modify the workspace. */
-const ROLE_READONLY_TOOLS = ['read_file', 'list_dir', 'grep', 'glob', 'semantic_search'];
+const ROLE_READONLY_TOOLS = ['read_file', 'ls_dir', 'grep', 'glob', 'search_for_files', 'search_pathnames_only'];
 /** Full tool whitelist — roles that build (write/edit/run). */
-const ROLE_FULL_TOOLS = ['read_file', 'write_file', 'edit_file', 'run_terminal_command', 'list_dir', 'grep', 'glob'];
+const ROLE_FULL_TOOLS = [...ROLE_READONLY_TOOLS, 'edit_file', 'rewrite_file', 'create_file_or_folder', 'run_command'];
 
 const VIBE_AGENT_ROLE_PRESETS: SubagentPreset[] = [
 	{
