@@ -15,7 +15,7 @@
 2. ✅ **Звуковой пикер — Фаза 2** — ревизия 2026-07-06: уже реализовано ранее (`NotificationSoundPanel` в Settings + редактор «VibeIDE Звуки»), TODO-пометка была устаревшей → пункт «Звуковое уведомление…» ниже.
 3. ✅ **Auto-feed model-quirks из телеметрии** — сделано 2026-07-06 (ветка `next`; сигнатура = повторные кросс-сессионные авто-даунгрейды) → секция N.
 4. ✅ **Vibe Server: cookie-авторизация в превью (SameSite)** — сделано 2026-07-06 (ветка `next`; ждёт live-smoke) → VS.6.
-5. **Vibe Agents: модель на роль** — через `modelSelectionOfFeature` → секция Vibe Agents.
+5. ⛔ **Vibe Agents: модель на роль** — ЗАБЛОКИРОВАНО Phase 3b (подтверждено 2026-07-06: `_runSubagent` — MVP-заглушка, LLM для ролей не вызывается — модель привязывать не к чему; сначала real agent runner). Дизайн-заготовка на будущее: отдельный `modelSelectionOfRole` в settings-state (НЕ расширение `FeatureName`) + поле в `SubagentHandoff` → секция Vibe Agents.
 6. **Уведомления: клик из Центра уведомлений Windows** — `ToastActivatorCLSID` в InnoSetup → секция desktop-уведомлений.
 
 Параллельно, без ветки (наблюдения на живых сессиях): обкатка токен-бюджетной компакции; перепроверка зависаний Zen; подтверждение `cache_control` через OpenRouter.
