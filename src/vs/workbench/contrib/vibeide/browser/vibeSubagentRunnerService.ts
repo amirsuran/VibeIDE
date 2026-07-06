@@ -16,6 +16,7 @@ import { IVibeideSettingsService } from '../common/vibeideSettingsService.js';
 import { ChatMessage } from '../common/chatThreadServiceTypes.js';
 import { BuiltinToolName, ToolName } from '../common/toolsServiceTypes.js';
 import { approvalTypeOfBuiltinToolName } from '../common/prompt/tools/index.js';
+import { truncateHeadTail } from '../common/toolHardening.js';
 import { IVibeSubagentRunner, SubagentRunRequest, SubagentRunOutcome } from '../common/vibeSubagentRunner.js';
 import { IVibeSubagentRegistryService } from '../common/vibeSubagentRegistryService.js';
 import { decideStop, estimateTokensFromChars, truncateSummary, chatModeForAllowedTools, collectPathsFromRawParams, buildExploreReport, buildSubagentTaskMessage, stopReasonToRussian, SUBAGENT_MAX_DENIED_ACTIONS } from '../common/subagentLoopPolicy.js';
@@ -25,6 +26,12 @@ import { IVibeAgentActivityLogService } from './vibeAgentActivityLogService.js';
 
 /** The compact-handoff contract: no result field exceeds this. */
 const MAX_SUMMARY_CHARS = 500;
+/**
+ * Tool results are head+tail-truncated BEFORE entering the loop's history (audit I): the
+ * history is re-sent on every hop, so one big read_file would inflate every later hop and
+ * eat the (now honest) token quota. The model still sees both ends of the output.
+ */
+const SUBAGENT_TOOL_RESULT_MAX_CHARS = 16_000;
 /** Tools whose successful calls count as produced artifacts. */
 const WRITE_TOOL_NAMES = new Set(['edit_file', 'rewrite_file', 'create_file_or_folder']);
 
@@ -174,7 +181,7 @@ class VibeSubagentRunnerService extends Disposable implements IVibeSubagentRunne
 
 			try {
 				const { result } = await this._tools.callTool[toolName](params as never);
-				const content = this._tools.stringOfResult[toolName](params as never, result as never);
+				const content = truncateHeadTail(this._tools.stringOfResult[toolName](params as never, result as never), SUBAGENT_TOOL_RESULT_MAX_CHARS);
 				const paths = collectPathsFromRawParams(toolCall.rawParams);
 				touchedPaths.push(...paths);
 				if (WRITE_TOOL_NAMES.has(toolName)) { artifacts.push(...paths); }
