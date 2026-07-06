@@ -343,19 +343,26 @@ if ($tagExists) {
     OK "Tag $Version pushed"
 }
 
-# ── 5. GitHub Release ─────────────────────────────────────────────────────────
-Step "Creating GitHub Release $Version..."
+# ── 5. GitHub Release: create, or upload into the existing one (mac first) ────
+gh release view $Version *> $null
+if ($LASTEXITCODE -eq 0) {
+    Step "Release $Version exists — uploading Windows artifacts into it..."
+    & gh release upload $Version @artifacts
+    if ($LASTEXITCODE -ne 0) { Write-Error "gh release upload failed"; exit 1 }
+} else {
+    Step "Creating GitHub Release $Version..."
 
-$releaseArgs = @(
-    "release", "create", $Version,
-    "--title", "VibeIDE $Version",
-    "--generate-notes"
-)
-if ($Draft) { $releaseArgs += "--draft" }
-$releaseArgs += $artifacts
+    $releaseArgs = @(
+        "release", "create", $Version,
+        "--title", "VibeIDE $Version",
+        "--generate-notes"
+    )
+    if ($Draft) { $releaseArgs += "--draft" }
+    $releaseArgs += $artifacts
 
-& gh @releaseArgs
-if ($LASTEXITCODE -ne 0) { Write-Error "gh release create failed"; exit 1 }
+    & gh @releaseArgs
+    if ($LASTEXITCODE -ne 0) { Write-Error "gh release create failed"; exit 1 }
+}
 
 OK "Release $Version published!"
 Write-Host "`n🎉 Done! https://github.com/VibeBrains/VibeIDE/releases/tag/$Version`n" -ForegroundColor Cyan
