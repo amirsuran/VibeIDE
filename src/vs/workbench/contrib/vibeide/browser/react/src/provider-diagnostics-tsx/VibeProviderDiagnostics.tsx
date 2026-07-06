@@ -350,6 +350,28 @@ export const VibeProviderDiagnostics: React.FC = () => {
 				lines.push('');
 			}
 		} catch { /* trace is best-effort — the report is still useful without it */ }
+		// Per-model normalization drill-down (Phase 3 / audit G): which model the layers carry —
+		// same data as the Settings panel, so the exported report is self-sufficient for an issue.
+		try {
+			const byModel = await llm.getNormalizeCountersByModel();
+			const rowsByModel = Object.entries(byModel)
+				.map(([modelKey, perLayer]) => {
+					const entries = Object.entries(perLayer).filter(([, hits]) => hits > 0);
+					const total = entries.reduce((a, [, hits]) => a + hits, 0);
+					const top = entries.sort((a, b) => b[1] - a[1])[0];
+					return { modelKey, total, top };
+				})
+				.filter(e => e.total > 0)
+				.sort((a, b) => b.total - a.total);
+			if (rowsByModel.length) {
+				lines.push('## Нормализация tool-call по моделям', '');
+				lines.push('| Модель | Хиты | Топ-слой |', '|---|---|---|');
+				for (const e of rowsByModel) {
+					lines.push(`| ${e.modelKey} | ${e.total} | ${e.top ? `${e.top[0]} (${e.top[1]})` : '—'} |`);
+				}
+				lines.push('');
+			}
+		} catch { /* counters are best-effort too */ }
 		lines.push('', '> Ключи не включены в отчёт — только источник; события send-path прогнаны через редакцию секретов.');
 		return lines.join('\n');
 	}, [rows, selectedModel, llm, secrets, l5Contradiction]);

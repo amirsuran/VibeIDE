@@ -84,7 +84,9 @@ class VibeSubagentRunnerService extends Disposable implements IVibeSubagentRunne
 
 		let stepsDone = 0;
 		let deniedActions = 0;
-		let tokensUsedEst = estimateTokensFromChars(taskMessage.length);
+		// Counted per hop below: the dominant cost of an agent loop is INPUT — the whole
+		// history is re-sent on every hop (audit E: output-only counting made the quota fictional).
+		let tokensUsedEst = 0;
 		let lastText = '';
 		const artifacts: string[] = [];
 		const touchedPaths: string[] = [];
@@ -105,6 +107,9 @@ class VibeSubagentRunnerService extends Disposable implements IVibeSubagentRunne
 				chatMode,
 				modelSelection,
 			});
+			// Audit E: charge the full re-sent input of THIS hop against the quota (history
+			// grows every hop, so later hops cost more — exactly what the estimate must reflect).
+			tokensUsedEst += estimateTokensFromChars(JSON.stringify(messages).length + (separateSystemMessage?.length ?? 0));
 
 			const hop = await this._sendOnce({ req, messages, separateSystemMessage, chatMode, modelSelection, deadlineAtMs });
 			if (hop.kind === 'error') {
