@@ -14,9 +14,11 @@ import type { ProviderName } from '../../../../common/vibeideSettingsTypes.js';
 /**
  * «Проверка провайдеров» — resizable diagnostics window (brain menu → under «VibeIDE Команды»).
  * Lists every ACTIVE provider (one with an API key) and runs layered connectivity checks
- * (L1 config / L2 network / L3 auth / L4 models). Also exposes «Сбросить клиентов» — the
- * one-click fix for the "no tokens until restart" failure (stale local client caches +
- * wedged shared cloud dispatcher), and a Markdown export of the whole report.
+ * (L1 config / L2 network / L3 auth / L4 models), plus an OPT-IN L5 end-to-end request through
+ * the real `sendLLMMessage` (catches wedged-transport bugs the catalog probe cannot see — the
+ * probe bypasses the SDK client cache). Also exposes «Сбросить клиентов» — the one-click fix
+ * for the "no tokens until restart" failure (stale local client caches + wedged shared cloud
+ * dispatcher), and a Markdown export of the whole report including the send-path trace.
  *
  * Inline classNames are `@@`-prefixed so scope-tailwind ships them raw (they match the
  * class names in vibeModal.css). See docs/knowledge/architecture/provider-diagnostics.md.
@@ -25,6 +27,11 @@ import type { ProviderName } from '../../../../common/vibeideSettingsTypes.js';
 type LayerStatus = 'idle' | 'pending' | 'ok' | 'warn' | 'fail' | 'skip';
 
 interface LayerResult { status: LayerStatus; detail?: string }
+
+/** L5 sends ONE real (paid) request — never automatically, only from the per-provider button. */
+const L5_TIMEOUT_MS = 30_000;
+const L5_PROMPT = 'Ответь одним словом: OK';
+const L5_SYSTEM = 'Ты — проверка связи. Отвечай одним словом.';
 
 interface ProviderRow {
 	id: string;
@@ -38,6 +45,9 @@ interface ProviderRow {
 	modelCount?: number;
 	selectedModelPresent?: boolean | null;  // null = not the selected provider
 	checking: boolean;
+	/** L5 end-to-end request result (opt-in, costs tokens) — undefined until the user runs it. */
+	l5?: LayerResult;
+	l5Running?: boolean;
 }
 
 const LAYER_LABELS: Record<keyof ProviderRow['layers'], string> = {
@@ -71,6 +81,8 @@ export const VibeProviderDiagnostics: React.FC = () => {
 	const settings = accessor.get('IVibeideSettingsService');
 	const catalog = accessor.get('IRemoteCatalogService');
 	const llm = accessor.get('ILLMMessageService');
+	const convert = accessor.get('IConvertToLLMMessageService');
+	const secrets = accessor.get('ISecretDetectionService');
 	const clipboard = accessor.get('IClipboardService');
 	const editorService = accessor.get('IEditorService');
 	const commandService = accessor.get('ICommandService');
@@ -205,6 +217,66 @@ export const VibeProviderDiagnostics: React.FC = () => {
 		setRows(prev => prev.map(r => r.id === id ? updated : r));
 	}, [rows, checkOne]);
 
+	/**
+	 * L5 — one REAL request through sendLLMMessage (opt-in, costs tokens). Unlike L1–L4 (which
+	 * go through the catalog probe), this exercises the SDK client cache + shared dispatcher —
+	 * exactly the path that wedges in the "no tokens until restart" bug.
+	 */
+	const runL5 = useCallback((row: ProviderRow) => {
+		const sop = settings.state.settingsOfProvider as Record<string, { models?: { modelName: string; isHidden?: boolean }[] } | undefined>;
+		const modelName = (selectedModel && selectedModel.providerName === row.id)
+			? selectedModel.modelName
+			: (sop[row.id]?.models?.find(m => !m.isHidden) ?? sop[row.id]?.models?.[0])?.modelName;
+		const setL5 = (l5: LayerResult, running: boolean) =>
+			setRows(prev => prev.map(r => r.id === row.id ? { ...r, l5, l5Running: running } : r));
+		if (!modelName) {
+			setL5({ status: 'skip', detail: 'нет модели для теста — включите модель провайдера в настройках' }, false);
+			return;
+		}
+		const { messages, separateSystemMessage } = convert.prepareLLMSimpleMessages({
+			simpleMessages: [{ role: 'user', content: L5_PROMPT }],
+			systemMessage: L5_SYSTEM,
+			modelSelection: { providerName: row.id as ProviderName, modelName },
+			featureName: 'Chat',
+		});
+		const startMs = performance.now();
+		let firstTokenMs: number | undefined;
+		let timer: number | undefined;
+		let settled = false;
+		const finish = (l5: LayerResult) => {
+			if (settled) { return; }
+			settled = true;
+			if (timer !== undefined) { window.clearTimeout(timer); }
+			setL5(l5, false);
+		};
+		setL5({ status: 'pending' }, true);
+		const requestId = llm.sendLLMMessage({
+			messagesType: 'chatMessages',
+			messages,
+			separateSystemMessage,
+			chatMode: null,
+			modelSelection: { providerName: row.id as ProviderName, modelName },
+			modelSelectionOptions: undefined,
+			overridesOfModel: undefined,
+			onText: () => {
+				if (firstTokenMs === undefined) { firstTokenMs = Math.round(performance.now() - startMs); }
+			},
+			onFinalMessage: () => {
+				const totalMs = Math.round(performance.now() - startMs);
+				finish({ status: 'ok', detail: `${modelName}: первый токен ${firstTokenMs ?? totalMs} мс · всего ${totalMs} мс` });
+			},
+			onError: (e) => finish({ status: 'fail', detail: `${modelName}: ${(e.message || String(e)).slice(0, 140)}` }),
+			onAbort: () => finish({ status: 'fail', detail: `${modelName}: нет ответа за ${L5_TIMEOUT_MS / 1000} с (таймаут)` }),
+			logging: { loggingName: 'ProviderDiagnostics/L5' },
+		});
+		if (requestId === null) { return; } // onError already fired synchronously
+		timer = window.setTimeout(() => llm.abort(requestId), L5_TIMEOUT_MS);
+	}, [llm, convert, selectedModel, settings]);
+
+	/** True when the passive layers look healthy but the real request fails — the wedged-transport signature. */
+	const l5Contradiction = useCallback((r: ProviderRow): boolean =>
+		r.l5?.status === 'fail' && Object.values(r.layers).every(l => l.status === 'ok' || l.status === 'skip'), []);
+
 	const resetClients = useCallback(async () => {
 		setBusy(true);
 		try {
@@ -217,17 +289,17 @@ export const VibeProviderDiagnostics: React.FC = () => {
 		}
 	}, [llm, notifications, runAll, enumerate]);
 
-	const buildMarkdown = useCallback((): string => {
+	const buildMarkdown = useCallback(async (): Promise<string> => {
 		const now = new Date().toISOString();
 		const lines: string[] = [];
 		lines.push('# VibeIDE — диагностика провайдеров', '', `Дата: ${now}`, `Окружение: ${navigator.userAgent}`, '');
 		if (selectedModel) { lines.push(`Выбранная модель (Chat): \`${selectedModel.providerName} / ${selectedModel.modelName}\``, ''); }
-		lines.push('| Провайдер | Тип | Ключ | Конфиг | Сеть | Авториз. | Модели | Latency | Выбранная модель |');
-		lines.push('|---|---|---|---|---|---|---|---|---|');
+		lines.push('| Провайдер | Тип | Ключ | Конфиг | Сеть | Авториз. | Модели | L5 (запрос) | Latency | Выбранная модель |');
+		lines.push('|---|---|---|---|---|---|---|---|---|---|');
 		for (const r of rows) {
 			const L = r.layers;
 			const sel = r.selectedModelPresent === null ? '—' : (r.selectedModelPresent ? 'в каталоге ✓' : 'НЕ в каталоге ✗');
-			lines.push(`| ${r.name} | ${r.kind} | ${KEY_SOURCE_LABEL[r.keySource] ?? r.keySource} | ${STATUS_GLYPH[L.config.status]} | ${STATUS_GLYPH[L.network.status]} | ${STATUS_GLYPH[L.auth.status]} | ${STATUS_GLYPH[L.models.status]}${r.modelCount !== undefined ? ` (${r.modelCount})` : ''} | ${r.latencyMs !== undefined ? r.latencyMs + ' мс' : '—'} | ${sel} |`);
+			lines.push(`| ${r.name} | ${r.kind} | ${KEY_SOURCE_LABEL[r.keySource] ?? r.keySource} | ${STATUS_GLYPH[L.config.status]} | ${STATUS_GLYPH[L.network.status]} | ${STATUS_GLYPH[L.auth.status]} | ${STATUS_GLYPH[L.models.status]}${r.modelCount !== undefined ? ` (${r.modelCount})` : ''} | ${r.l5 ? STATUS_GLYPH[r.l5.status] : '·'} | ${r.latencyMs !== undefined ? r.latencyMs + ' мс' : '—'} | ${sel} |`);
 		}
 		lines.push('');
 		// Per-provider detail (errors etc.)
@@ -235,14 +307,30 @@ export const VibeProviderDiagnostics: React.FC = () => {
 			const details = (Object.keys(r.layers) as (keyof ProviderRow['layers'])[])
 				.filter(k => r.layers[k].detail)
 				.map(k => `  - ${LAYER_LABELS[k]}: ${r.layers[k].status} — ${r.layers[k].detail}`);
+			if (r.l5?.detail) { details.push(`  - L5 (сквозной запрос): ${r.l5.status} — ${r.l5.detail}`); }
+			if (l5Contradiction(r)) { details.push('  - ⚠ L1–L4 зелёные, а сквозной запрос падает — похоже на залипший транспорт/кэш клиента; поможет «Сбросить клиентов».'); }
 			if (details.length) { lines.push(`### ${r.name}`, ...details, ''); }
 		}
-		lines.push('', '> Ключи не включены в отчёт — только источник.');
+		// Send-path trace from main (defense-in-depth: details are built secret-free at the
+		// source, and the whole snapshot is redacted again before it leaves the modal).
+		try {
+			const traceRaw = await llm.getSendTrace();
+			const trace = secrets.getConfig().enabled ? secrets.redactSecretsInObject(traceRaw).redacted : traceRaw;
+			if (trace.length) {
+				lines.push(`## События send-path (последние ${trace.length})`, '');
+				lines.push('| Время | Событие | requestId | Провайдер | Модель | Детали |', '|---|---|---|---|---|---|');
+				for (const e of trace) {
+					lines.push(`| ${new Date(e.atMs).toISOString().slice(11, 23)} | ${e.kind} | ${e.requestId ? e.requestId.slice(0, 8) : '—'} | ${e.providerName ?? '—'} | ${e.modelName ?? '—'} | ${e.detail ?? ''} |`);
+				}
+				lines.push('');
+			}
+		} catch { /* trace is best-effort — the report is still useful without it */ }
+		lines.push('', '> Ключи не включены в отчёт — только источник; события send-path прогнаны через редакцию секретов.');
 		return lines.join('\n');
-	}, [rows, selectedModel]);
+	}, [rows, selectedModel, llm, secrets, l5Contradiction]);
 
 	const exportMd = useCallback(async () => {
-		const md = buildMarkdown();
+		const md = await buildMarkdown();
 		try { await clipboard.writeText(md); } catch { /* clipboard optional */ }
 		try {
 			await editorService.openEditor({ resource: undefined, contents: md, languageId: 'markdown', options: { pinned: true } });
@@ -290,6 +378,12 @@ export const VibeProviderDiagnostics: React.FC = () => {
 							<span className="@@vibeide-provdiag-key">ключ: {KEY_SOURCE_LABEL[r.keySource] ?? r.keySource}</span>
 							<span className="@@vibeide-provdiag-spacer" />
 							{r.latencyMs !== undefined && <span className="@@vibeide-provdiag-latency">{r.latencyMs} мс</span>}
+							<button
+								className="@@vibeide-provdiag-recheck"
+								disabled={r.checking || busy || r.l5Running}
+								title="L5: один настоящий запрос к модели через sendLLMMessage — тратит токены"
+								onClick={() => runL5(r)}
+							>L5</button>
 							<button className="@@vibeide-provdiag-recheck" disabled={r.checking || busy} onClick={() => recheckOne(r.id)}>↻</button>
 						</div>
 						<div className="@@vibeide-provdiag-layers">
@@ -302,16 +396,29 @@ export const VibeProviderDiagnostics: React.FC = () => {
 									</span>
 								);
 							})}
+							{r.l5 && (
+								<span className={`@@vibeide-provdiag-chip status-${r.l5.status}`} title={r.l5.detail || 'Сквозной запрос через sendLLMMessage'}>
+									<span className="@@vibeide-provdiag-chip-glyph">{STATUS_GLYPH[r.l5.status]}</span>
+									Запрос (L5)
+								</span>
+							)}
 							{r.selectedModelPresent === false && (
 								<span className="@@vibeide-provdiag-chip status-warn" title="Выбранная в чате модель не найдена в каталоге провайдера">выбранной модели нет</span>
 							)}
 						</div>
 						{r.baseURL && <div className="@@vibeide-provdiag-url">{r.baseURL}</div>}
-						{Object.values(r.layers).some(l => l.detail && (l.status === 'fail' || l.status === 'warn')) && (
+						{(Object.values(r.layers).some(l => l.detail && (l.status === 'fail' || l.status === 'warn')) || (r.l5?.detail && r.l5.status !== 'pending')) && (
 							<div className="@@vibeide-provdiag-detail">
 								{(Object.keys(r.layers) as (keyof ProviderRow['layers'])[])
 									.filter(k => r.layers[k].detail && (r.layers[k].status === 'fail' || r.layers[k].status === 'warn'))
 									.map(k => <div key={k}>{LAYER_LABELS[k]}: {r.layers[k].detail}</div>)}
+								{r.l5?.detail && r.l5.status !== 'pending' && <div>Запрос (L5): {r.l5.detail}</div>}
+							</div>
+						)}
+						{l5Contradiction(r) && (
+							<div className="@@vibeide-provdiag-detail">
+								⚠ Слои L1–L4 зелёные, а сквозной запрос падает — похоже на залипший транспорт или кэш клиента.{' '}
+								<button className="@@vibeide-provdiag-btn" disabled={busy} onClick={resetClients}>Сбросить клиентов</button>
 							</div>
 						)}
 					</div>

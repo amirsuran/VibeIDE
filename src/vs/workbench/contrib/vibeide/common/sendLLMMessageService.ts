@@ -24,6 +24,7 @@ import { INotificationService } from '../../../../platform/notification/common/n
 
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { NormalizeCounterKey } from './xmlToolNormalize.js';
+import type { LlmSendTraceEvent } from './llmSendTrace.js';
 
 // calls channel to implement features
 export const ILLMMessageService = createDecorator<ILLMMessageService>('llmMessageService');
@@ -42,6 +43,10 @@ export interface ILLMMessageService {
 	getNormalizeCounters: () => Promise<Readonly<Record<NormalizeCounterKey, number>>>;
 	/** Diagnostic: zero the normalization counters (for switch-model A/B checks). */
 	resetNormalizeCounters: () => Promise<void>;
+	/** Diagnostic: main-process send-path trace ring (providers-sync / cache / dispatcher / first-chunk / errors). */
+	getSendTrace: () => Promise<readonly LlmSendTraceEvent[]>;
+	/** Diagnostic: empty the send-path trace ring. */
+	clearSendTrace: () => Promise<void>;
 }
 
 /** Live shared-dispatcher generation snapshot — see `getDispatcherDiagnostics` in systemCAFetch. */
@@ -168,6 +173,14 @@ export class LLMMessageService extends Disposable implements ILLMMessageService 
 
 	resetNormalizeCounters(): Promise<void> {
 		return this.channel.call('resetNormalizeCounters');
+	}
+
+	getSendTrace(): Promise<readonly LlmSendTraceEvent[]> {
+		return this.channel.call('getSendTrace');
+	}
+
+	clearSendTrace(): Promise<void> {
+		return this.channel.call('clearSendTrace');
 	}
 
 	sendLLMMessage(params: ServiceSendLLMMessageParams) {
