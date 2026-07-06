@@ -19,6 +19,10 @@
   <a href="https://github.com/VibeBrains/VibeIDE/releases/latest/download/VibeIDESetup.exe"><img src="https://img.shields.io/badge/Скачать%20для%20Windows-VibeIDESetup.exe-2ea44f?style=for-the-badge&logo=windows" alt="Скачать VibeIDE для Windows" /></a>
 </p>
 
+<p align="center">
+  или одной командой: <code>winget install VibeBrains.VibeIDE</code>
+</p>
+
 ---
 
 ## Что такое VibeIDE?
@@ -67,7 +71,7 @@ VibeIDE — форк [VS Code open source (Code-OSS)](https://github.com/microso
 - **Команды проекта** — `.vibe/commands.json` с авто-хоткеями, едут в репозитории вместе с проектом.
 - **Приватность по умолчанию** — нет телеметрии Microsoft, ключи в системном хранилище (`safeStorage`), детекция секретов перед отправкой в LLM.
 - **Полная совместимость с VS Code** + Open VSX без аккаунта Microsoft.
-- **Windows и macOS (Apple Silicon)** — установщик/winget на Windows, DMG на маке.
+- **Windows и macOS (Apple Silicon)** — на Windows установщик или `winget install VibeBrains.VibeIDE`, на маке DMG.
 
 ---
 
