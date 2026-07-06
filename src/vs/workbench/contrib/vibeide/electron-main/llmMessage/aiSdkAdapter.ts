@@ -923,7 +923,7 @@ export const sendViaAISdk = async (params: SendChatParams_Internal): Promise<voi
 	}
 	// XML tool fallback when native tools are disabled for this model.
 	if (!specialToolFormat) {
-		const wrapped = extractXMLToolsWrapper(onText, onFinalMessage, chatMode, mcpTools);
+		const wrapped = extractXMLToolsWrapper(onText, onFinalMessage, chatMode, mcpTools, { providerName, modelName });
 		onText = wrapped.newOnText;
 		onFinalMessage = wrapped.newOnFinalMessage;
 	}

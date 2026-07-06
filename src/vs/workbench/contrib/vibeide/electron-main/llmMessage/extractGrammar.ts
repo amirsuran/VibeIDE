@@ -12,7 +12,7 @@ import { PARAM_ALIASES_BY_TOOL, TOOL_NAME_ALIASES } from '../../common/prompt/to
 import { OnFinalMessage, OnText, RawToolCallObj, RawToolParamsObj } from '../../common/sendLLMMessageTypes.js';
 import { ToolName, ToolParamName } from '../../common/toolsServiceTypes.js';
 import { ChatMode } from '../../common/vibeideSettingsTypes.js';
-import { normalizeAlternativeToolSyntax, SELF_CLOSING_PARTIAL_RE, stripUnclaimedToolTags, VENDOR_NAMESPACED_SUFFIXES, VENDOR_WRAPPER_NAMES } from '../../common/xmlToolNormalize.js';
+import { normalizeAlternativeToolSyntax, NormalizeAttribution, SELF_CLOSING_PARTIAL_RE, stripUnclaimedToolTags, VENDOR_NAMESPACED_SUFFIXES, VENDOR_WRAPPER_NAMES } from '../../common/xmlToolNormalize.js';
 
 
 // =============== reasoning ===============
@@ -447,6 +447,7 @@ export const extractXMLToolsWrapper = (
 	onFinalMessage: OnFinalMessage,
 	chatMode: ChatMode | null,
 	mcpTools: InternalToolInfo[] | undefined,
+	attribution?: NormalizeAttribution,
 ): { newOnText: OnText; newOnFinalMessage: OnFinalMessage } => {
 
 	if (!chatMode) { return { newOnText: onText, newOnFinalMessage: onFinalMessage }; }
@@ -486,7 +487,7 @@ export const extractXMLToolsWrapper = (
 		// into our canonical <tool><param>...</param></tool> form. Until a closing
 		// </invoke> arrives, the buffer is unchanged and the partial-tag hints below
 		// hold the in-progress XML out of the user-visible chat.
-		const normalizedFullText = normalizeAlternativeToolSyntax(params.fullText);
+		const normalizedFullText = normalizeAlternativeToolSyntax(params.fullText, attribution);
 		// Length is non-monotonic: when </invoke> finally lands, the whole block
 		// collapses to its shorter canonical form. Clamp so substring() stays valid.
 		if (prevNormalizedLen > normalizedFullText.length) { prevNormalizedLen = normalizedFullText.length; }
@@ -539,7 +540,7 @@ export const extractXMLToolsWrapper = (
 			// not in current chatMode, or multi-tool emission past the first), don't
 			// leak the raw `<read_file>...</read_file>` into user-visible chat. The
 			// placeholder is non-disruptive markdown italic.
-			fullText: stripUnclaimedToolTags(fullText),
+			fullText: stripUnclaimedToolTags(fullText, attribution),
 			toolCall: latestToolCall,
 		});
 	};
@@ -557,7 +558,7 @@ export const extractXMLToolsWrapper = (
 		// console.log('----- tools ----\n', JSON.stringify(firstToolCallRef.current, null, 2))
 		// console.log('----- toolCall ----\n', JSON.stringify(toolCall, null, 2))
 
-		onFinalMessage({ ...params, fullText: stripUnclaimedToolTags(fullText), toolCall: toolCall });
+		onFinalMessage({ ...params, fullText: stripUnclaimedToolTags(fullText, attribution), toolCall: toolCall });
 	};
 	return { newOnText, newOnFinalMessage };
 };

@@ -122,3 +122,18 @@ interface ModelQuirksRule {
 **Решение (v0.19.x):** новое поле `reasoningCapabilities.stripThinkTagsFromContent: [open, close]` + `stripThinkTagsWrapper` (extractGrammar.ts) — STRIP-ONLY: вырезает дубль `<think>…</think>` из тела (и прячет незакрытый хвост при стриминге), **`fullReasoning` не трогает** → нативный `reasoning-delta` остаётся источником для фолда/экспорта. У MiniMax профиль использует `stripThinkTagsFromContent` (НЕ `openSourceThinkTags`) + `output.nameOfFieldInDelta: 'reasoning_content'`. `openSourceThinkTags` оставлен для моделей БЕЗ нативного канала (ollama/deepseek-R1 через aggregator).
 
 **Применение:** для любой модели, которая шлёт нативный reasoning И дублирует его inline-тегами — использовать `stripThinkTagsFromContent`, а НЕ `openSourceThinkTags` (последний перезаписывает/теряет нативный reasoning). Если у MiniMax однажды заработает off/effort — это починка на их сервере, наших правок не требует (payload уже уходит). Слайдер/тумблер у minimax оставлены намеренно (на случай серверного фикса).
+
+---
+
+## [квирки] Auto-feed каталога из runtime-доказательств (O.13, 2026-07-06)
+
+**Контекст:** авто-даунгрейд native→XML (`_autoDetected` override, TTL + re-probe, гейт только на `numeric-tool-name` — уроки #008) чинит модель в пределах сессии, но модель, проходящая этот танец КАЖДУЮ сессию, всякий раз сжигает несколько ходов на сбои до срабатывания порога. Сырые счётчики `safetyNet*` для авто-предложения квирка не годятся: они стреляют только в XML-режиме (внутри `extractXMLToolsWrapper`), т.е. описывают модель, уже переключённую в XML, а не native-модель, которой нужен квирк.
+
+**Суть:**
+- **Сигнатура для долговременного фикса = повторные авто-даунгрейды в РАЗНЫХ сессиях** (не событий, а сессий: одна может быть случайностью). Pure-логика — `common/modelQuirksAutoFeed.ts` (стейт per `provider:model`: downgradeCount / sessionCount / suggested; JSON round-trip, тесты).
+- **Сервис** `browser/vibeQuirkAutoFeedService.ts`: `recordAutoDowngrade()` дергается из блока авто-даунгрейда `chatThreadService`; стейт — `IStorageService` APPLICATION-scope (переживает сессии); при пороге (`vibeide.modelQuirks.autoSuggestSessions`, дефолт 2; выключатель `vibeide.modelQuirks.autoSuggest`) — уведомление, **один раз на модель навсегда** (`suggested`-флаг).
+- **«Закрепить XML-режим»** = `setOverridesOfModel(provider, model, { specialToolFormat: null })` **без** `_autoDetected` → долговременный override: нет TTL, re-probe его не трогает (re-probe работает только по `downgradedModelsThisSession`). НЕ писать в `vibeide.modelQuirks`-настройку: она читается один раз на старте (нужен перезапуск), override действует сразу.
+- **«Скопировать правило для каталога»** = готовый JSON-сниппет правила (`match`/`provider`/`forceToolCallFormat:'xml'`/`note` с доказательствами) для one-file PR в `resources/model-quirks.json` — data-driven путь пополнения апстрим-каталога.
+- **Per-model счётчики нормализации** (бонус-задел Фазы 3 диагностики): `NormalizeAttribution` в `xmlToolNormalize.ts` — экспортные обёртки пинят атрибуцию на время одного СИНХРОННОГО прохода (single-threaded → race-free), `getNormalizeCountersByModel()` + IPC `getNormalizeCountersByModel` на LLM-канале.
+
+**Применение:** источник правды о «системно сломанном» native FC — стор авто-фида, не счётчики слоёв. Прежде чем вносить предложенный квирк в каталог (PR), сверить с матрицей [[xml-tool-format-matrix]] и открытыми расхождениями выше (урок: не форсить XML капризным-но-живым моделям без данных).

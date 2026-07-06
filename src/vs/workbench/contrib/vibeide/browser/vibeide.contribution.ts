@@ -136,6 +136,9 @@ import '../common/codeReviewService.js';
 import './codeReviewEditorContribution.js';
 import './codeReviewCommands.js';
 
+// model-quirks auto-feed: durable-quirk suggestion on repeated cross-session auto-downgrades
+import './vibeQuirkAutoFeedService.js';
+
 // notification sounds on agent stop / completion / awaiting-user
 import './vibeNotifySoundService.js';
 import './vibeNotifySoundCommands.js';

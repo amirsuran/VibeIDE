@@ -261,6 +261,19 @@ export class VibeideGlobalSettingsConfigurationContribution extends Disposable i
 					description: localize('vibeide.modelQuirks.refreshIntervalHours', 'Как часто (в часах) проверять обновления каталога через CDN. `0` — отключить периодический рефреш (только при старте IDE и по команде `VibeIDE: Refresh model quirks catalog`). Дефолт 24 часа. Изменение требует перезапуска IDE.'),
 					scope: ConfigurationScope.APPLICATION,
 				},
+				'vibeide.modelQuirks.autoSuggest': {
+					type: 'boolean',
+					default: true,
+					description: localize('vibeide.modelQuirks.autoSuggest', 'Предлагать закрепить XML-режим тулов для модели, которая раз за разом (в разных сессиях) уезжает в авто-даунгрейд из-за сломанных native tool-call. Предложение показывается один раз на модель; сбор статистики продолжается и при выключенной настройке.'),
+					scope: ConfigurationScope.APPLICATION,
+				},
+				'vibeide.modelQuirks.autoSuggestSessions': {
+					type: 'integer',
+					default: 2,
+					minimum: 1,
+					description: localize('vibeide.modelQuirks.autoSuggestSessions', 'После скольких РАЗНЫХ сессий с авто-даунгрейдом модели предлагать закрепить XML-режим насовсем. Дефолт 2: одна сессия может быть случайностью, повтор — уже паттерн.'),
+					scope: ConfigurationScope.APPLICATION,
+				},
 			},
 		});
 

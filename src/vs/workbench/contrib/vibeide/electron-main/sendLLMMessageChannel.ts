@@ -15,7 +15,7 @@ import { sendLLMMessage } from './llmMessage/sendLLMMessage.js';
 import { IMetricsService } from '../common/metricsService.js';
 import { sendLLMMessageToProviderImplementation, clearProviderClientCaches } from './llmMessage/sendLLMMessage.impl.js';
 import { getDispatcherDiagnostics } from './llmMessage/systemCAFetch.js';
-import { getNormalizeCounters, resetNormalizeCounters } from '../common/xmlToolNormalize.js';
+import { getNormalizeCounters, getNormalizeCountersByModel, resetNormalizeCounters } from '../common/xmlToolNormalize.js';
 import { traceSendEvent, getSendTrace, clearSendTrace } from '../common/llmSendTrace.js';
 
 // NODE IMPLEMENTATION - calls actual sendLLMMessage() and returns listeners to it
@@ -100,6 +100,11 @@ export class LLMMessageChannel implements IServerChannel {
 				// Diagnostic: zero the counters so "switch model → see which layer carries it"
 				// A/B checks start from a clean slate.
 				resetNormalizeCounters();
+			}
+			else if (command === 'getNormalizeCountersByModel') {
+				// Diagnostic: same layer counters broken down per (provider×model) — evidence
+				// base for quirk auto-suggestions and the per-model drill-down.
+				return getNormalizeCountersByModel() as T;
 			}
 			else if (command === 'getSendTrace') {
 				// Diagnostic: send-path ring buffer (providers-sync / cache hit-miss / dispatcher /

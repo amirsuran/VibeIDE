@@ -749,7 +749,7 @@ const _sendOpenAICompatibleChat = async ({ messages, onText, onFinalMessage, onE
 
 	// manually parse out tool results if XML
 	if (!specialToolFormat) {
-		const { newOnText, newOnFinalMessage } = extractXMLToolsWrapper(onText, onFinalMessage, chatMode, mcpTools);
+		const { newOnText, newOnFinalMessage } = extractXMLToolsWrapper(onText, onFinalMessage, chatMode, mcpTools, { providerName, modelName: modelName_ });
 		onText = newOnText;
 		onFinalMessage = newOnFinalMessage;
 	}
@@ -1282,7 +1282,7 @@ const sendAnthropicChat = async ({ messages, providerName, onText, onFinalMessag
 
 	// manually parse out tool results if XML
 	if (!specialToolFormat) {
-		const { newOnText, newOnFinalMessage } = extractXMLToolsWrapper(onText, onFinalMessage, chatMode, mcpTools);
+		const { newOnText, newOnFinalMessage } = extractXMLToolsWrapper(onText, onFinalMessage, chatMode, mcpTools, { providerName, modelName: modelName_ });
 		onText = newOnText;
 		onFinalMessage = newOnFinalMessage;
 	}
@@ -1570,7 +1570,7 @@ const sendGeminiChat = async ({
 
 	// manually parse out tool results if XML
 	if (!specialToolFormat) {
-		const { newOnText, newOnFinalMessage } = extractXMLToolsWrapper(onText, onFinalMessage, chatMode, mcpTools);
+		const { newOnText, newOnFinalMessage } = extractXMLToolsWrapper(onText, onFinalMessage, chatMode, mcpTools, { providerName, modelName: modelName_ });
 		onText = newOnText;
 		onFinalMessage = newOnFinalMessage;
 	}

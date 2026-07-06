@@ -42,6 +42,7 @@ import { IVibeideModelService } from '../common/vibeideModelService.js';
 import { findLast, findLastIdx } from '../../../../base/common/arraysFind.js';
 import { IEditCodeService } from './editCodeServiceInterface.js';
 import { IVibeNotifySoundService, NotifySoundEvent } from './vibeNotifySoundService.js';
+import { IVibeQuirkAutoFeedService } from './vibeQuirkAutoFeedService.js';
 import { IVibeDesktopNotificationService } from './vibeDesktopNotificationService.js';
 import { VibeideFileSnapshot } from '../common/editCodeServiceTypes.js';
 import { INotificationHandle, INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
@@ -909,6 +910,7 @@ class ChatThreadService extends Disposable implements IChatThreadService {
 		@IVibeExternalAccessService private readonly _externalAccessService: IVibeExternalAccessService,
 		@IVibeNotifySoundService private readonly _notifySoundService: IVibeNotifySoundService,
 		@IVibeDesktopNotificationService private readonly _desktopNotificationService: IVibeDesktopNotificationService,
+		@IVibeQuirkAutoFeedService private readonly _quirkAutoFeedService: IVibeQuirkAutoFeedService,
 	) {
 		super();
 		this.state = { allThreads: {}, currentThreadId: null as unknown as string, openTabIds: [] }; // default state
@@ -7362,6 +7364,10 @@ Output ONLY the JSON, no other text. Start with { and end with }.`;
 									`Модель ${resolvedModelSelection.modelName} (${resolvedModelSelection.providerName}) ${reasonHuman}. Переключили её на XML-формат тулов (медленнее, но совместимее). Откат: Settings → Models → Overrides → этот провайдер/модель → сбросить specialToolFormat.`
 								);
 								this._agentActivityLog.logFinished(`Auto-downgrade: ${modelKey} → XML (${reason})`);
+								// Feed the cross-session evidence store (roadmap O.13): a model that goes
+								// through this downgrade in session after session earns a durable-quirk
+								// suggestion instead of re-burning failing turns every time.
+								this._quirkAutoFeedService.recordAutoDowngrade(providerForOverride, resolvedModelSelection.modelName);
 								// Don't return — continue loop. Next LLM call picks up the override
 								// via getModelCapabilities and routes through XML-fallback path.
 							} catch (e) {

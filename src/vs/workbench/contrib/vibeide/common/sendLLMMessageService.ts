@@ -43,6 +43,8 @@ export interface ILLMMessageService {
 	getNormalizeCounters: () => Promise<Readonly<Record<NormalizeCounterKey, number>>>;
 	/** Diagnostic: zero the normalization counters (for switch-model A/B checks). */
 	resetNormalizeCounters: () => Promise<void>;
+	/** Diagnostic: normalization layer hit counters broken down per `${provider}:${model}`. */
+	getNormalizeCountersByModel: () => Promise<Readonly<Record<string, Readonly<Record<NormalizeCounterKey, number>>>>>;
 	/** Diagnostic: main-process send-path trace ring (providers-sync / cache / dispatcher / first-chunk / errors). */
 	getSendTrace: () => Promise<readonly LlmSendTraceEvent[]>;
 	/** Diagnostic: empty the send-path trace ring. */
@@ -173,6 +175,10 @@ export class LLMMessageService extends Disposable implements ILLMMessageService 
 
 	resetNormalizeCounters(): Promise<void> {
 		return this.channel.call('resetNormalizeCounters');
+	}
+
+	getNormalizeCountersByModel(): Promise<Readonly<Record<string, Readonly<Record<NormalizeCounterKey, number>>>>> {
+		return this.channel.call('getNormalizeCountersByModel');
 	}
 
 	getSendTrace(): Promise<readonly LlmSendTraceEvent[]> {
