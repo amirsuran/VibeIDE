@@ -28,6 +28,9 @@ type LayerStatus = 'idle' | 'pending' | 'ok' | 'warn' | 'fail' | 'skip';
 
 interface LayerResult { status: LayerStatus; detail?: string }
 
+/** Auto-refresh tick for the L1–L4 sweep while the modal is open (toggle in the toolbar). */
+const AUTO_REFRESH_INTERVAL_MS = 30_000;
+
 /** L5 sends ONE real (paid) request — never automatically, only from the per-provider button. */
 const L5_TIMEOUT_MS = 30_000;
 const L5_PROMPT = 'Ответь одним словом: OK';
@@ -209,6 +212,28 @@ export const VibeProviderDiagnostics: React.FC = () => {
 		void runAll(enumerate());
 	}, [open, enumerate, runAll]);
 
+	// Auto-refresh (Phase 3): while the modal is open and the toggle is on, re-probe L1–L4
+	// on the EXISTING rows every 30s. `checkOne` spreads the row, so L5 results survive the
+	// tick — and L5 itself is never auto-run (it costs tokens; manual-only by design).
+	// The busy-guard skips a tick when the previous sweep is still in flight.
+	const [autoRefresh, setAutoRefresh] = useState(false);
+	const refreshExisting = useCallback(async () => {
+		if (busy || rows.length === 0) { return; }
+		setBusy(true);
+		setRows(prev => prev.map(r => ({ ...r, checking: true })));
+		const checked = await Promise.all(rows.map(checkOne));
+		setRows(checked);
+		setBusy(false);
+	}, [busy, rows, checkOne]);
+	useEffect(() => {
+		if (!open) { setAutoRefresh(false); return; }
+	}, [open]);
+	useEffect(() => {
+		if (!open || !autoRefresh) { return; }
+		const id = window.setInterval(() => { void refreshExisting(); }, AUTO_REFRESH_INTERVAL_MS);
+		return () => window.clearInterval(id);
+	}, [open, autoRefresh, refreshExisting]);
+
 	const recheckOne = useCallback(async (id: string) => {
 		setRows(prev => prev.map(r => r.id === id ? { ...r, checking: true } : r));
 		const target = rows.find(r => r.id === id);
@@ -329,6 +354,36 @@ export const VibeProviderDiagnostics: React.FC = () => {
 		return lines.join('\n');
 	}, [rows, selectedModel, llm, secrets, l5Contradiction]);
 
+	/** Markdown fragment for ONE provider card — handy to paste into an issue/chat. */
+	const buildProviderMarkdown = useCallback((r: ProviderRow): string => {
+		const L = r.layers;
+		const layerLine = (Object.keys(L) as (keyof ProviderRow['layers'])[])
+			.map(k => `${LAYER_LABELS[k]} ${STATUS_GLYPH[L[k].status]}`)
+			.join(' · ');
+		const lines: (string | undefined)[] = [
+			`### ${r.name} (${r.kind === 'dynamic' ? 'свой' : 'встроенный'})`,
+			`Ключ: ${KEY_SOURCE_LABEL[r.keySource] ?? r.keySource}`,
+			`Слои: ${layerLine}${r.modelCount !== undefined ? ` · моделей: ${r.modelCount}` : ''}`,
+			r.l5 ? `L5 (сквозной запрос): ${STATUS_GLYPH[r.l5.status]}${r.l5.detail ? ` — ${r.l5.detail}` : ''}` : undefined,
+			r.latencyMs !== undefined ? `Latency: ${r.latencyMs} мс` : undefined,
+			r.baseURL ? `URL: ${r.baseURL}` : undefined,
+			...(Object.keys(L) as (keyof ProviderRow['layers'])[])
+				.filter(k => L[k].detail)
+				.map(k => `- ${LAYER_LABELS[k]}: ${L[k].status} — ${L[k].detail}`),
+			l5Contradiction(r) ? '- ⚠ L1–L4 зелёные, а сквозной запрос падает — похоже на залипший транспорт/кэш клиента.' : undefined,
+		];
+		return lines.filter((l): l is string => !!l).join('\n');
+	}, [l5Contradiction]);
+
+	const copyProvider = useCallback(async (r: ProviderRow) => {
+		try {
+			await clipboard.writeText(buildProviderMarkdown(r));
+			notifications.info(`Отчёт по «${r.name}» скопирован в буфер.`);
+		} catch (err) {
+			notifications.error('Не удалось скопировать: ' + (err instanceof Error ? err.message : String(err)));
+		}
+	}, [buildProviderMarkdown, clipboard, notifications]);
+
 	const exportMd = useCallback(async () => {
 		const md = await buildMarkdown();
 		try { await clipboard.writeText(md); } catch { /* clipboard optional */ }
@@ -363,6 +418,13 @@ export const VibeProviderDiagnostics: React.FC = () => {
 				<button className="@@vibeide-provdiag-btn" disabled={busy} onClick={() => runAll(enumerate())}>Проверить все</button>
 				<button className="@@vibeide-provdiag-btn" disabled={busy} onClick={resetClients} title="Очистить кэши клиентов и пересоздать соединение без перезапуска IDE">Сбросить клиентов</button>
 				<button className="@@vibeide-provdiag-btn" onClick={exportMd}>Экспорт в Markdown</button>
+				<button
+					className="@@vibeide-provdiag-btn"
+					onClick={() => setAutoRefresh(v => !v)}
+					title="Автоматически перепроверять слои L1–L4 каждые 30 секунд, пока окно открыто (L5 не запускается — тратит токены)"
+				>
+					{autoRefresh ? '◉ Авто: вкл' : '○ Авто: выкл'}
+				</button>
 				<button className="@@vibeide-provdiag-btn" onClick={() => commandService.executeCommand('workbench.action.toggleVibeideSettings')}>Открыть настройки</button>
 			</div>
 
@@ -385,6 +447,11 @@ export const VibeProviderDiagnostics: React.FC = () => {
 								onClick={() => runL5(r)}
 							>L5</button>
 							<button className="@@vibeide-provdiag-recheck" disabled={r.checking || busy} onClick={() => recheckOne(r.id)}>↻</button>
+							<button
+								className="@@vibeide-provdiag-recheck"
+								title="Скопировать отчёт по этому провайдеру (markdown)"
+								onClick={() => { void copyProvider(r); }}
+							>⧉</button>
 						</div>
 						<div className="@@vibeide-provdiag-layers">
 							{(Object.keys(r.layers) as (keyof ProviderRow['layers'])[]).map((k) => {

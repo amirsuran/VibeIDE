@@ -115,11 +115,17 @@ export class VibeProviderStatusBarContribution extends Disposable implements IWo
 		const healthStatus = this._providerStatusService.getAllStatuses().get(providerName);
 		const healthText = this._healthLabel(healthStatus?.health || 'unknown');
 
+		// Phase 3 (provider diagnostics): a DEGRADED provider needs treatment, not a dashboard —
+		// clicking the warning opens «Проверка провайдеров» (layered checks + reset-clients).
+		// A healthy provider keeps the transparency view as before.
+		const isUnhealthy = !this._providerStatusService.isHealthy(providerName);
 		return {
 			name: localize('vibeProviderStatus', 'Статус провайдера VibeIDE'),
 			text: displayName,
-			tooltip: localize('vibeProviderStatusTooltip', 'Провайдер: {0} — Статус: {1}. Нажмите для проверки.', providerName, healthText),
-			command: 'vibeide.transparency.show',
+			tooltip: isUnhealthy
+				? localize('vibeProviderStatusTooltipSick', 'Провайдер: {0} — Статус: {1}. Нажмите, чтобы открыть «Проверку провайдеров».', providerName, healthText)
+				: localize('vibeProviderStatusTooltip', 'Провайдер: {0} — Статус: {1}. Нажмите для проверки.', providerName, healthText),
+			command: isUnhealthy ? 'vibeide.commands.checkProviders' : 'vibeide.transparency.show',
 			ariaLabel: localize('vibeProviderStatusAria', 'Провайдер: {0} {1}', providerName, healthText),
 		};
 	}
