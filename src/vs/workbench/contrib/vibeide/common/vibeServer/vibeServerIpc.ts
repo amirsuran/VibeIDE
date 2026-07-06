@@ -60,4 +60,12 @@ export interface IVibeServerMain {
 	notifyChange(kind: VibeServerChangeKind): Promise<void>;
 	/** First non-internal IPv4 address of this machine, or undefined (for LAN/phone preview). */
 	lanAddress(): Promise<string | undefined>;
+	/**
+	 * Cookie compat (VS.6): allow Set-Cookie rewriting to `SameSite=None; Secure` for a
+	 * preview URL's origin while its tab is open (loopback-only; refcounted per tab).
+	 * Without it, the cross-site preview iframe silently drops dev-site session cookies.
+	 */
+	registerPreviewOrigin(url: string): Promise<void>;
+	/** Cookie compat (VS.6): drop the registration when its preview tab closes. */
+	unregisterPreviewOrigin(url: string): Promise<void>;
 }

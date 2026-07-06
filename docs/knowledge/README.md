@@ -41,6 +41,7 @@
 | [vibe-defaults.md](architecture/vibe-defaults.md) | `.vibe-defaults/` → генерируемый манифест (перечитывается с нуля каждую сборку) → `applyVibeDefaults` сеет в `.vibe/` (create-if-missing). Команда `vibeide.defaults.apply`, общий `collectVibeideCommands`, word wrap ON по умолчанию |
 | [dynamic-providers.md](architecture/dynamic-providers.md) | `.vibe/providers.json` (JSONC) — user-defined провайдеры/модели без пересборки. **WIP:** Фаза 1 (формат + IntelliSense + диагностика + тоглы built-in) готова; 2b-2 (overlay в `settingsOfProvider` → список+caps+транспорт) с `_storeState`-риском — план внутри |
 | [provider-diagnostics.md](architecture/provider-diagnostics.md) | «Проверка провайдеров» — модалка диагностики (brain-меню), послойные проверки L1–L5, **корень бага «токены не уходят до перезапуска»** (стейл-кэш SDK-клиентов в electron-main), кнопка сброса клиентов, диаг-логи, MD-экспорт |
+| [vibe-server-preview-cookies.md](architecture/vibe-server-preview-cookies.md) | Cookie-авторизация в превью: перезапись Set-Cookie → `SameSite=None; Secure` для зарегистрированных loopback-origin'ов; **гоча: один `onHeadersReceived` на сессию** — вызов встроен в апстрим-хендлер `app.ts` |
 
 ### [ui/](ui/) — CSS, темы, view-инфраструктура
 

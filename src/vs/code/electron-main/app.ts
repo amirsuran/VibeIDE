@@ -70,7 +70,7 @@ import { METERED_CONNECTION_CHANNEL } from '../../platform/meteredConnection/com
 import { MeteredConnectionChannel } from '../../platform/meteredConnection/electron-main/meteredConnectionChannel.js';
 import { MeteredConnectionMainService } from '../../platform/meteredConnection/electron-main/meteredConnectionMainService.js';
 import { IProductService } from '../../platform/product/common/productService.js';
-import { registerVibeideMainProcessChannels } from '../../workbench/contrib/vibeide/electron-main/registerVibeideMainChannels.js';
+import { registerVibeideMainProcessChannels, maybeRewritePreviewCookies } from '../../workbench/contrib/vibeide/electron-main/registerVibeideMainChannels.js';
 import { getRemoteAuthority } from '../../platform/remote/common/remoteHosts.js';
 import { SharedProcess } from '../../platform/sharedProcess/electron-main/sharedProcess.js';
 import { ISignService } from '../../platform/sign/common/sign.js';
@@ -352,6 +352,16 @@ export class CodeApplication extends Disposable {
 
 		// https://github.com/microsoft/vscode-remote-release/issues/9246
 		session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+			// VibeIDE: Vibe Server preview cookie compat (VS.6) — rewrite Set-Cookie of
+			// REGISTERED loopback preview origins to `SameSite=None; Secure` so dev-site
+			// logins survive the cross-site iframe. Folded into this handler because
+			// Electron keeps a single onHeadersReceived handler per session — a separate
+			// registration would replace this one.
+			const vibePatchedHeaders = maybeRewritePreviewCookies(details);
+			if (vibePatchedHeaders) {
+				return callback({ cancel: false, responseHeaders: vibePatchedHeaders });
+			}
+
 			if (details.url.startsWith('https://vscode.download.prss.microsoft.com/')) {
 				const responseHeaders = details.responseHeaders ?? Object.create(null);
 

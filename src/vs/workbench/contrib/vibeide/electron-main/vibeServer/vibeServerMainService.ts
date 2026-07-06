@@ -21,6 +21,7 @@ import { IDisposable } from '../../../../../base/common/lifecycle.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
 import { injectReloadScript, VIBE_RELOAD_WS_PATH } from '../../common/vibeServer/injectReloadScript.js';
 import { IVibeServerMain, IVibeServerStartOptions, IVibeServerStarted, VibeServerChangeKind } from '../../common/vibeServer/vibeServerIpc.js';
+import { registerPreviewOrigin, unregisterPreviewOrigin } from './vibeCookieCompatMain.js';
 
 /** Base port the server walks upward from when the desired port is busy. */
 const DEFAULT_BASE_PORT = 5500;
@@ -101,6 +102,14 @@ export class VibeServerMainService implements IVibeServerMain, IDisposable {
 		const started: IVibeServerStarted = { host: options.host, port, url: `${scheme}://${options.host}:${port}/` };
 		this._log.info(`[VibeServer] listening on ${started.url} (root: ${options.rootFsPath})`);
 		return started;
+	}
+
+	async registerPreviewOrigin(url: string): Promise<void> {
+		registerPreviewOrigin(url);
+	}
+
+	async unregisterPreviewOrigin(url: string): Promise<void> {
+		unregisterPreviewOrigin(url);
 	}
 
 	async stop(): Promise<void> {

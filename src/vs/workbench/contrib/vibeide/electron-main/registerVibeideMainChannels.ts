@@ -137,3 +137,7 @@ export function registerVibeideMainProcessChannels(
 		ProxyChannel.fromService(vibeServerProcessService, disposables),
 	);
 }
+
+// Re-exported for `app.ts#configureSession()`: keeps the vs/code → vibeide bridge to the
+// ONE import line this module already provides (code-import-patterns exemption surface).
+export { maybeRewritePreviewCookies } from './vibeServer/vibeCookieCompatMain.js';

@@ -195,6 +195,12 @@ export class VibeideGlobalSettingsConfigurationContribution extends Disposable i
 					description: localize('vibeide.vibeServer.https.desc', 'Раздавать статический сервер по HTTPS с самоподписанным сертификатом (для secure-context: service workers, geolocation). Браузер покажет предупреждение о недоверенном сертификате.'),
 					scope: ConfigurationScope.RESOURCE,
 				},
+				'vibeide.vibeServer.cookieCompat': {
+					type: 'boolean',
+					default: true,
+					description: localize('vibeide.vibeServer.cookieCompat.desc', 'Чинить cookie-авторизацию во встроенном превью: пока вкладка превью показывает localhost-сайт, его Set-Cookie дополняются атрибутами SameSite=None; Secure — иначе браузер отбрасывает куки в cross-site iframe и логин на превью молча не работает. Действует только на loopback-адреса и только при открытом превью.'),
+					scope: ConfigurationScope.RESOURCE,
+				},
 				'vibeide.vibeServer.devScript': {
 					type: 'string',
 					default: '',

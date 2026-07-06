@@ -47,6 +47,7 @@ export const VibeServerConfigKeys = {
 	dockerStartTimeoutMs: 'vibeide.vibeServer.dockerStartTimeoutMs',
 	scrollSync: 'vibeide.vibeServer.scrollSync',
 	https: 'vibeide.vibeServer.https',
+	cookieCompat: 'vibeide.vibeServer.cookieCompat',
 } as const;
 
 /** Where preview opens by default. */

@@ -44,12 +44,38 @@ export class VibeBrowserManager extends Disposable {
 	/** Fires when a new error/warning is captured (for the status-bar badge). */
 	readonly onDidChangeProblems: Event<void> = this._onDidChangeProblems.event;
 
+	/** Which preview URL each tab currently shows — drives cookie-compat origin (un)registration. */
+	private readonly _registeredUrlByInput = new Map<WebviewInput, string>();
+
 	constructor(
+		private readonly _cookieCompat: { register(url: string): void; unregister(url: string): void } | undefined,
 		@IWebviewWorkbenchService private readonly _webviewWorkbenchService: IWebviewWorkbenchService,
 		@IOpenerService private readonly _openerService: IOpenerService,
 		@IOutputService private readonly _outputService: IOutputService,
 	) {
 		super();
+	}
+
+	/**
+	 * Keep the main-process cookie-compat registry in sync with what this tab shows.
+	 * Refcounted per URL swap: unregister the previous URL, register the new one —
+	 * same-origin navigations net out, the last tab closing drops the origin.
+	 */
+	private _trackPreviewUrl(input: WebviewInput, url: string): void {
+		if (!this._cookieCompat) { return; }
+		const prev = this._registeredUrlByInput.get(input);
+		if (prev === url) { return; }
+		if (prev !== undefined) { this._cookieCompat.unregister(prev); }
+		this._cookieCompat.register(url);
+		this._registeredUrlByInput.set(input, url);
+	}
+
+	private _untrackPreviewUrl(input: WebviewInput): void {
+		const prev = this._registeredUrlByInput.get(input);
+		if (prev !== undefined) {
+			this._registeredUrlByInput.delete(input);
+			this._cookieCompat?.unregister(prev);
+		}
 	}
 
 	/** Enables/disables mirroring scroll across preview tabs. */
@@ -65,6 +91,7 @@ export class VibeBrowserManager extends Disposable {
 		const html = this._buildHtml(url);
 		if (!newTab && this._active) {
 			this._active.webview.setHtml(html);
+			this._trackPreviewUrl(this._active, url);
 			this._webviewWorkbenchService.revealWebview(this._active, ACTIVE_GROUP, false);
 			return;
 		}
@@ -90,12 +117,14 @@ export class VibeBrowserManager extends Disposable {
 		store.add(input.onWillDispose(() => {
 			this._inputs.delete(input);
 			this._perInput.deleteAndDispose(input);
+			this._untrackPreviewUrl(input);
 			if (this._active === input) {
 				this._active = this._inputs.values().next().value;
 			}
 		}));
 
 		input.webview.setHtml(html);
+		this._trackPreviewUrl(input, url);
 	}
 
 	/** Force-reloads every open preview tab. */
@@ -111,6 +140,7 @@ export class VibeBrowserManager extends Disposable {
 			return;
 		}
 		void this._active.webview.postMessage({ type: 'navigate', url });
+		this._trackPreviewUrl(this._active, url);
 		this._webviewWorkbenchService.revealWebview(this._active, ACTIVE_GROUP, true);
 	}
 
@@ -129,6 +159,7 @@ export class VibeBrowserManager extends Disposable {
 				this._active = source;
 				if (m.href) {
 					this._currentUrl = m.href;
+					this._trackPreviewUrl(source, m.href);
 				}
 				if (m.title) {
 					source.setWebviewTitle(localize('vibeBrowser.titleWith', "Vibe Server — {0}", m.title));
