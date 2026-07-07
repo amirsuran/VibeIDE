@@ -175,7 +175,7 @@ microsoftAzure awsBedrock ollama  vLLM  lmStudio  openAICompatible
       "auth": { "type": "header", "name": "x-api-key" },
       "apiKeyEnv": "MYCORP_LLM_KEY",
       "order": 10,
-      "models": { "fetch": true }   // авто-список из <baseURL>/models
+      "models": { "fetch": true }   // авто-список из <baseURL>/v1/models
     }
   ]
 }
