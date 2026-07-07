@@ -51,7 +51,7 @@
 			"headers": { "x-team": "platform" }, // статические заголовки (по желанию)
 			"timeoutMs": 120000,
 			"models": {
-				"fetch": true // авто-список из <baseURL>/models
+				"fetch": true // авто-список из <baseURL>/v1/models (при подключённом ключе)
 			}
 		},
 
