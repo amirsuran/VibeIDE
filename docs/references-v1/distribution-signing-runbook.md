@@ -116,7 +116,7 @@ one. Add `linux-arm64` to the runner matrix in `release-linux.sh` (TODO).
 GPG signing is only required for distro repository (.deb / .rpm) integration:
 
 ```bash
-export VIBE_LINUX_GPG_KEY='0123456789ABCDEF'  # long key ID
+export VIBE_GPG_KEY_ID='0123456789ABCDEF'  # long key ID (read by release-linux.sh)
 ```
 
 Tarballs and AppImages do not require code-signing on Linux.
