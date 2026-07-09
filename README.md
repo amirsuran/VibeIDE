@@ -75,6 +75,39 @@ VibeIDE — форк [VS Code open source (Code-OSS)](https://github.com/microso
 
 ---
 
+## 🏠 ДОМАШНЯЯ СБОРКА — собери VibeIDE сам, одной командой
+
+> ### ⚡ САМОЕ ПРОСТОЕ, ЧТО ЗДЕСЬ ЕСТЬ
+> Одна команда — и на руках **готовый портативный VibeIDE под твою систему**. Скрипт **сам** поставит `fnm`, скачает нужную версию Node, установит зависимости и соберёт приложение. Перед запуском он **объявит, что именно сделает, и спросит подтверждение** — ничего не ставится молча.
+
+**Linux / macOS:**
+
+```bash
+git clone https://github.com/VibeBrains/VibeIDE.git && cd VibeIDE
+./scripts/home-build.sh
+```
+
+**Windows:**
+
+```bat
+git clone https://github.com/VibeBrains/VibeIDE.git && cd VibeIDE
+scripts\home-build.cmd
+```
+
+На выходе — готовая к запуску папка приложения рядом с репозиторием **и** архив в `.build/home/`:
+
+| ОС | Что запускать | Архив |
+|---|---|---|
+| Linux | `../VibeIDE-linux-<arch>/bin/vibeide` | `VibeIDE-linux-<arch>.tar.gz` |
+| macOS | `../VibeIDE-darwin-<arch>/VibeIDE.app` | `VibeIDE-darwin-<arch>.zip` |
+| Windows | `..\VibeIDE-win32-<arch>\VibeIDE.exe` | `VibeIDE-win32-<arch>.zip` |
+
+Флаги: `--arch arm64` (переопределить авто-архитектуру), `--yes` (без вопроса, для скриптов). Архитектура по умолчанию — как у твоей машины. **Windows:** нужен заранее установленный VS Build Tools C++ (см. [требования](#cc-тулчейн-для-windows-нативные-модули--обязательно) ниже) — это единственное, что скрипт не ставит сам (многогигабайтная установка с правами администратора).
+
+Подробности, отличие от dev-запуска и разбор шагов — [docs/knowledge/build/build-from-source.md](docs/knowledge/build/build-from-source.md).
+
+---
+
 ## Быстрый старт
 
 ### Требования
