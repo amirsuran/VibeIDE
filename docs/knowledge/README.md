@@ -90,6 +90,7 @@
 | Файл | О чём |
 |---|---|
 | [windows-toolchain.md](build/windows-toolchain.md) | VS C++ Build Tools, MSB8040 Spectre, native modules, `@vscode/vsce-sign` |
+| [linux-toolchain.md](build/linux-toolchain.md) | `release-linux.sh`: deb/rpm/AppImage/tar.gz × x64/arm64, двухфазный флоу, Docker-кросс-сборка, cross-toolchain arm64 |
 | [portable-and-electron.md](build/portable-and-electron.md) | Portable Windows ZIP, Electron mirror, Linux CI X11 |
 | [compile-and-sync.md](build/compile-and-sync.md) | `tsgo` exit 2, sync без общего предка, `run-dev` / `vibe-dev` runner |
 | [update-service.md](build/update-service.md) | GitHub releases + `IUpdateService`, semver сравнение |
