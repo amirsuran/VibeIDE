@@ -10,7 +10,6 @@ import { Virtuoso, VirtuosoHandle } from 'react-virtuoso';
 
 
 import { useAccessor, useChatThreadsState, useChatThreadsStreamState, useSettingsState, useActiveURI, useCommandBarState, useFullChatThreadsStreamState, useSubagentActivity, useSubagentHandoffCount, SubagentActivityItem } from '../util/services.js';
-import { AgentRoleModels } from '../vibe-settings-tsx/AgentRoleModels.js';
 import { ScrollType } from '../../../../../../../editor/common/editorCommon.js';
 
 import { ChatMarkdownRender, ChatMessageLocation, getApplyBoxId } from '../markdown/ChatMarkdownRender.js';
@@ -1059,7 +1058,7 @@ const ChatRunRouteButton = () => {
 				}
 				await modal.showModal({
 					title: 'Роли агентов — модель на роль',
-					content: <AgentRoleModels />,
+					contentKey: 'agentRoleModels',
 					buttons: [{ id: 'done', label: 'Готово', role: 'primary' }],
 					size: 'medium',
 				});

@@ -9,6 +9,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAccessor } from '../util/services.js';
 import { VIBE_MODAL_MIN_AUTO_DISMISS_MS, VibeModalButton, VibeModalQueueEntry } from '../../../../common/vibeModalTypes.js';
 import { ChatMarkdownRender } from '../markdown/ChatMarkdownRender.js';
+import { AgentRoleModels } from '../vibe-settings-tsx/AgentRoleModels.js';
 
 /** Lower bound for the post-pause `remaining` clamp — avoids zero/negative
  *  timer values after rapid hover-in/out cycles. */
@@ -287,9 +288,9 @@ export const VibeModalSimple: React.FC<{ entry: VibeModalQueueEntry }> = ({ entr
 					</div>
 				)}
 
-				{options.content != null && (
+				{options.contentKey && (
 					<div className="@@vibeide-modal-content">
-						{options.content as React.ReactNode}
+						{options.contentKey === 'agentRoleModels' && <AgentRoleModels />}
 					</div>
 				)}
 

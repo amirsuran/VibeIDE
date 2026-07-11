@@ -94,11 +94,12 @@ export interface VibeModalOptions<TButtonId extends string = string> {
 	/** Optional numeric fields rendered below `input` — collected into `VibeModalResult.fieldValues`. */
 	readonly numberFields?: ReadonlyArray<VibeModalNumberField>;
 	/**
-	 * Optional React node rendered in the body area (below `body`/`input`). Typed `unknown` because
-	 * `common/` must not import React — the renderer (VibeModalSimple) casts it to a ReactNode. Use for
-	 * embedding a live component (e.g. the per-role model settings) instead of a static string.
+	 * Optional live component rendered in the body area, addressed by KEY (not a React element).
+	 * The modal lives in its own React root/bundle, so a JSX element created by a caller bundle can't
+	 * be rendered here («mismatching React versions»). VibeModalSimple maps the key → a component it
+	 * imports itself. Extend the union + the switch in VibeModalSimple to add a new content component.
 	 */
-	readonly content?: unknown;
+	readonly contentKey?: 'agentRoleModels';
 	/**
 	 * Optional «remember my choice» checkbox rendered above the buttons. Its live state is reflected
 	 * back into `VibeModalResult.checked` on EVERY close path (button click, ESC, backdrop) — the
