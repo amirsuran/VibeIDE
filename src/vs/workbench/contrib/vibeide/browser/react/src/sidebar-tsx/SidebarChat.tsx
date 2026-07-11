@@ -5601,7 +5601,8 @@ export const SidebarChat = () => {
 			items.push({
 				key: 'subagent-activity',
 				render: () => <ProseWrapper>
-					<div className="flex flex-col gap-1 loading-state-transition" role="status" aria-live="polite" aria-atomic="true">
+					<div className="flex items-start gap-2 loading-state-transition" role="status" aria-live="polite" aria-atomic="true">
+						<div className="flex flex-col gap-1 flex-1 min-w-0">
 						{subagentActivity.map(role => {
 							// Live readout: STEPS are the usual binding limit for weak models (they hit
 							// maxSteps long before the token quota), so show them first; tokens are a
@@ -5610,7 +5611,9 @@ export const SidebarChat = () => {
 							const stepPart = (role.maxSteps && role.maxSteps > 0)
 								? `шаг ${role.liveStepsDone ?? 0}/${role.maxSteps}`
 								: '';
-							const tokenPart = (role.liveTokensUsed && role.liveTokensUsed > 0) ? `~${fmtK(role.liveTokensUsed)}` : '';
+							const tokenPart = (role.liveTokensUsed && role.liveTokensUsed > 0)
+								? (role.tokenQuota && role.tokenQuota > 0 ? `~${fmtK(role.liveTokensUsed)} / ${fmtK(role.tokenQuota)}` : `~${fmtK(role.liveTokensUsed)}`)
+								: '';
 							const parts = [stepPart, tokenPart].filter(Boolean).join(' · ');
 							const tokenReadout = parts ? ` (${parts})` : '';
 							return (
@@ -5624,6 +5627,16 @@ export const SidebarChat = () => {
 								</div>
 							);
 						})}
+						</div>
+						<button
+							type="button"
+							title={chatS.subagentSettingsTitle}
+							aria-label={chatS.subagentSettingsTitle}
+							onClick={() => { commandService.executeCommand('workbench.action.openSettings', 'vibeide.subagent'); }}
+							className="flex-shrink-0 text-sm text-vibe-fg-3 hover:text-vibe-fg-1 opacity-70 hover:opacity-100 transition-colors leading-none px-1 focus:outline-none focus:ring-1 focus:ring-blue-500/40 rounded"
+						>
+							⚙
+						</button>
 					</div>
 				</ProseWrapper>
 			});
@@ -5635,7 +5648,7 @@ export const SidebarChat = () => {
 		if (showResumeRole) {
 			items.push({
 				key: 'resume-role',
-				render: () => <div className="mt-1.5 px-2">
+				render: () => <div className="mt-1.5 px-2 flex items-center gap-2">
 					<button
 						type="button"
 						title={chatS.resumeRoleTitle}
@@ -5644,6 +5657,15 @@ export const SidebarChat = () => {
 						className="px-3 py-1.5 text-xs rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 hover:bg-blue-500/20 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500/40"
 					>
 						⏸️ {chatS.resumeRoleLabel(openHandoffCount)}
+					</button>
+					<button
+						type="button"
+						title={chatS.subagentSettingsTitle}
+						aria-label={chatS.subagentSettingsTitle}
+						onClick={() => { commandService.executeCommand('workbench.action.openSettings', 'vibeide.subagent'); }}
+						className="flex-shrink-0 text-sm text-vibe-fg-3 hover:text-vibe-fg-1 opacity-70 hover:opacity-100 transition-colors leading-none px-1 focus:outline-none focus:ring-1 focus:ring-blue-500/40 rounded"
+					>
+						⚙
 					</button>
 				</div>
 			});

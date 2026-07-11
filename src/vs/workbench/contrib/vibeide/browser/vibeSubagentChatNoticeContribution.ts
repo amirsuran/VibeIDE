@@ -83,13 +83,25 @@ class VibeSubagentChatNoticeContribution extends Disposable {
 			}
 			case 'stopped':
 				// No «субпин» promise here: while auto-resume is running the ticket is not yet open —
-				// the indicator appears only when the human's decision is actually needed.
-				return localize('vibeide.subagent.chatStopped', "⏸️ Субагент «{0}» остановлен: {1}. Частичный результат сохранён.", name, reason);
+				// the indicator appears only when the human's decision is actually needed. The metrics
+				// suffix shows WHAT bound (steps/tokens vs the limits), so «исчерпан лимит шагов» is legible.
+				return localize('vibeide.subagent.chatStopped', "⏸️ Субагент «{0}» остановлен: {1}{2}. Частичный результат сохранён.", name, reason, this._metrics(entry));
 			case 'skipped':
-				return localize('vibeide.subagent.chatSkipped', "⏭️ Субагент «{0}» пропущен: {1}", name, reason);
+				return localize('vibeide.subagent.chatSkipped', "⏭️ Субагент «{0}» пропущен: {1}{2}", name, reason, this._metrics(entry));
 			default:
-				return localize('vibeide.subagent.chatFailed', "⚠️ Субагент «{0}»: {1}", name, reason);
+				return localize('vibeide.subagent.chatFailed', "⚠️ Субагент «{0}»: {1}{2}", name, reason, this._metrics(entry));
 		}
+	}
+
+	/** ` (шаг N/M · ~Xk / Yk)` — final steps and tokens against their limits, so a stopped role shows
+	 *  which limit bound it. Uses the entry's live counters (retained after the terminal transition). */
+	private _metrics(entry: SubagentEntry): string {
+		const fmtK = (n: number) => n >= 1000 ? `${Math.round(n / 100) / 10}k` : String(n);
+		const parts: string[] = [];
+		if (entry.maxSteps && entry.maxSteps > 0) { parts.push(`шаг ${entry.liveStepsDone ?? 0}/${entry.maxSteps}`); }
+		const tok = entry.result?.tokensUsed ?? entry.liveTokensUsed ?? 0;
+		if (tok > 0) { parts.push(entry.tokenQuota && entry.tokenQuota > 0 ? `~${fmtK(tok)} / ${fmtK(entry.tokenQuota)}` : `~${fmtK(tok)}`); }
+		return parts.length ? ` (${parts.join(' · ')})` : '';
 	}
 
 	private _post(threadId: string, text: string): void {
