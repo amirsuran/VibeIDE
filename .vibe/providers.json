@@ -1,0 +1,73 @@
+{
+	// .vibe/providers.json — пользовательские определения провайдеров (JSONC, комментарии разрешены).
+	// Схема: src/vs/workbench/contrib/vibeide/common/vibeProvidersFile.ts
+	"version": 1,
+	"providers": [
+		{
+			"id": "zai",
+			"name": "Z.AI (GLM)",
+			"protocol": "openai",
+			"baseURL": "https://api.z.ai/api/paas/v4",
+			"auth": "bearer",
+			// Ключ хранится вне файла: переменная окружения ZAI_API_KEY (.vibe/.env или process.env).
+			"apiKeyEnv": "ZAI_API_KEY",
+			"docsUrl": "https://docs.z.ai/",
+			"apiKeyUrl": "https://z.ai/manage-apikey/apikey-list",
+			"order": 50,
+			"tags": ["glm", "zhipu"],
+			"models": {
+				// Список моделей z.ai лежит на <baseURL>/models, а не /v1/models — задаём URL явно.
+				"fetch": "https://api.z.ai/api/paas/v4/models",
+				// Статический fallback (используется, пока каталог не подтянулся / нет ключа).
+				"static": [
+					{
+						"id": "glm-4.6",
+						"name": "GLM-4.6",
+						"default": true,
+						"pinned": true,
+						"contextWindow": 200000,
+						"maxOutputTokens": 131072,
+						"toolFormat": "openai",
+						"systemMessage": "system",
+						"reasoning": { "canTurnOff": true, "field": "thinking" }
+					},
+					{
+						"id": "glm-4.5",
+						"name": "GLM-4.5",
+						"contextWindow": 131072,
+						"maxOutputTokens": 98304,
+						"toolFormat": "openai",
+						"systemMessage": "system",
+						"reasoning": { "canTurnOff": true, "field": "thinking" }
+					},
+					{
+						"id": "glm-4.5-air",
+						"name": "GLM-4.5-Air",
+						"contextWindow": 131072,
+						"maxOutputTokens": 98304,
+						"toolFormat": "openai",
+						"systemMessage": "system",
+						"reasoning": { "canTurnOff": true, "field": "thinking" }
+					},
+					{
+						"id": "glm-4.5v",
+						"name": "GLM-4.5V (vision)",
+						"contextWindow": 65536,
+						"maxOutputTokens": 16384,
+						"toolFormat": "openai",
+						"vision": true,
+						"systemMessage": "system"
+					},
+					{
+						"id": "glm-4.5-flash",
+						"name": "GLM-4.5-Flash",
+						"contextWindow": 131072,
+						"maxOutputTokens": 98304,
+						"toolFormat": "openai",
+						"systemMessage": "system"
+					}
+				]
+			}
+		}
+	]
+}
