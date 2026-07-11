@@ -44,7 +44,7 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 			default: 100000,
 			minimum: 1024,
 			maximum: 1000000,
-			description: localize('vibeide.subagent.maxTokens', 'Максимальный размер контекстного окна изолированного субагента (worker/process), в токенах. Используется как верхний потолок при расчёте квоты «половина от родителя». По умолчанию 100 000.'),
+			description: localize('vibeide.subagent.maxTokens', 'Токен-бюджет одного субагента: и размер контекстного окна изоляции (worker/process), и потолок суммарного расхода токенов, после которого субагент останавливается. Бюджет независим от остатка бюджета сессии. По умолчанию 100 000.'),
 		},
 		'vibeide.subagent.forceInline': {
 			type: 'boolean',

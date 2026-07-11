@@ -25,7 +25,7 @@ import { Emitter, Event } from '../../../../base/common/event.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { registerSingleton, InstantiationType } from '../../../../platform/instantiation/common/extensions.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
-import { IVibeTokenBudgetService } from './vibeTokenBudgetService.js';
+import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { IAuditLogService } from './auditLogService.js';
 import { IVibeConstraintsService } from './vibeConstraintsService.js';
 import { IVibeSubagentRunner } from './vibeSubagentRunner.js';
@@ -160,7 +160,8 @@ export interface IVibeSubagentService {
 /** Maximum characters in any SubagentResult field — enforces compact handoff contract */
 const MAX_RESULT_SUMMARY_CHARS = 500;
 const DEFAULT_MAX_STEPS = 20;
-const DEFAULT_MAX_TOKENS = 20_000;
+/** Fallback per-subagent token quota when the config value is missing (config is the source of truth). */
+const DEFAULT_SUBAGENT_TOKEN_QUOTA = 100_000;
 
 // ── Tool whitelists per type ──────────────────────────────────────────────────
 
@@ -202,7 +203,7 @@ class VibeSubagentService extends Disposable implements IVibeSubagentService {
 
 	constructor(
 		@ILogService private readonly _log: ILogService,
-		@IVibeTokenBudgetService private readonly _budget: IVibeTokenBudgetService,
+		@IConfigurationService private readonly _configuration: IConfigurationService,
 		@IAuditLogService private readonly _audit: IAuditLogService,
 		@IVibeConstraintsService private readonly _constraints: IVibeConstraintsService,
 		@IVibeSubagentRunner private readonly _runner: IVibeSubagentRunner,
@@ -303,8 +304,12 @@ class VibeSubagentService extends Disposable implements IVibeSubagentService {
 		this._onStatusChanged.fire(entry);
 
 		const handoff = entry.handoff;
-		const budgetStatus = this._budget.getStatus();
-		const maxTokens = handoff.maxTokens ?? Math.min(DEFAULT_MAX_TOKENS, budgetStatus.sessionTokensLimit - budgetStatus.sessionTokensUsed);
+		// The subagent's token quota is its OWN budget (config `vibeide.subagent.maxTokens`), NOT the
+		// session remainder. Coupling to the remainder starved a role (and, on autopilot, every role)
+		// the moment the parent had spent most of the session — the ~20k first-hop abort. The global
+		// session guard (sendLLMMessageService) stays the backstop against overspend.
+		const configuredQuota = this._configuration.getValue<number>('vibeide.subagent.maxTokens');
+		const maxTokens = handoff.maxTokens ?? (typeof configuredQuota === 'number' && configuredQuota > 0 ? configuredQuota : DEFAULT_SUBAGENT_TOKEN_QUOTA);
 		const maxSteps = handoff.maxSteps ?? DEFAULT_MAX_STEPS;
 		const allowedTools = TOOL_WHITELIST[entry.type];
 
