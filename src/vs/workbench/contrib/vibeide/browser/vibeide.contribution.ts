@@ -699,6 +699,9 @@ import '../common/vibeSubagentOrchestratorService.js';
 // VibeIDE: Subagent status bar — active subagent count + click → list picker
 import './vibeSubagentStatusBarContribution.js';
 
+// VibeIDE: «Субпин» — indicator + command for stopped subagents awaiting manual resume (durable handoff)
+import './vibeSubagentHandoffContribution.js';
+
 // VibeIDE: Background job service — descriptor, tool policy, budget enforcement (§ J.2)
 import '../common/vibeBackgroundJobService.js';
 
