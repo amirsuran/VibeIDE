@@ -345,7 +345,6 @@ export const VibeModalSimple: React.FC<{ entry: VibeModalQueueEntry }> = ({ entr
 											setFieldValues(prev => ({ ...prev, [f.id]: clamped }));
 										}}
 									/>
-									{f.suffix && <span className="@@vibeide-modal-numberfield-suffix">{f.suffix}</span>}
 								</span>
 							</label>
 						))}

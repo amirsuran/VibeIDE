@@ -63,8 +63,6 @@ export interface VibeModalNumberField {
 	readonly default: number;
 	readonly min?: number;
 	readonly max?: number;
-	/** Short unit shown after the field, e.g. «с» or «шаг». */
-	readonly suffix?: string;
 }
 
 /**

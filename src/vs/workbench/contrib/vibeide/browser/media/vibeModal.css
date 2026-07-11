@@ -269,11 +269,6 @@
 	min-width: 0;
 }
 
-.vibeide-modal-numberfield-suffix {
-	flex: 0 0 auto;
-	color: var(--vscode-descriptionForeground);
-}
-
 .vibeide-modal-validation {
 	color: var(--vscode-inputValidation-errorForeground, var(--vscode-errorForeground));
 	font-size: calc(var(--vscode-font-size) - 1px);

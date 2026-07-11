@@ -1037,7 +1037,7 @@ const ChatRunRouteButton = () => {
 				numberFields: [
 					{ id: 'maxSteps', label: 'Шаги', default: steps, min: 5, max: 500 },
 					{ id: 'maxTokens', label: 'Токены', default: tokens, min: 10000, max: 100000000 },
-					{ id: 'maxWallClockSec', label: 'Время', default: timeSec, min: 10, max: 3600, suffix: 'с' },
+					{ id: 'maxWallClockSec', label: 'Время, с', default: timeSec, min: 10, max: 3600 },
 					{ id: 'maxResumes', label: 'Авто-резюм', default: resumes, min: 0, max: 10 },
 				],
 				footerLeftButton: { id: 'roles', label: '🎭 Роли', role: 'secondary' },
