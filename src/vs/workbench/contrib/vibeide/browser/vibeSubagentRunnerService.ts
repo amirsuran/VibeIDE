@@ -273,6 +273,7 @@ class VibeSubagentRunnerService extends Disposable implements IVibeSubagentRunne
 
 			try {
 				const { result } = await this._tools.callTool[toolName](params as never);
+				deniedActions = 0; // a tool ran cleanly — the «stuck» guard counts CONSECUTIVE misfires, not lifetime
 				const content = truncateHeadTail(this._tools.stringOfResult[toolName](params as never, result as never), SUBAGENT_TOOL_RESULT_MAX_CHARS);
 				const paths = collectPathsFromRawParams(toolCall.rawParams);
 				touchedPaths.push(...paths);
