@@ -61,7 +61,7 @@
 |---|---|
 | [modes-and-policies.md](chat-ux/modes-and-policies.md) | Normal/Plan/Agent, autopilot vs auto-approve, pre-flight, Trust Score, T&C Suite, confidence vs LLM-judge |
 | [attachments.md](chat-ux/attachments.md) | Paste файлов, vision-capability gate (двойной), скрытый dead-code |
-| [chat-interrupt-and-inject.md](chat-ux/chat-interrupt-and-inject.md) | Дубль `tool_call id` после abort mid-tool-call (HTTP 400) — дедуп в `prepareMessages_openai_tools`; дизайн «подмешать контекст к следующему хопу» без прерывания |
+| [chat-interrupt-and-inject.md](chat-ux/chat-interrupt-and-inject.md) | Дубль `tool_call id` после abort mid-tool-call (HTTP 400) — дедуп в `prepareMessages_openai_tools`; дизайн «подмешать контекст к следующему хопу» без прерывания; **правило: живой UI-статус в треде — транзиентом, не персистентным сообщением** (инвариант `messages[length-1]`, буфер notice до idle) |
 | [shortcuts.md](chat-ux/shortcuts.md) | `Ctrl+Alt+I`, отвязка `workbench.action.chat.open`, скрытие builtin chat |
 | [auto-repair-loop.md](chat-ux/auto-repair-loop.md) | Repair loop, DMS exclusions, pre-flight vs task decomposition |
 | [model-stalls.md](chat-ux/model-stalls.md) | Журнал обрывов/зависаний LLM-ассистента: триггерные слова, шаблон инцидента, гипотезы, митигации |

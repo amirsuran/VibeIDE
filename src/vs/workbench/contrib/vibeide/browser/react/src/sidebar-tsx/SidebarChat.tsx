@@ -9,7 +9,7 @@ import React, { ButtonHTMLAttributes, FormEvent, FormHTMLAttributes, Fragment, K
 import { Virtuoso, VirtuosoHandle } from 'react-virtuoso';
 
 
-import { useAccessor, useChatThreadsState, useChatThreadsStreamState, useSettingsState, useActiveURI, useCommandBarState, useFullChatThreadsStreamState } from '../util/services.js';
+import { useAccessor, useChatThreadsState, useChatThreadsStreamState, useSettingsState, useActiveURI, useCommandBarState, useFullChatThreadsStreamState, useSubagentActivity } from '../util/services.js';
 import { ScrollType } from '../../../../../../../editor/common/editorCommon.js';
 
 import { ChatMarkdownRender, ChatMessageLocation, getApplyBoxId } from '../markdown/ChatMarkdownRender.js';
@@ -5385,6 +5385,11 @@ export const SidebarChat = () => {
 	const keybindingString = accessor.get('IKeybindingService').lookupKeybinding(VIBEIDE_CTRL_L_ACTION_ID)?.getLabel();
 
 	const threadId = currentThread.id;
+	// Live subagent activity (VA.6): running curated roles for this thread, rendered as a transient
+	// spinner. Gated by the same toggle as the finish notices — one switch governs subagent-in-chat.
+	const subagentActivity = useSubagentActivity(threadId);
+	const showSubagentActivity = subagentActivity.length > 0
+		&& configurationService.getValue<boolean>('vibeide.subagent.chatNotices') !== false;
 	const currCheckpointIdx = chatThreadsState.allThreads[threadId]?.state?.currCheckpointIdx ?? undefined;  // if not exist, treat like checkpoint is last message (infinity)
 	// Notes the user queued mid-run (via onInject). Shown as a pinned "queued" strip above the input until
 	// the agent drains them into a real message on its next hop (then pendingInjections clears → strip gone).
@@ -5553,6 +5558,29 @@ export const SidebarChat = () => {
 			});
 		}
 
+		// Live subagent activity — curated roles currently working under this thread. Transient
+		// (never a persisted message), so it can appear mid-turn without breaking the streaming
+		// last-message invariant. Renders below the streaming content, above the escape hint.
+		if (showSubagentActivity) {
+			items.push({
+				key: 'subagent-activity',
+				render: () => <ProseWrapper>
+					<div className="flex flex-col gap-1 loading-state-transition" role="status" aria-live="polite" aria-atomic="true">
+						{subagentActivity.map(role => (
+							<div key={role.id} className="flex items-center gap-2">
+								<span className="text-vibe-fg-2 opacity-70 flex-shrink-0 text-sm leading-none">
+									<IconLoading state="processing" inline />
+								</span>
+								<span className="text-sm text-vibe-fg-2 opacity-80">
+									🧩 Роль «{role.displayName}» работает…
+								</span>
+							</div>
+						))}
+					</div>
+				</ProseWrapper>
+			});
+		}
+
 		// Escape hint when streaming.
 		if ((isRunning === 'LLM' || isRunning === 'preparing') && (displayContentSoFar || reasoningSoFar)) {
 			items.push({
@@ -5657,6 +5685,8 @@ export const SidebarChat = () => {
 		chatThreadsService,
 		commandService,
 		currentThread.id,
+		showSubagentActivity,
+		subagentActivity,
 	]);
 
 	const messagesHTML = (
