@@ -15,7 +15,6 @@ import { Action2, registerAction2 } from '../../../../platform/actions/common/ac
 import { ServicesAccessor } from '../../../../editor/browser/editorExtensions.js';
 import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
-import { IEditorService } from '../../../services/editor/common/editorService.js';
 import { approvalTypeOfBuiltinToolName } from '../common/prompt/tools/index.js';
 import { IVibeSubagentOrchestratorService } from '../common/vibeSubagentOrchestratorService.js';
 import { IVibeSubagentRegistryService } from '../common/vibeSubagentRegistryService.js';
@@ -73,7 +72,6 @@ registerAction2(
 			const quickInput = accessor.get(IQuickInputService);
 			const orchestrator = accessor.get(IVibeSubagentOrchestratorService);
 			const notice = accessor.get(INotificationService);
-			const editorService = accessor.get(IEditorService);
 			const chatThreadService = accessor.get(IChatThreadService);
 
 			const task = await quickInput.input({
@@ -109,10 +107,13 @@ registerAction2(
 						'',
 					].filter((l): l is string => l !== undefined)).flat(),
 				].join('\n');
-				await editorService.openEditor({ resource: undefined, contents: md, languageId: 'markdown', options: { pinned: true } });
+				// Post the report AS A CHAT MESSAGE (not an untitled editor): the work lives in the chat,
+				// and a display-only assistant message is never «dirty», so it can't trigger the
+				// save-on-close dialog / loop that untitled `contents` editors did.
+				chatThreadService.addAssistantNotice(chatThreadService.state.currentThreadId, md);
 				notice.notify({
 					severity: ok === results.length ? Severity.Info : Severity.Warning,
-					message: localize('vibeAgents.executeRoute.done', "Команда ролей завершена: {0}/{1} успешно. Отчёт открыт в редакторе.", String(ok), String(results.length)),
+					message: localize('vibeAgents.executeRoute.done', "Команда ролей завершена: {0}/{1} успешно. Отчёт добавлен в чат.", String(ok), String(results.length)),
 				});
 			} catch (e) {
 				notice.error(localize('vibeAgents.executeRoute.failed', "Команда ролей прервана: {0}", e instanceof Error ? e.message : String(e)));

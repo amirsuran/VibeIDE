@@ -578,6 +578,9 @@ export interface IChatThreadService {
 	addNewStagingSelection(newSelection: StagingSelectionItem): void;
 
 	dangerousSetState: (newState: ThreadsState) => void;
+
+	/** Append a display-only assistant message (e.g. a Vibe Agents report) to a thread — no LLM call. */
+	addAssistantNotice(threadId: string, markdown: string): void;
 	resetState: () => void;
 
 	// // current thread's staging selections
@@ -9051,6 +9054,10 @@ We only need to do it for files that were edited since `from`, ie files between 
 		// Deferred: we are inside the _setStreamState funnel; let the current state update settle before
 		// starting a new turn (which re-enters _setStreamState).
 		queueMicrotask(() => { void this._addUserMessageAndStreamResponse({ userMessage: content, threadId, displayContent: content, images, pdfs }); });
+	}
+
+	addAssistantNotice(threadId: string, markdown: string): void {
+		this._addMessageToThread(threadId, { role: 'assistant', displayContent: markdown, reasoning: '', anthropicReasoning: null });
 	}
 
 	private _addMessageToThread(threadId: string, message: ChatMessage) {
