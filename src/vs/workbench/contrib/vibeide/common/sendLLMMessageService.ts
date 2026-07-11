@@ -190,14 +190,17 @@ export class LLMMessageService extends Disposable implements ILLMMessageService 
 	}
 
 	sendLLMMessage(params: ServiceSendLLMMessageParams) {
-		const { onText, onFinalMessage, onError, onAbort, modelSelection, forceToolUse, ...proxyParams } = params;
+		const { onText, onFinalMessage, onError, onAbort, modelSelection, forceToolUse, excludeFromSessionBudget, ...proxyParams } = params;
 
-		// VibeIDE: Enforce session token budget before sending
-		try {
-			this.tokenBudgetService.checkBudget();
-		} catch (budgetError) {
-			onError({ message: (budgetError as Error).message, fullError: budgetError });
-			return null;
+		// VibeIDE: Enforce session token budget before sending. Subagent sends opt out — they have
+		// their own quota, and the session gate must not block a role on the main-agent limit.
+		if (!excludeFromSessionBudget) {
+			try {
+				this.tokenBudgetService.checkBudget();
+			} catch (budgetError) {
+				onError({ message: (budgetError as Error).message, fullError: budgetError });
+				return null;
+			}
 		}
 
 		// throw an error if no model/provider selected (this should usually never be reached, the UI should check this first, but might happen in cases like Apply where we haven't built much UI/checks yet, good practice to have check logic on backend)
@@ -335,7 +338,9 @@ export class LLMMessageService extends Disposable implements ILLMMessageService 
 				const outChars = (p.fullText?.length ?? 0) + (p.fullReasoning?.length ?? 0);
 				outForBudget = Math.max(1, Math.ceil(outChars / 4));
 			}
-			this.tokenBudgetService.recordUsage(inForBudget, outForBudget, p.usage?.cachedInputTokens);
+			if (!excludeFromSessionBudget) {
+				this.tokenBudgetService.recordUsage(inForBudget, outForBudget, p.usage?.cachedInputTokens);
+			}
 			onFinalMessage(p);
 		};
 		this.llmMessageHooks.onError[requestId] = onError;

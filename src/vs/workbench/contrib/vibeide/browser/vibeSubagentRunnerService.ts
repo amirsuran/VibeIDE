@@ -275,6 +275,9 @@ class VibeSubagentRunnerService extends Disposable implements IVibeSubagentRunne
 				onFinalMessage: p => finish({ kind: 'final', fullText: p.fullText, toolCall: p.toolCall, usage: p.usage }),
 				onError: e => finish({ kind: 'error', message: e.message || String(e) }),
 				onAbort: () => finish({ kind: 'error', message: 'запрос прерван (отмена или лимит времени субагента)' }),
+				// Subagents have their own quota + per-role accounting — keep their spend out of the
+				// main-agent session budget (both the pre-send gate and the usage counter).
+				excludeFromSessionBudget: true,
 				logging: { loggingName: `Subagent/${opts.req.type}` },
 			});
 			if (requestId === null) { return; } // onError has already fired synchronously

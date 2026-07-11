@@ -407,8 +407,8 @@ export const TokenBudgetInline = () => {
 	const sep = <span className="text-vibe-fg-4 mx-1.5 select-none">|</span>;
 	return (
 		<span className="text-vibe-fg-3 whitespace-nowrap">
-			{sep}<span>{chatS.budgetFooterContextLabel}: {ctxKnown ? `${formatTokens(ctx.currentTokens)}·${ctxPct}%` : chatS.budgetFooterUnknown}</span>
-			{sep}<span>{chatS.budgetFooterSessionLabel}: {sessionEnabled ? `${formatTokens(budget.sessionTokensUsed)}·${sessionPct}%` : formatTokens(budget.sessionTokensUsed)}</span>
+			{sep}<span>{chatS.budgetFooterContextLabel}: {ctxKnown ? `${formatTokens(ctx.currentTokens)} (${ctxPct}%)` : chatS.budgetFooterUnknown}</span>
+			{sep}<span>{chatS.budgetFooterSessionLabel}: {sessionEnabled ? `${formatTokens(budget.sessionTokensUsed)} (${sessionPct}%)` : formatTokens(budget.sessionTokensUsed)}</span>
 		</span>
 	);
 };
