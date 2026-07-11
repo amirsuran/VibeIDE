@@ -174,11 +174,12 @@
 .vibeide-modal-textarea {
 	width: 100%;
 	box-sizing: border-box;
-	padding: 6px 8px;
+	padding: 10px 12px;
 	background-color: var(--vscode-input-background);
 	color: var(--vscode-input-foreground);
 	border: 1px solid var(--vscode-input-border, transparent);
-	border-radius: 2px;
+	/* Match the chat composer's rounding (Tailwind rounded-xl = 12px) so the modal field reads as the same design language. */
+	border-radius: 12px;
 	font-family: inherit;
 	font-size: inherit;
 	outline: none;

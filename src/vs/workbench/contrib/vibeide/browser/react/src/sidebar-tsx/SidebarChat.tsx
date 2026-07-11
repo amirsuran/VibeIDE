@@ -1006,7 +1006,13 @@ const CONTINUE_TEXT_DEFAULT = 'продолжи';
  */
 const ChatRunRouteButton = () => {
 	const accessor = useAccessor();
+	// One route-modal at a time: modals queue FIFO, so rapid clicks would stack duplicates that each
+	// launch a route on confirm. Ignore clicks while one is already open.
+	const openRef = React.useRef(false);
 	const openRouteModal = useCallback(async () => {
+		if (openRef.current) { return; }
+		openRef.current = true;
+		try {
 		const modal = accessor.get('IVibeModalService');
 		const commandService = accessor.get('ICommandService');
 		const { buttonId, inputValue } = await modal.showModal({
@@ -1022,6 +1028,9 @@ const ChatRunRouteButton = () => {
 		});
 		if (buttonId === 'run' && inputValue?.trim()) {
 			commandService.executeCommand('vibeide.vibeAgents.executeRoute', inputValue.trim());
+		}
+		} finally {
+			openRef.current = false;
 		}
 	}, [accessor]);
 
