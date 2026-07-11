@@ -124,6 +124,10 @@ export interface SubagentEntry {
 	startedAt: number;
 	handoff: SubagentHandoff;
 	result?: SubagentResult;
+	/** Live estimated tokens spent so far (updated per hop while `running`) — drives the chat spinner readout. */
+	liveTokensUsed?: number;
+	/** Resolved token quota for this run (`vibeide.subagent.maxTokens` or per-handoff) — the denominator in the readout. */
+	tokenQuota?: number;
 }
 
 export const IVibeSubagentService = createDecorator<IVibeSubagentService>('vibeSubagentService');
@@ -322,6 +326,10 @@ class VibeSubagentService extends Disposable implements IVibeSubagentService {
 		const maxSteps = handoff.maxSteps ?? DEFAULT_MAX_STEPS;
 		const allowedTools = TOOL_WHITELIST[entry.type];
 
+		// Live readout (chat spinner): expose the quota now and stream per-hop spend below.
+		entry.tokenQuota = Math.max(0, maxTokens);
+		entry.liveTokensUsed = 0;
+
 		// Constraints / permissions are ALWAYS inherited from parent — never weakened.
 		// The runner executes tools through the same IToolsService as the parent agent, so
 		// every constraints check (checkWriteAllowed etc.) applies identically; on top of
@@ -349,6 +357,14 @@ class VibeSubagentService extends Disposable implements IVibeSubagentService {
 			maxTokensEst: Math.max(0, maxTokens),
 			maxWallClockMs: handoff.maxWallClockMs ?? 0,
 			cancellationToken: this._ctsById.get(entry.id)?.token,
+			onProgress: tokensUsedEst => {
+				// Per-hop live spend → chat spinner. Only while still running; terminal state
+				// carries the final tokens in `result`.
+				if (entry.status === 'running') {
+					entry.liveTokensUsed = tokensUsedEst;
+					this._onStatusChanged.fire(entry);
+				}
+			},
 		});
 
 		const result: SubagentResult = {

@@ -56,6 +56,13 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 			default: true,
 			description: localize('vibeide.subagent.autoSkipOnRetryExhausted', 'Автоматически пропускать шаг субагента и переходить к следующему пункту, когда все повторы исчерпаны. Если выключено — roadmap-агент ставится на паузу.'),
 		},
+		'vibeide.subagent.maxResumes': {
+			type: 'number',
+			default: 2,
+			minimum: 0,
+			maximum: 10,
+			description: localize('vibeide.subagent.maxResumes', 'Сколько раз VibeIDE САМ продолжит остановленную по лимиту (токены/шаги/время) роль-субагента с сохранённого места, прежде чем передать решение пользователю (ручной список «Продолжить роль»). 0 = не продолжать автоматически. Субагентный аналог «подпин.» основного агента. Дефолт 2.'),
+		},
 	},
 });
 

@@ -5,27 +5,21 @@
 
 
 /**
- * «Субпин» — status-bar indicator + command for subagents that STOPPED by a limit and had their
- * partial work parked in a durable handoff ticket (see vibeSubagentHandoffStore). The count shows
- * how many stopped roles await a human decision after auto-resumes ran out; clicking opens a picker
- * to resume one manually. The tooltip explains what it is.
+ * «Субпин» — the resume command for subagents that STOPPED by a limit and had their partial work
+ * parked in a durable handoff ticket (see vibeSubagentHandoffStore). Running it opens a picker to
+ * resume one stopped role manually from its saved point. The count of pending roles and the manual
+ * trigger are surfaced IN THE CHAT (the «Продолжить роль» affordance next to the chat's own
+ * «Продолжить») rather than a status-bar chip — this file only owns the command it invokes.
  */
 
-import { Disposable } from '../../../../base/common/lifecycle.js';
 import { localize, localize2 } from '../../../../nls.js';
-import { Registry } from '../../../../platform/registry/common/platform.js';
 import { Action2, registerAction2 } from '../../../../platform/actions/common/actions.js';
 import { ServicesAccessor } from '../../../../editor/browser/editorExtensions.js';
 import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
-import { IWorkbenchContributionsRegistry, Extensions as WorkbenchExtensions } from '../../../common/contributions.js';
-import { LifecyclePhase } from '../../../services/lifecycle/common/lifecycle.js';
-import { IStatusbarService, StatusbarAlignment, IStatusbarEntryAccessor } from '../../../services/statusbar/browser/statusbar.js';
-import { IVibeSubagentHandoffStore } from '../common/vibeSubagentHandoffStore.js';
 import { IVibeSubagentOrchestratorService } from '../common/vibeSubagentOrchestratorService.js';
 import { IVibeSubagentRegistryService } from '../common/vibeSubagentRegistryService.js';
 
-const STATUS_ID = 'vibeide.subagentHandoff';
 const RESUME_COMMAND_ID = 'vibeide.subagent.resumeHandoff';
 
 registerAction2(class extends Action2 {
@@ -71,44 +65,3 @@ registerAction2(class extends Action2 {
 		});
 	}
 });
-
-class VibeSubagentHandoffContribution extends Disposable {
-
-	private _accessor: IStatusbarEntryAccessor | undefined;
-
-	constructor(
-		@IStatusbarService private readonly _statusbar: IStatusbarService,
-		@IVibeSubagentHandoffStore private readonly _handoffStore: IVibeSubagentHandoffStore,
-		@IVibeSubagentRegistryService private readonly _registry: IVibeSubagentRegistryService,
-	) {
-		super();
-		this._register(this._handoffStore.onDidChange(() => this._update()));
-		this._update();
-	}
-
-	private _update(): void {
-		const open = this._handoffStore.listOpen();
-		if (open.length === 0) {
-			this._accessor?.dispose();
-			this._accessor = undefined;
-			return;
-		}
-
-		const text = `$(debug-continue) ${localize('vibeide.subagent.subpin', 'субпин: {0}', open.length)}`;
-		const name = localize('vibeide.subagent.subpinName', 'VibeIDE: остановленные субагенты');
-		const header = localize('vibeide.subagent.subpinTooltip', 'Остановленные субагенты — частичная работа сохранена, ждут продолжения (клик — продолжить):');
-		const tooltip = header + '\n' + open.map(t => `• ${this._registry.getPreset(t.role).displayName} — ${t.stopReason}`).join('\n');
-
-		const entry = { name, text, tooltip, ariaLabel: text, command: RESUME_COMMAND_ID };
-		if (this._accessor) {
-			this._accessor.update(entry);
-		} else {
-			this._accessor = this._register(this._statusbar.addEntry(entry, STATUS_ID, StatusbarAlignment.RIGHT, 499));
-		}
-	}
-}
-
-Registry.as<IWorkbenchContributionsRegistry>(WorkbenchExtensions.Workbench).registerWorkbenchContribution(
-	VibeSubagentHandoffContribution,
-	LifecyclePhase.Restored
-);

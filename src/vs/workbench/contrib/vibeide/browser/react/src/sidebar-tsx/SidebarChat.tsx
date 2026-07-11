@@ -9,7 +9,7 @@ import React, { ButtonHTMLAttributes, FormEvent, FormHTMLAttributes, Fragment, K
 import { Virtuoso, VirtuosoHandle } from 'react-virtuoso';
 
 
-import { useAccessor, useChatThreadsState, useChatThreadsStreamState, useSettingsState, useActiveURI, useCommandBarState, useFullChatThreadsStreamState, useSubagentActivity } from '../util/services.js';
+import { useAccessor, useChatThreadsState, useChatThreadsStreamState, useSettingsState, useActiveURI, useCommandBarState, useFullChatThreadsStreamState, useSubagentActivity, useSubagentHandoffCount } from '../util/services.js';
 import { ScrollType } from '../../../../../../../editor/common/editorCommon.js';
 
 import { ChatMarkdownRender, ChatMessageLocation, getApplyBoxId } from '../markdown/ChatMarkdownRender.js';
@@ -882,6 +882,36 @@ const ChatAgentQuestionNudgesControl = ({ className }: { className?: string }) =
 	);
 };
 
+/**
+ * Subagent auto-resume control («субпин.»). Bound to `vibeide.subagent.maxResumes`: how many times
+ * VibeIDE auto-continues a role stopped by its own limit (tokens/steps/time) from the saved point
+ * before handing the decision to the user. The subagent analog of «подпин.» (main-agent nudges) —
+ * lives right next to it so all the pin controls sit together. 0 = never auto-resume.
+ */
+const SUBPIN_RESUMES_DEFAULT = 2;
+const SUBPIN_RESUMES_UPPER = 10;
+const SUBPIN_RESUMES_KEY = 'vibeide.subagent.maxResumes';
+
+const ChatSubagentResumesControl = ({ className }: { className?: string }) => {
+	const settingsState = useSettingsState();
+
+	const mode = settingsState.globalSettings.chatMode;
+	if (mode !== 'agent' && mode !== 'plan') { return null; }
+	return (
+		<NumberStepperControl
+			className={className}
+			configKey={SUBPIN_RESUMES_KEY}
+			defaultValue={SUBPIN_RESUMES_DEFAULT}
+			upper={SUBPIN_RESUMES_UPPER}
+			label={chatS.subpinLabel}
+			offLabel={chatS.subpinOffLabel}
+			offHint={chatS.subpinOffHint}
+			title={chatS.subpinTitle}
+			presets={[0, 2, 5]}
+		/>
+	);
+};
+
 
 
 interface VibeideChatAreaProps {
@@ -1263,6 +1293,7 @@ export const VibeChatArea: React.FC<VibeideChatAreaProps> = ({
 						{featureName === 'Chat' && <ChatAgentIterationsControl />}
 						{featureName === 'Chat' && <ChatAgentNudgesControl />}
 						{featureName === 'Chat' && <ChatAgentQuestionNudgesControl />}
+						{featureName === 'Chat' && <ChatSubagentResumesControl />}
 						<ReasoningOptionSlider featureName={featureName} />
 					</div>
 				)}
@@ -5390,6 +5421,11 @@ export const SidebarChat = () => {
 	const subagentActivity = useSubagentActivity(threadId);
 	const showSubagentActivity = subagentActivity.length > 0
 		&& configurationService.getValue<boolean>('vibeide.subagent.chatNotices') !== false;
+	// Durable-handoff: stopped roles awaiting a manual resume decision. Surfaced as an in-chat
+	// «Продолжить роль» affordance (same place as the chat's own «Продолжить»), not a status-bar chip.
+	const openHandoffCount = useSubagentHandoffCount();
+	const threadStreamRunning = useChatThreadsStreamState(threadId)?.isRunning;
+	const showResumeRole = openHandoffCount > 0 && (threadStreamRunning === undefined || threadStreamRunning === 'idle');
 	const currCheckpointIdx = chatThreadsState.allThreads[threadId]?.state?.currCheckpointIdx ?? undefined;  // if not exist, treat like checkpoint is last message (infinity)
 	// Notes the user queued mid-run (via onInject). Shown as a pinned "queued" strip above the input until
 	// the agent drains them into a real message on its next hop (then pendingInjections clears → strip gone).
@@ -5566,18 +5602,46 @@ export const SidebarChat = () => {
 				key: 'subagent-activity',
 				render: () => <ProseWrapper>
 					<div className="flex flex-col gap-1 loading-state-transition" role="status" aria-live="polite" aria-atomic="true">
-						{subagentActivity.map(role => (
-							<div key={role.id} className="flex items-center gap-2">
-								<span className="text-vibe-fg-2 opacity-70 flex-shrink-0 text-sm leading-none">
-									<IconLoading state="processing" inline />
-								</span>
-								<span className="text-sm text-vibe-fg-2 opacity-80">
-									🧩 Роль «{role.displayName}» работает…
-								</span>
-							</div>
-						))}
+						{subagentActivity.map(role => {
+							// Live context/token readout: role's own spend vs its quota (not the main
+							// thread's context window — those are separate budgets). Compact «k» form.
+							const fmtK = (n: number) => n >= 1000 ? `${Math.round(n / 100) / 10}k` : String(n);
+							const tokenReadout = (role.tokenQuota && role.tokenQuota > 0)
+								? ` (~${fmtK(role.liveTokensUsed ?? 0)} / ${fmtK(role.tokenQuota)})`
+								: (role.liveTokensUsed && role.liveTokensUsed > 0 ? ` (~${fmtK(role.liveTokensUsed)})` : '');
+							return (
+								<div key={role.id} className="flex items-center gap-2">
+									<span className="text-vibe-fg-2 opacity-70 flex-shrink-0 text-sm leading-none">
+										<IconLoading state="processing" inline />
+									</span>
+									<span className="text-sm text-vibe-fg-2 opacity-80">
+										🧩 Роль «{role.displayName}» работает…{tokenReadout}
+									</span>
+								</div>
+							);
+						})}
 					</div>
 				</ProseWrapper>
+			});
+		}
+
+		// Durable-handoff resume: one-click «Продолжить роль» for stopped roles awaiting a manual
+		// decision. Same visual language and location as the chat's own «Продолжить» affordance;
+		// opens the existing role picker (vibeide.subagent.resumeHandoff).
+		if (showResumeRole) {
+			items.push({
+				key: 'resume-role',
+				render: () => <div className="mt-1.5 px-2">
+					<button
+						type="button"
+						title={chatS.resumeRoleTitle}
+						aria-label={chatS.resumeRoleLabel(openHandoffCount)}
+						onClick={() => { commandService.executeCommand('vibeide.subagent.resumeHandoff'); }}
+						className="px-3 py-1.5 text-xs rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 hover:bg-blue-500/20 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+					>
+						⏸️ {chatS.resumeRoleLabel(openHandoffCount)}
+					</button>
+				</div>
 			});
 		}
 
@@ -5687,6 +5751,8 @@ export const SidebarChat = () => {
 		currentThread.id,
 		showSubagentActivity,
 		subagentActivity,
+		showResumeRole,
+		openHandoffCount,
 	]);
 
 	const messagesHTML = (

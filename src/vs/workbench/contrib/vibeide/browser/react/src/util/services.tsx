@@ -79,6 +79,7 @@ import { IVibeNotifySoundsModalService } from '../../../../common/vibeNotifySoun
 import { IEditorService } from '../../../../../../../workbench/services/editor/common/editorService.js';
 import { IVibeSubagentService, SubagentType } from '../../../../common/vibeSubagentService.js';
 import { IVibeSubagentRegistryService } from '../../../../common/vibeSubagentRegistryService.js';
+import { IVibeSubagentHandoffStore } from '../../../../common/vibeSubagentHandoffStore.js';
 
 
 // normally to do this you'd use a useEffect that calls .onDidChangeState(), but useEffect mounts too late and misses initial state changes
@@ -117,6 +118,11 @@ let subagentSvc: IVibeSubagentService | undefined;
 let subagentRegistry: IVibeSubagentRegistryService | undefined;
 const subagentActivityListeners: Set<(parentThreadId: string) => void> = new Set();
 
+// Durable-handoff tickets (stopped roles awaiting manual resume) — drives the in-chat «Продолжить роль»
+// affordance. Reactive off the store's onDidChange.
+let subagentHandoffStore: IVibeSubagentHandoffStore | undefined;
+const subagentHandoffListeners: Set<() => void> = new Set();
+
 
 // must call this before you can use any of the hooks below
 // this is called ONCE PER BUNDLE — each tsup entry (sidebar-tsx, modal-tsx,
@@ -147,9 +153,10 @@ export const _registerServices = (accessor: ServicesAccessor) => {
 		mcpService: accessor.get(IMCPService),
 		subagentService: accessor.get(IVibeSubagentService),
 		subagentRegistryService: accessor.get(IVibeSubagentRegistryService),
+		subagentHandoffStoreService: accessor.get(IVibeSubagentHandoffStore),
 	};
 
-	const { settingsStateService, chatThreadsStateService, refreshModelService, themeService, editCodeService, vibeideCommandBarService, modelService, mcpService, subagentService, subagentRegistryService } = stateServices;
+	const { settingsStateService, chatThreadsStateService, refreshModelService, themeService, editCodeService, vibeideCommandBarService, modelService, mcpService, subagentService, subagentRegistryService, subagentHandoffStoreService } = stateServices;
 
 
 
@@ -232,6 +239,13 @@ export const _registerServices = (accessor: ServicesAccessor) => {
 	disposables.push(
 		subagentService.onSubagentStatusChanged(e => {
 			subagentActivityListeners.forEach(l => l(e.parentThreadId));
+		})
+	);
+
+	subagentHandoffStore = subagentHandoffStoreService;
+	disposables.push(
+		subagentHandoffStoreService.onDidChange(() => {
+			subagentHandoffListeners.forEach(l => l());
 		})
 	);
 
@@ -422,7 +436,7 @@ export const useFullChatThreadsStreamState = () => {
 const SUBAGENT_INTERNAL_TYPES = new Set<SubagentType>(['explore', 'implement-step', 'recover-or-skip']);
 const EMPTY_SUBAGENT_ACTIVITY: SubagentActivityItem[] = [];
 
-export type SubagentActivityItem = { id: string; displayName: string };
+export type SubagentActivityItem = { id: string; displayName: string; liveTokensUsed?: number; tokenQuota?: number };
 
 /** Running/pending curated roles for a parent thread — drives the live "role thinking" spinner. */
 export const useSubagentActivity = (threadId: string): SubagentActivityItem[] => {
@@ -430,7 +444,7 @@ export const useSubagentActivity = (threadId: string): SubagentActivityItem[] =>
 		if (!subagentSvc || !subagentRegistry || !threadId) { return EMPTY_SUBAGENT_ACTIVITY; }
 		const active = subagentSvc.getByParentThread(threadId)
 			.filter(e => (e.status === 'running' || e.status === 'pending') && !SUBAGENT_INTERNAL_TYPES.has(e.type))
-			.map(e => ({ id: e.id, displayName: subagentRegistry!.getPreset(e.type).displayName }));
+			.map(e => ({ id: e.id, displayName: subagentRegistry!.getPreset(e.type).displayName, liveTokensUsed: e.liveTokensUsed, tokenQuota: e.tokenQuota }));
 		return active.length === 0 ? EMPTY_SUBAGENT_ACTIVITY : active;
 	};
 	const [s, ss] = useState<SubagentActivityItem[]>(compute);
@@ -445,6 +459,19 @@ export const useSubagentActivity = (threadId: string): SubagentActivityItem[] =>
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [threadId]);
 	return s;
+};
+
+/** Count of stopped roles awaiting manual resume (durable handoff) — drives the «Продолжить роль» button. */
+export const useSubagentHandoffCount = (): number => {
+	const read = () => subagentHandoffStore ? subagentHandoffStore.listOpen().length : 0;
+	const [n, setN] = useState<number>(read);
+	useEffect(() => {
+		setN(read());
+		const listener = () => setN(read());
+		subagentHandoffListeners.add(listener);
+		return () => { subagentHandoffListeners.delete(listener); };
+	}, []);
+	return n;
 };
 
 export const useRefreshModelState = () => {

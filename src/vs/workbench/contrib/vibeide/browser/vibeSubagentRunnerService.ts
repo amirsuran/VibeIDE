@@ -131,6 +131,8 @@ class VibeSubagentRunnerService extends Disposable implements IVibeSubagentRunne
 				chatMessages: history,
 				chatMode,
 				modelSelection,
+				// Do not clobber the parent thread's context meter with this role's prompt size.
+				skipContextGuardUpdate: true,
 			});
 			const hop = await this._sendOnce({ req, messages, separateSystemMessage, chatMode, modelSelection, deadlineAtMs });
 			if (hop.kind === 'error') {
@@ -155,6 +157,7 @@ class VibeSubagentRunnerService extends Disposable implements IVibeSubagentRunne
 			tokensUsedEst += hopTokenCost(hop.usage, JSON.stringify(messages).length + (separateSystemMessage?.length ?? 0) + hop.fullText.length);
 			promptTokensUsed += hop.usage?.promptTokens ?? 0;
 			completionTokensUsed += hop.usage?.completionTokens ?? 0;
+			req.onProgress?.(tokensUsedEst);
 			lastText = hop.fullText || lastText;
 			const toolCall = hop.toolCall;
 
