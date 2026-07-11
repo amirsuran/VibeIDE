@@ -66,6 +66,9 @@ export const VibeModalSimple: React.FC<{ entry: VibeModalQueueEntry }> = ({ entr
 	const [inputValue, setInputValue] = useState(options.input?.initialValue ?? '');
 	const [validationError, setValidationError] = useState<string | null>(null);
 	const [checked, setChecked] = useState(options.checkbox?.initialChecked ?? false);
+	// Numeric override fields (below the main input) — initialised from each field's default.
+	const [fieldValues, setFieldValues] = useState<Record<string, number>>(() =>
+		Object.fromEntries((options.numberFields ?? []).map(f => [f.id, f.default])));
 	const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
 	const firstFocusableRef = useRef<HTMLButtonElement | null>(null);
 	const modalRef = useRef<HTMLDivElement | null>(null);
@@ -128,11 +131,11 @@ export const VibeModalSimple: React.FC<{ entry: VibeModalQueueEntry }> = ({ entr
 			if (!btn || btn.disabled) {return;}
 			if (btn.role === 'primary' && validationError) {return;}
 			e.preventDefault();
-			modalService.resolveHead(btn.id, options.input ? inputValue : undefined);
+			modalService.resolveHead(btn.id, options.input ? inputValue : undefined, options.numberFields ? fieldValues : undefined);
 		};
 		window.addEventListener('keydown', onKey);
 		return () => window.removeEventListener('keydown', onKey);
-	}, [options.dismissible, options.loading, options.buttons, options.input, validationError, inputValue, modalService]);
+	}, [options.dismissible, options.loading, options.buttons, options.input, options.numberFields, validationError, inputValue, fieldValues, modalService]);
 
 	// autoDismissAfterMs — timer that fires dismiss after the given duration.
 	// Paused while loading (no auto-close during async work). Also paused on
@@ -189,8 +192,8 @@ export const VibeModalSimple: React.FC<{ entry: VibeModalQueueEntry }> = ({ entr
 		if (btn.disabled) {return;}
 		if (options.loading) {return;}
 		if (btn.role === 'primary' && validationError) {return;}
-		modalService.resolveHead(btn.id, options.input ? inputValue : undefined);
-	}, [modalService, options.input, options.loading, inputValue, validationError]);
+		modalService.resolveHead(btn.id, options.input ? inputValue : undefined, options.numberFields ? fieldValues : undefined);
+	}, [modalService, options.input, options.numberFields, options.loading, inputValue, fieldValues, validationError]);
 
 	const onBackdropClick = useCallback(() => {
 		if (options.dismissible === false) {return;}
@@ -206,9 +209,9 @@ export const VibeModalSimple: React.FC<{ entry: VibeModalQueueEntry }> = ({ entr
 		const commit = !multiline ? e.key === 'Enter' && !e.shiftKey : (e.key === 'Enter' && (e.ctrlKey || e.metaKey));
 		if (commit && primaryButton && !validationError) {
 			e.preventDefault();
-			modalService.resolveHead(primaryButton.id, inputValue);
+			modalService.resolveHead(primaryButton.id, inputValue, options.numberFields ? fieldValues : undefined);
 		}
-	}, [options.input, primaryButton, validationError, modalService, inputValue]);
+	}, [options.input, options.numberFields, primaryButton, validationError, modalService, inputValue, fieldValues]);
 
 	// Focus trap: cycle Tab within modal. Implementation captures focusable
 	// elements at render time; for v1 that's input + buttons.
@@ -299,6 +302,34 @@ export const VibeModalSimple: React.FC<{ entry: VibeModalQueueEntry }> = ({ entr
 						<div className="@@vibeide-modal-validation" role="alert">
 							{validationError ?? ''}
 						</div>
+					</div>
+				)}
+
+				{options.numberFields && options.numberFields.length > 0 && (
+					<div className="@@vibeide-modal-numberfields">
+						{options.numberFields.map(f => (
+							<label key={f.id} className="@@vibeide-modal-numberfield">
+								<span className="@@vibeide-modal-numberfield-label">{f.label}</span>
+								<span className="@@vibeide-modal-numberfield-control">
+									<input
+										type="number"
+										className="@@vibeide-modal-input"
+										value={fieldValues[f.id] ?? f.default}
+										min={f.min}
+										max={f.max}
+										disabled={options.loading}
+										onChange={e => {
+											const raw = Number(e.target.value);
+											const clamped = Number.isFinite(raw)
+												? Math.max(f.min ?? -Infinity, Math.min(f.max ?? Infinity, Math.floor(raw)))
+												: f.default;
+											setFieldValues(prev => ({ ...prev, [f.id]: clamped }));
+										}}
+									/>
+									{f.suffix && <span className="@@vibeide-modal-numberfield-suffix">{f.suffix}</span>}
+								</span>
+							</label>
+						))}
 					</div>
 				)}
 

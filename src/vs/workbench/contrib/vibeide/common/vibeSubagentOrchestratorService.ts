@@ -101,6 +101,14 @@ export interface StepCompletionRecord {
 
 export const IVibeSubagentOrchestratorService = createDecorator<IVibeSubagentOrchestratorService>('vibeSubagentOrchestratorService');
 
+/** Per-run limit overrides (from the «маршрут ролей» modal) — each field falls back to config when absent. */
+export interface SubagentLimitOverrides {
+	readonly maxSteps?: number;
+	readonly maxTokens?: number;
+	readonly maxWallClockMs?: number;
+	readonly maxResumes?: number;
+}
+
 export interface IVibeSubagentOrchestratorService {
 	readonly _serviceBrand: undefined;
 
@@ -142,7 +150,7 @@ export interface IVibeSubagentOrchestratorService {
 	 * Run the role workflow for a task: spawn each role in sequence, handing the previous
 	 * role's summary forward as context. Stops the chain on the first failure.
 	 */
-	executeRoute(params: { parentThreadId: string; taskText: string }): Promise<SubagentResult[]>;
+	executeRoute(params: { parentThreadId: string; taskText: string; overrides?: SubagentLimitOverrides }): Promise<SubagentResult[]>;
 
 	/** Manually resume a subagent stopped by a limit, from its durable handoff ticket. */
 	resume(ticketId: string): Promise<SubagentResult | undefined>;
@@ -173,8 +181,8 @@ class VibeSubagentOrchestratorService extends Disposable implements IVibeSubagen
 		return buildRoute(taskText);
 	}
 
-	async executeRoute(params: { parentThreadId: string; taskText: string }): Promise<SubagentResult[]> {
-		const { parentThreadId, taskText } = params;
+	async executeRoute(params: { parentThreadId: string; taskText: string; overrides?: SubagentLimitOverrides }): Promise<SubagentResult[]> {
+		const { parentThreadId, taskText, overrides } = params;
 		const route = buildRoute(taskText);
 		this._log.info(`[SubagentOrchestrator] route ${route.kind}: ${route.roles.join(' → ')}${route.securityAdded ? ' (+security)' : ''}`);
 		this._audit.append({ ts: Date.now(), action: 'agent_route_started', ok: true, meta: { kind: route.kind, roles: route.roles, securityAdded: route.securityAdded } });
@@ -183,7 +191,7 @@ class VibeSubagentOrchestratorService extends Disposable implements IVibeSubagen
 		let priorSummary = '';
 		for (const stage of route.stages) {
 			// Roles within a stage are independent → run them in parallel.
-			const stageResults = await Promise.all(stage.map(role => this._runRole(role, parentThreadId, taskText, priorSummary)));
+			const stageResults = await Promise.all(stage.map(role => this._runRole(role, parentThreadId, taskText, priorSummary, overrides)));
 			let failed = false;
 			const summaries: string[] = [];
 			for (let i = 0; i < stageResults.length; i++) {
@@ -219,15 +227,15 @@ class VibeSubagentOrchestratorService extends Disposable implements IVibeSubagen
 	}
 
 	/** Spawns and awaits a single role; resolves to undefined on spawn/run error. */
-	private async _spawnRole(role: SubagentType, parentThreadId: string, goal: string, maxTokens?: number): Promise<SubagentResult | undefined> {
+	private async _spawnRole(role: SubagentType, parentThreadId: string, goal: string, maxTokens?: number, overrides?: SubagentLimitOverrides): Promise<SubagentResult | undefined> {
 		const preset = this._registry.getPreset(role);
 		try {
-			// Global limits (config) override per-role defaults — knobs users can raise for weak models
-			// that burn steps on reads. Under autopilot the runner auto-extends both anyway.
+			// Limit precedence: per-run override (modal) → global config → per-role default. Under autopilot
+			// the runner auto-extends steps/time anyway — the override sets the base.
 			const cfgMaxSteps = this._config.getValue<number>('vibeide.subagent.maxSteps');
-			const maxSteps = typeof cfgMaxSteps === 'number' && cfgMaxSteps > 0 ? cfgMaxSteps : preset.defaultMaxSteps;
+			const maxSteps = overrides?.maxSteps ?? (typeof cfgMaxSteps === 'number' && cfgMaxSteps > 0 ? cfgMaxSteps : preset.defaultMaxSteps);
 			const cfgWallSec = this._config.getValue<number>('vibeide.subagent.maxWallClockSec');
-			const maxWallClockMs = typeof cfgWallSec === 'number' && cfgWallSec > 0 ? cfgWallSec * 1000 : preset.defaultMaxWallClockMs;
+			const maxWallClockMs = overrides?.maxWallClockMs ?? (typeof cfgWallSec === 'number' && cfgWallSec > 0 ? cfgWallSec * 1000 : preset.defaultMaxWallClockMs);
 			const subagentId = await this._subagentSvc.spawn({
 				parentThreadId,
 				type: role,
@@ -254,9 +262,9 @@ class VibeSubagentOrchestratorService extends Disposable implements IVibeSubagen
 		return escalateResumeQuota(typeof base === 'number' && base > 0 ? base : DEFAULT_SUBAGENT_TOKEN_QUOTA, resumeIndex, factor);
 	}
 
-	private async _runRole(role: SubagentType, parentThreadId: string, taskText: string, priorSummary: string): Promise<SubagentResult | undefined> {
+	private async _runRole(role: SubagentType, parentThreadId: string, taskText: string, priorSummary: string, overrides?: SubagentLimitOverrides): Promise<SubagentResult | undefined> {
 		const preset = this._registry.getPreset(role);
-		const maxResumes = this._config.getValue<number>('vibeide.subagent.maxResumes') ?? 2;
+		const maxResumes = overrides?.maxResumes ?? this._config.getValue<number>('vibeide.subagent.maxResumes') ?? 2;
 		let partial = '';
 		let ticket: SubagentHandoffTicket | undefined;
 		let attempt = 0; // spawns completed (1 = initial, then one per auto-resume)
@@ -264,9 +272,9 @@ class VibeSubagentOrchestratorService extends Disposable implements IVibeSubagen
 		while (true) {
 			const goal = buildResumeGoal(taskText, preset.displayName, partial, priorSummary);
 			// Each resume gets an escalated budget: the same quota that just ran out would stall again
-			// sooner (the «already done» preamble grows). attempt=0 → default quota from config.
-			const maxTokens = attempt === 0 ? undefined : this._resumeQuota(attempt);
-			const result = await this._spawnRole(role, parentThreadId, goal, maxTokens);
+			// sooner (the «already done» preamble grows). attempt=0 → the per-run override (or config default).
+			const maxTokens = attempt === 0 ? overrides?.maxTokens : this._resumeQuota(attempt);
+			const result = await this._spawnRole(role, parentThreadId, goal, maxTokens, overrides);
 			attempt++;
 
 			if (!result || result.status !== 'stopped') {

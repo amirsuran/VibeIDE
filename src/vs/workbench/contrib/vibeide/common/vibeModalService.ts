@@ -68,7 +68,7 @@ export interface IVibeModalService {
 	 * Used for tests and for keyboard shortcuts that need to commit a choice
 	 * without a real click. No-op if no modal is active.
 	 */
-	resolveHead(buttonId: string, inputValue?: string): void;
+	resolveHead(buttonId: string, inputValue?: string, fieldValues?: Record<string, number>): void;
 
 	/**
 	 * Dismiss the head modal (equivalent to ESC). Only succeeds if the

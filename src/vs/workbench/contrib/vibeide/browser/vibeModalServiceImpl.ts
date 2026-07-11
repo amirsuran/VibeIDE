@@ -89,12 +89,15 @@ export class VibeModalService extends Disposable implements IVibeModalService {
 		return this._queue.map(({ id, options }) => ({ id, options }));
 	}
 
-	resolveHead(buttonId: string, inputValue?: string): void {
+	resolveHead(buttonId: string, inputValue?: string, fieldValues?: Record<string, number>): void {
 		const head = this._queue.shift();
 		if (!head) { return; }
-		const result = inputValue !== undefined
-			? { buttonId, inputValue, ...checkedFor(head.options) }
-			: { buttonId, ...checkedFor(head.options) };
+		const result = {
+			buttonId,
+			...(inputValue !== undefined ? { inputValue } : {}),
+			...(fieldValues !== undefined ? { fieldValues } : {}),
+			...checkedFor(head.options),
+		};
 		head.resolve(result);
 		safeOnClose(head.options, result);
 		this._onDidChangeQueue.fire();

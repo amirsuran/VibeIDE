@@ -3791,6 +3791,8 @@ Backlog (data-gated — не плодить спекулятивно, урок #
 
 - [x] **Панель инпута: скрепка вместо двух кнопок + кнопка запуска маршрута ролей** — ✅ (2026-07-11, `next`) по фидбэку: (1) две кнопки загрузки (image + PDF) слиты в одну **«скрепку»** (`Paperclip`, общий input `accept="image/*,application/pdf"`, делит файлы по типу в `onImageDrop`/`onPDFDrop`); (2) добавлена кнопка **«маршрут ролей»** (`Waypoints`) между скрепкой и «продолжить» — открывает **модалку** (`IVibeModalService`, поле `multiline` «Промпт для субагента» + Запустить/Отмена), а НЕ тонкое поле палитры; на Запустить → `executeCommand('vibeide.vibeAgents.executeRoute', prompt)`. Команда `executeRoute` теперь принимает промпт аргументом (палитра остаётся fallback). Итоговый ряд: скрепка · маршрут · продолжить · отправка.
 
+- [x] **Модалка маршрута: переопределение всех лимитов на прогон + скругление/гвард** — ✅ (2026-07-11, `next`) по идее пользователя. (1) Общий `IVibeModalService` расширен `numberFields` (типы `VibeModalNumberField`, результат `fieldValues`, `resolveHead(id, inputValue, fieldValues)`, рендер сетки 2×N в `VibeModalSimple` + CSS). (2) Модалка «Выполнить маршрут ролей» под текстареа показывает 4 поля — **Шаги / Токены / Время (с) / Авто-резюм** с дефолтами из конфига. (3) Оверрайды прокинуты сквозняком: `executeRoute` (аргумент `{prompt, overrides}`) → `orchestrator.executeRoute({overrides})` → `_runRole` (maxResumes) → `_spawnRole` (maxSteps/maxTokens/maxWallClockMs), приоритет override → config → per-role. Плюс: поле скруглено под чат (`border-radius: 12px` вместо 2px), гвард `openRef` от дублей модалки (клики очередились FIFO → дубль-запуск).
+
 ### VA.5 Что осознанно НЕ делаем
 
 - Не строим **параллельную** субагент-машинерию — она есть, кладём поверх.

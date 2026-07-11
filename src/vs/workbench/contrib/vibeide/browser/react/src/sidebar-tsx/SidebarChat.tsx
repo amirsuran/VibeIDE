@@ -1015,11 +1015,23 @@ const ChatRunRouteButton = () => {
 		try {
 		const modal = accessor.get('IVibeModalService');
 		const commandService = accessor.get('ICommandService');
-		const { buttonId, inputValue } = await modal.showModal({
+		const config = accessor.get('IConfigurationService');
+		// Per-run limit defaults pulled from the global config — editing a field overrides just this run.
+		const num = (key: string, fallback: number) => {
+			const v = config.getValue<number>(key);
+			return typeof v === 'number' && v > 0 ? v : fallback;
+		};
+		const { buttonId, inputValue, fieldValues } = await modal.showModal({
 			title: 'Выполнить маршрут ролей',
-			body: '**Промпт для субагента.** Команда ролей (планировщик → разработчики → ревьюер → QA → security) выполнит задачу под автопилотом. Опишите её так же, как поставили бы отдельному агенту — security подключится сам на чувствительных темах.',
+			body: '**Промпт для субагента.** Команда ролей (планировщик → разработчики → ревьюер → QA → security) выполнит задачу под автопилотом. Лимиты ниже — на этот прогон (под автопилотом всё равно авто-продлеваются; правьте базу).',
 			bodyMarkdown: true,
 			input: { placeholder: 'Что должна сделать команда ролей? Напр.: добавить и проверить страницу входа через OAuth', multiline: true, validator: v => v.trim() ? null : 'Опишите задачу' },
+			numberFields: [
+				{ id: 'maxSteps', label: 'Шаги', default: num('vibeide.subagent.maxSteps', 60), min: 5, max: 500 },
+				{ id: 'maxTokens', label: 'Токены', default: num('vibeide.subagent.maxTokens', 100000), min: 10000, max: 100000000 },
+				{ id: 'maxWallClockSec', label: 'Время', default: num('vibeide.subagent.maxWallClockSec', 300), min: 10, max: 3600, suffix: 'с' },
+				{ id: 'maxResumes', label: 'Авто-резюм', default: num('vibeide.subagent.maxResumes', 2), min: 0, max: 10 },
+			],
 			buttons: [
 				{ id: 'run', label: 'Запустить', role: 'primary' },
 				{ id: 'cancel', label: 'Отмена', role: 'secondary' },
@@ -1027,7 +1039,7 @@ const ChatRunRouteButton = () => {
 			size: 'medium',
 		});
 		if (buttonId === 'run' && inputValue?.trim()) {
-			commandService.executeCommand('vibeide.vibeAgents.executeRoute', inputValue.trim());
+			commandService.executeCommand('vibeide.vibeAgents.executeRoute', { prompt: inputValue.trim(), overrides: fieldValues });
 		}
 		} finally {
 			openRef.current = false;

@@ -70,17 +70,26 @@ registerAction2(
 		// Audit H: `executeRoute` existed since VA.3 but had NO user-facing entry — roles could
 		// be planned, never launched. Progress is visible on the subagent status-bar counter;
 		// a running role can be cancelled from its picker (audit F).
-		async run(accessor: ServicesAccessor, taskArg?: string): Promise<void> {
+		async run(accessor: ServicesAccessor, arg?: string | { prompt?: string; overrides?: Record<string, number> }): Promise<void> {
 			const quickInput = accessor.get(IQuickInputService);
 			const orchestrator = accessor.get(IVibeSubagentOrchestratorService);
 			const notice = accessor.get(INotificationService);
 			const chatThreadService = accessor.get(IChatThreadService);
 			const settings = accessor.get(IVibeideSettingsService);
 
-			// Prompt is passed directly by the in-chat «маршрут ролей» modal; the command-palette entry
-			// falls back to the quick-input. Either way we end up with a non-empty task string.
-			const task = (typeof taskArg === 'string' && taskArg.trim())
-				? taskArg
+			// Prompt + per-run limit overrides come from the in-chat «маршрут ролей» modal (object arg);
+			// the command-palette entry passes a bare string or nothing (→ quick-input fallback).
+			const argPrompt = typeof arg === 'string' ? arg : arg?.prompt;
+			const fv = (typeof arg === 'object' && arg?.overrides) ? arg.overrides : undefined;
+			const limitOverrides = fv ? {
+				...(fv.maxSteps ? { maxSteps: fv.maxSteps } : {}),
+				...(fv.maxTokens ? { maxTokens: fv.maxTokens } : {}),
+				...(fv.maxWallClockSec ? { maxWallClockMs: fv.maxWallClockSec * 1000 } : {}),
+				...(typeof fv.maxResumes === 'number' ? { maxResumes: fv.maxResumes } : {}),
+			} : undefined;
+
+			const task = (typeof argPrompt === 'string' && argPrompt.trim())
+				? argPrompt
 				: await quickInput.input({
 					title: localize('vibeAgents.executeRoute.title', "Опишите задачу — команда ролей выполнит её"),
 					placeHolder: localize('vibeAgents.executeRoute.placeholder', "например: добавить страницу входа через OAuth"),
@@ -101,6 +110,7 @@ registerAction2(
 				const results = await orchestrator.executeRoute({
 					parentThreadId: threadId,
 					taskText: task.trim(),
+					...(limitOverrides && Object.keys(limitOverrides).length ? { overrides: limitOverrides } : {}),
 				});
 				const ok = results.filter(r => r.status === 'success').length;
 				const overrides = settings.state.overridesOfModel;
