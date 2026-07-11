@@ -39,8 +39,9 @@ export interface SubagentRunRequest {
 	 * in-flight LLM request. Without it a disposed subagent kept burning tokens to its limits.
 	 */
 	readonly cancellationToken?: CancellationToken;
-	/** Live per-hop callback with the running estimated-token total and completed steps — drives the chat spinner readout. */
-	readonly onProgress?: (tokensUsedEst: number, stepsDone: number) => void;
+	/** Live per-hop callback: running estimated-token total, completed steps, and the current absolute
+	 *  wall-clock deadline (unix ms; 0 = none). Drives the chat spinner readout + countdown. */
+	readonly onProgress?: (tokensUsedEst: number, stepsDone: number, deadlineAtMs: number) => void;
 }
 
 export interface SubagentRunOutcome {

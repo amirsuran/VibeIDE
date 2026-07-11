@@ -132,6 +132,8 @@ export interface SubagentEntry {
 	liveStepsDone?: number;
 	/** Resolved step limit for this run — the denominator in the readout. */
 	maxSteps?: number;
+	/** Current absolute wall-clock deadline (unix ms; 0 = none) — drives the countdown in the readout. */
+	deadlineAtMs?: number;
 }
 
 export const IVibeSubagentService = createDecorator<IVibeSubagentService>('vibeSubagentService');
@@ -363,12 +365,13 @@ class VibeSubagentService extends Disposable implements IVibeSubagentService {
 			maxTokensEst: Math.max(0, maxTokens),
 			maxWallClockMs: handoff.maxWallClockMs ?? 0,
 			cancellationToken: this._ctsById.get(entry.id)?.token,
-			onProgress: (tokensUsedEst, stepsDone) => {
+			onProgress: (tokensUsedEst, stepsDone, deadlineAtMs) => {
 				// Per-hop live spend → chat spinner. Only while still running; terminal state
 				// carries the final tokens in `result`.
 				if (entry.status === 'running') {
 					entry.liveTokensUsed = tokensUsedEst;
 					entry.liveStepsDone = stepsDone;
+					entry.deadlineAtMs = deadlineAtMs;
 					this._onStatusChanged.fire(entry);
 				}
 			},

@@ -185,7 +185,7 @@ class VibeSubagentRunnerService extends Disposable implements IVibeSubagentRunne
 			tokensUsedEst += hopTokenCost(hop.usage, JSON.stringify(messages).length + (separateSystemMessage?.length ?? 0) + hop.fullText.length);
 			promptTokensUsed += hop.usage?.promptTokens ?? 0;
 			completionTokensUsed += hop.usage?.completionTokens ?? 0;
-			req.onProgress?.(tokensUsedEst, stepsDone);
+			req.onProgress?.(tokensUsedEst, stepsDone, limits.deadlineAtMs);
 			lastText = hop.fullText || lastText;
 			const toolCall = hop.toolCall;
 

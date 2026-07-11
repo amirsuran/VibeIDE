@@ -9,7 +9,7 @@ import React, { ButtonHTMLAttributes, FormEvent, FormHTMLAttributes, Fragment, K
 import { Virtuoso, VirtuosoHandle } from 'react-virtuoso';
 
 
-import { useAccessor, useChatThreadsState, useChatThreadsStreamState, useSettingsState, useActiveURI, useCommandBarState, useFullChatThreadsStreamState, useSubagentActivity, useSubagentHandoffCount } from '../util/services.js';
+import { useAccessor, useChatThreadsState, useChatThreadsStreamState, useSettingsState, useActiveURI, useCommandBarState, useFullChatThreadsStreamState, useSubagentActivity, useSubagentHandoffCount, SubagentActivityItem } from '../util/services.js';
 import { ScrollType } from '../../../../../../../editor/common/editorCommon.js';
 
 import { ChatMarkdownRender, ChatMessageLocation, getApplyBoxId } from '../markdown/ChatMarkdownRender.js';
@@ -891,6 +891,42 @@ const ChatAgentQuestionNudgesControl = ({ className }: { className?: string }) =
 const SUBPIN_RESUMES_DEFAULT = 2;
 const SUBPIN_RESUMES_UPPER = 10;
 const SUBPIN_RESUMES_KEY = 'vibeide.subagent.maxResumes';
+
+/** One running-role line in the live activity indicator: «🧩 Роль «X» работает… (шаг N/M · ~Xk / Yk · ⏱ 2:34)».
+ *  Steps/tokens are the binding limits; the wall-clock deadline counts DOWN via an internal 1s ticker
+ *  (independent of the per-hop status events, which can be tens of seconds apart). Role's own budgets. */
+const SubagentActivityRow = ({ role }: { role: SubagentActivityItem }) => {
+	const [now, setNow] = useState<number>(() => Date.now());
+	const hasDeadline = !!role.deadlineAtMs && role.deadlineAtMs > 0;
+	useEffect(() => {
+		if (!hasDeadline) { return; }
+		const id = setInterval(() => setNow(Date.now()), 1000);
+		return () => clearInterval(id);
+	}, [hasDeadline]);
+
+	const fmtK = (n: number) => n >= 1000 ? `${Math.round(n / 100) / 10}k` : String(n);
+	const fmtClock = (ms: number) => {
+		const s = Math.max(0, Math.ceil(ms / 1000));
+		return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+	};
+	const stepPart = (role.maxSteps && role.maxSteps > 0) ? `шаг ${role.liveStepsDone ?? 0}/${role.maxSteps}` : '';
+	const tokenPart = (role.liveTokensUsed && role.liveTokensUsed > 0)
+		? (role.tokenQuota && role.tokenQuota > 0 ? `~${fmtK(role.liveTokensUsed)} / ${fmtK(role.tokenQuota)}` : `~${fmtK(role.liveTokensUsed)}`)
+		: '';
+	const timePart = hasDeadline ? `⏱ ${fmtClock(role.deadlineAtMs! - now)}` : '';
+	const parts = [stepPart, tokenPart, timePart].filter(Boolean).join(' · ');
+	const readout = parts ? ` (${parts})` : '';
+	return (
+		<div className="flex items-center gap-2">
+			<span className="text-vibe-fg-2 opacity-70 flex-shrink-0 text-sm leading-none">
+				<IconLoading state="processing" inline />
+			</span>
+			<span className="text-sm text-vibe-fg-2 opacity-80">
+				🧩 Роль «{role.displayName}» работает…{readout}
+			</span>
+		</div>
+	);
+};
 
 const ChatSubagentResumesControl = ({ className }: { className?: string }) => {
 	const settingsState = useSettingsState();
@@ -5603,30 +5639,7 @@ export const SidebarChat = () => {
 				render: () => <ProseWrapper>
 					<div className="flex items-start gap-2 loading-state-transition" role="status" aria-live="polite" aria-atomic="true">
 						<div className="flex flex-col gap-1 flex-1 min-w-0">
-						{subagentActivity.map(role => {
-							// Live readout: STEPS are the usual binding limit for weak models (they hit
-							// maxSteps long before the token quota), so show them first; tokens are a
-							// secondary «~k» hint. Role's own budgets — not the main thread's context.
-							const fmtK = (n: number) => n >= 1000 ? `${Math.round(n / 100) / 10}k` : String(n);
-							const stepPart = (role.maxSteps && role.maxSteps > 0)
-								? `шаг ${role.liveStepsDone ?? 0}/${role.maxSteps}`
-								: '';
-							const tokenPart = (role.liveTokensUsed && role.liveTokensUsed > 0)
-								? (role.tokenQuota && role.tokenQuota > 0 ? `~${fmtK(role.liveTokensUsed)} / ${fmtK(role.tokenQuota)}` : `~${fmtK(role.liveTokensUsed)}`)
-								: '';
-							const parts = [stepPart, tokenPart].filter(Boolean).join(' · ');
-							const tokenReadout = parts ? ` (${parts})` : '';
-							return (
-								<div key={role.id} className="flex items-center gap-2">
-									<span className="text-vibe-fg-2 opacity-70 flex-shrink-0 text-sm leading-none">
-										<IconLoading state="processing" inline />
-									</span>
-									<span className="text-sm text-vibe-fg-2 opacity-80">
-										🧩 Роль «{role.displayName}» работает…{tokenReadout}
-									</span>
-								</div>
-							);
-						})}
+						{subagentActivity.map(role => <SubagentActivityRow key={role.id} role={role} />)}
 						</div>
 						<button
 							type="button"
