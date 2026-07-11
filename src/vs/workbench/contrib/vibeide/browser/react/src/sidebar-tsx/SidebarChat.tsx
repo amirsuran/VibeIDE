@@ -5676,9 +5676,9 @@ export const SidebarChat = () => {
 						title={chatS.subagentSettingsTitle}
 						aria-label={chatS.subagentSettingsTitle}
 						onClick={() => { commandService.executeCommand('workbench.action.openSettings', 'vibeide.subagent'); }}
-						className="flex-shrink-0 text-sm text-vibe-fg-3 hover:text-vibe-fg-1 opacity-70 hover:opacity-100 transition-colors leading-none px-1 focus:outline-none focus:ring-1 focus:ring-blue-500/40 rounded"
+						className="flex-shrink-0 inline-flex items-center gap-1 text-xs text-vibe-fg-2 hover:text-vibe-fg-1 opacity-90 hover:opacity-100 transition-colors leading-none px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500/40 rounded border border-vibe-fg-4/20 hover:bg-vibe-bg-2"
 					>
-						⚙
+						<span className="text-sm">⚙️</span> Настроить
 					</button>
 				</div>
 			});
