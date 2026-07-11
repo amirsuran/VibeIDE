@@ -14,19 +14,25 @@ import type { SubagentType } from './vibeSubagentService.js';
 /**
  * Durable record of a subagent that STOPPED with partial work (token/step/deadline limit).
  * Persisted so the work is not lost across a route halt or an IDE restart: it can be resumed
- * automatically (up to `vibeide.subagent.maxResumes`) or, once auto-resumes are exhausted,
- * manually by the user / parent agent. See the durable-handoff workstream.
+ * automatically (up to `vibeide.subagent.maxResumes`) or manually via the «субпин» indicator.
+ *
+ * Lifecycle: a ticket EXISTS iff there is partial work not yet carried to completion.
+ * 'open' = awaiting pickup (auto-resumes exhausted, or a resume attempt failed);
+ * 'resumed' = a continuation is running IN THIS SESSION (in-memory-only state — reconciled
+ * back to 'open' on startup, because no resume can survive a restart).
+ * Successful completion REMOVES the ticket (nothing left to hand off).
  */
 export interface SubagentHandoffTicket {
 	readonly id: string;
 	readonly createdAt: number;
 	readonly updatedAt: number;
-	/** open = awaiting pickup; resumed = a continuation is running; done = finished; abandoned = dropped. */
-	readonly status: 'open' | 'resumed' | 'done' | 'abandoned';
+	readonly status: 'open' | 'resumed';
 	readonly parentThreadId: string;
 	readonly role: SubagentType;
 	/** The original task text — enough to rebuild the role goal on resume (survives restart). */
 	readonly taskText: string;
+	/** Prior-stage route context (summaries of preceding roles) — kept so a manual resume does not lose it. */
+	readonly priorContext?: string;
 	/** Partial result accumulated so far (last output); grows across resumes. */
 	readonly partialSummary: string;
 	readonly artifacts: readonly string[];
@@ -37,6 +43,12 @@ export interface SubagentHandoffTicket {
 }
 
 const STORAGE_KEY = 'vibeide.subagent.handoffs';
+/** Tickets untouched longer than this are stale — pruned on write/startup. */
+const TICKET_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+/** Hard cap on stored tickets (newest by updatedAt win) — bounds the storage blob. */
+const TICKET_CAP = 50;
+/** Resume budget escalation never exceeds this multiple of the base quota. */
+const RESUME_QUOTA_CAP_FACTOR = 4;
 
 export const IVibeSubagentHandoffStore = createDecorator<IVibeSubagentHandoffStore>('vibeSubagentHandoffStore');
 
@@ -55,6 +67,30 @@ export interface IVibeSubagentHandoffStore {
 	remove(id: string): void;
 }
 
+/** Drop stale tickets (TTL by updatedAt) and cap the total (newest win). Pure — unit-tested. */
+export function gcTickets(tickets: readonly SubagentHandoffTicket[], nowMs: number): SubagentHandoffTicket[] {
+	return [...tickets]
+		.filter(t => nowMs - t.updatedAt < TICKET_TTL_MS)
+		.sort((a, b) => b.updatedAt - a.updatedAt)
+		.slice(0, TICKET_CAP);
+}
+
+/** 'resumed' is valid only in the memory of one session — after a restart flip it back to 'open'. Pure. */
+export function reconcileStaleResumed(tickets: readonly SubagentHandoffTicket[]): SubagentHandoffTicket[] {
+	return tickets.map(t => t.status === 'resumed' ? { ...t, status: 'open' as const } : t);
+}
+
+/**
+ * Escalate the token quota for a resume attempt: the stopped role gets a bigger budget each time
+ * (factor^resumeIndex), capped at RESUME_QUOTA_CAP_FACTOR × base. resumeIndex 0 = initial spawn.
+ * Pure — unit-tested.
+ */
+export function escalateResumeQuota(baseQuota: number, resumeIndex: number, factor: number): number {
+	const f = Math.min(3, Math.max(1, factor));
+	const mult = Math.min(RESUME_QUOTA_CAP_FACTOR, Math.pow(f, Math.max(0, resumeIndex)));
+	return Math.round(baseQuota * mult);
+}
+
 class VibeSubagentHandoffStore extends Disposable implements IVibeSubagentHandoffStore {
 	declare readonly _serviceBrand: undefined;
 
@@ -65,6 +101,11 @@ class VibeSubagentHandoffStore extends Disposable implements IVibeSubagentHandof
 		@IStorageService private readonly _storage: IStorageService,
 	) {
 		super();
+		// Startup reconciliation + GC: un-stick tickets left 'resumed' by a previous session
+		// (a resume cannot survive a restart) and prune stale/overflow entries.
+		const before = this._read();
+		const after = gcTickets(reconcileStaleResumed(before), Date.now());
+		if (JSON.stringify(after) !== JSON.stringify(before)) { this._write(after); }
 	}
 
 	private _read(): SubagentHandoffTicket[] {
@@ -78,7 +119,7 @@ class VibeSubagentHandoffStore extends Disposable implements IVibeSubagentHandof
 	}
 
 	private _write(tickets: SubagentHandoffTicket[]): void {
-		this._storage.store(STORAGE_KEY, JSON.stringify(tickets), StorageScope.WORKSPACE, StorageTarget.MACHINE);
+		this._storage.store(STORAGE_KEY, JSON.stringify(gcTickets(tickets, Date.now())), StorageScope.WORKSPACE, StorageTarget.MACHINE);
 		this._onDidChange.fire();
 	}
 
@@ -120,11 +161,14 @@ registerSingleton(IVibeSubagentHandoffStore, VibeSubagentHandoffStore, Instantia
 
 /**
  * Build the goal for a continuation subagent: the original task plus a compact «already done»
- * preamble so the resumed role continues instead of starting over. Pure — unit-tested.
+ * preamble so the resumed role continues instead of starting over. `priorContext` restores the
+ * preceding route stage's summaries (kept on the ticket for manual resumes). Pure — unit-tested.
  */
-export function buildResumeGoal(taskText: string, role: string, partialSummary: string): string {
-	const base = `Роль: ${role}. Задача: ${taskText}`;
+export function buildResumeGoal(taskText: string, role: string, partialSummary: string, priorContext?: string): string {
+	let goal = `Роль: ${role}. Задача: ${taskText}`;
+	const prior = priorContext?.trim();
+	if (prior) { goal += `\n\nКонтекст от предыдущего этапа:\n${prior}`; }
 	const done = partialSummary.trim();
-	if (!done) { return base; }
-	return `${base}\n\nУже сделано ранее (продолжи с этого места, НЕ начинай заново):\n${done}`;
+	if (done) { goal += `\n\nУже сделано ранее (продолжи с этого места, НЕ начинай заново):\n${done}`; }
+	return goal;
 }

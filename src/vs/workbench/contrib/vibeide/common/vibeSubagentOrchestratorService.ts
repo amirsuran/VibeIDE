@@ -35,7 +35,8 @@ import { localize } from '../../../../nls.js';
 import { IAuditLogService } from './auditLogService.js';
 import { SubagentResult, SubagentType, IVibeSubagentService } from './vibeSubagentService.js';
 import { IVibeSubagentRegistryService } from './vibeSubagentRegistryService.js';
-import { IVibeSubagentHandoffStore, SubagentHandoffTicket, buildResumeGoal } from './vibeSubagentHandoffStore.js';
+import { IVibeSubagentHandoffStore, SubagentHandoffTicket, buildResumeGoal, escalateResumeQuota } from './vibeSubagentHandoffStore.js';
+import { DEFAULT_SUBAGENT_TOKEN_QUOTA } from './subagentIsolationPolicy.js';
 import { buildRoute, VibeAgentRoute } from './vibeAgentRoutes.js';
 
 // ── Configuration ─────────────────────────────────────────────────────────────
@@ -197,7 +198,7 @@ class VibeSubagentOrchestratorService extends Disposable implements IVibeSubagen
 	}
 
 	/** Spawns and awaits a single role; resolves to undefined on spawn/run error. */
-	private async _spawnRole(role: SubagentType, parentThreadId: string, goal: string): Promise<SubagentResult | undefined> {
+	private async _spawnRole(role: SubagentType, parentThreadId: string, goal: string, maxTokens?: number): Promise<SubagentResult | undefined> {
 		const preset = this._registry.getPreset(role);
 		try {
 			const subagentId = await this._subagentSvc.spawn({
@@ -206,6 +207,7 @@ class VibeSubagentOrchestratorService extends Disposable implements IVibeSubagen
 				goal,
 				maxSteps: preset.defaultMaxSteps,
 				maxWallClockMs: preset.defaultMaxWallClockMs,
+				...(maxTokens ? { maxTokens } : {}),
 			});
 			return await this._subagentSvc.awaitResult(subagentId);
 		} catch (err) {
@@ -214,23 +216,42 @@ class VibeSubagentOrchestratorService extends Disposable implements IVibeSubagen
 		}
 	}
 
+	/** Limits that are safe to continue automatically. NOT here: 'denied-actions' (the user already
+	 *  rejected these tool calls — auto-resume would re-ask against their decision) and 'cancelled'
+	 *  (hard 'failed' in the runner, never reaches this policy). */
+	private static readonly _AUTO_RESUMABLE: ReadonlySet<string> = new Set(['token-budget', 'max-steps', 'deadline']);
+
+	private _resumeQuota(resumeIndex: number): number {
+		const base = this._config.getValue<number>('vibeide.subagent.maxTokens');
+		const factor = this._config.getValue<number>('vibeide.subagent.resumeBudgetFactor') ?? 1.5;
+		return escalateResumeQuota(typeof base === 'number' && base > 0 ? base : DEFAULT_SUBAGENT_TOKEN_QUOTA, resumeIndex, factor);
+	}
+
 	private async _runRole(role: SubagentType, parentThreadId: string, taskText: string, priorSummary: string): Promise<SubagentResult | undefined> {
 		const preset = this._registry.getPreset(role);
 		const maxResumes = this._config.getValue<number>('vibeide.subagent.maxResumes') ?? 2;
-		const contextPreamble = priorSummary ? `\n\nКонтекст от предыдущего этапа:\n${priorSummary}` : '';
 		let partial = '';
 		let ticket: SubagentHandoffTicket | undefined;
 		let attempt = 0; // spawns completed (1 = initial, then one per auto-resume)
 
 		while (true) {
-			const goal = buildResumeGoal(taskText, preset.displayName, partial) + contextPreamble;
-			const result = await this._spawnRole(role, parentThreadId, goal);
+			const goal = buildResumeGoal(taskText, preset.displayName, partial, priorSummary);
+			// Each resume gets an escalated budget: the same quota that just ran out would stall again
+			// sooner (the «already done» preamble grows). attempt=0 → default quota from config.
+			const maxTokens = attempt === 0 ? undefined : this._resumeQuota(attempt);
+			const result = await this._spawnRole(role, parentThreadId, goal, maxTokens);
 			attempt++;
 
 			if (!result || result.status !== 'stopped') {
-				// Finished (success / hard-fail): close any ticket we opened along the way.
 				if (ticket) {
-					this._handoffStore.update(ticket.id, { status: result?.status === 'success' ? 'done' : 'abandoned', partialSummary: result?.summary || partial });
+					if (result?.status === 'success') {
+						// Completed — nothing left to hand off.
+						this._handoffStore.remove(ticket.id);
+					} else {
+						// Hard-fail / spawn exception AFTER partial work: keep the ticket open so the
+						// partial stays reachable via «субпин» (a transient error must not eat it).
+						this._handoffStore.update(ticket.id, { status: 'open', stopReason: result?.reason ?? localize('subagent.spawnFailed', "Спавн или запуск роли не удался") });
+					}
 				}
 				return result;
 			}
@@ -241,29 +262,32 @@ class VibeSubagentOrchestratorService extends Disposable implements IVibeSubagen
 			if (ticket) {
 				this._handoffStore.update(ticket.id, { ...progress, resumeCount: attempt });
 			} else {
-				ticket = this._handoffStore.create({ parentThreadId, role, taskText, ...progress });
+				ticket = this._handoffStore.create({ parentThreadId, role, taskText, priorContext: priorSummary || undefined, ...progress });
 			}
 
-			if (attempt > maxResumes) {
-				// Auto-resumes exhausted → hand the decision to the human (ticket stays 'open').
+			const autoOk = !!result.stopCode && VibeSubagentOrchestratorService._AUTO_RESUMABLE.has(result.stopCode);
+			if (!autoOk || attempt > maxResumes) {
+				// Auto-resumes exhausted (or the stop kind must not be auto-resumed) → human decides.
 				this._handoffStore.update(ticket.id, { status: 'open' });
-				this._log.warn(`[SubagentOrchestrator] role ${role} stopped after ${attempt} spawn(s) — ticket ${ticket.id} left open for manual resume`);
+				this._log.warn(`[SubagentOrchestrator] role ${role} stopped (${result.stopCode ?? 'no-code'}) after ${attempt} spawn(s) — ticket ${ticket.id} left open for manual resume`);
 				return result;
 			}
 			this._handoffStore.update(ticket.id, { status: 'resumed' });
-			this._log.info(`[SubagentOrchestrator] role ${role} stopped — auto-resume ${attempt}/${maxResumes} (ticket ${ticket.id})`);
+			this._log.info(`[SubagentOrchestrator] role ${role} stopped — auto-resume ${attempt}/${maxResumes}, quota ×${(this._resumeQuota(attempt) / this._resumeQuota(0)).toFixed(1)} (ticket ${ticket.id})`);
 		}
 	}
 
 	async resume(ticketId: string): Promise<SubagentResult | undefined> {
 		const t = this._handoffStore.get(ticketId);
-		if (!t || t.status === 'done') { return undefined; }
+		// Only 'open' tickets are resumable — guards a double-resume race (manual while auto runs).
+		if (!t || t.status !== 'open') { return undefined; }
 		const preset = this._registry.getPreset(t.role);
 		this._handoffStore.update(ticketId, { status: 'resumed' });
-		const goal = buildResumeGoal(t.taskText, preset.displayName, t.partialSummary);
-		const result = await this._spawnRole(t.role, t.parentThreadId, goal);
+		const goal = buildResumeGoal(t.taskText, preset.displayName, t.partialSummary, t.priorContext);
+		const result = await this._spawnRole(t.role, t.parentThreadId, goal, this._resumeQuota(t.resumeCount + 1));
 		if (result?.status === 'success') {
-			this._handoffStore.update(ticketId, { status: 'done', partialSummary: result.summary });
+			// Completed — the handoff is fulfilled, drop the ticket.
+			this._handoffStore.remove(ticketId);
 		} else if (result?.status === 'stopped') {
 			// Stopped again → keep open with the accumulated partial for another pickup.
 			this._handoffStore.update(ticketId, {
@@ -312,7 +336,10 @@ class VibeSubagentOrchestratorService extends Disposable implements IVibeSubagen
 			};
 			this._audit.append({ ts: Date.now(), action: 'plan_step_completed', ok: true, meta: { stepId, planId, subagentId: result.subagentId, artifacts: result.artifacts } });
 
-		} else if (result.status === 'failed') {
+		} else if (result.status === 'failed' || result.status === 'stopped') {
+			// 'stopped' (limit hit, partial work) goes through the same recover-or-skip retry machinery
+			// as 'failed' — but the record keeps the honest subagentStatus (was silently mislabeled
+			// 'skipped' before, losing the partial-work signal from plan-step history).
 			const maxRetries = this._config.getValue<number>('vibeide.subagent.maxRetries') ?? 2;
 
 			if (retriesUsed < maxRetries) {
@@ -330,7 +357,7 @@ class VibeSubagentOrchestratorService extends Disposable implements IVibeSubagen
 				stepId, planId, parentThreadId,
 				status: completionStatus,
 				subagentId: result.subagentId,
-				subagentStatus: 'failed',
+				subagentStatus: result.status,
 				retriesUsed,
 				reason: result.reason ?? `Failed after ${retriesUsed} retries`,
 				completedAt: Date.now(),

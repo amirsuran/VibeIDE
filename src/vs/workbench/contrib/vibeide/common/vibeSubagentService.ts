@@ -26,6 +26,9 @@ import { createDecorator } from '../../../../platform/instantiation/common/insta
 import { registerSingleton, InstantiationType } from '../../../../platform/instantiation/common/extensions.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+import { DEFAULT_SUBAGENT_TOKEN_QUOTA } from './subagentIsolationPolicy.js';
+import type { SubagentStopReason } from './subagentLoopPolicy.js';
+import type { ProviderName } from './vibeideSettingsTypes.js';
 import { IAuditLogService } from './auditLogService.js';
 import { IVibeConstraintsService } from './vibeConstraintsService.js';
 import { IVibeSubagentRunner } from './vibeSubagentRunner.js';
@@ -81,6 +84,14 @@ export interface SubagentResult {
 	suggestedNext?: string;
 	/** Token usage by this subagent */
 	tokensUsed: number;
+	/** Machine-readable stop cause when a limit ended the run — drives the resume policy. */
+	stopCode?: SubagentStopReason;
+	/** Provider-reported prompt/completion token sums (raw) — for cost display. */
+	promptTokensUsed?: number;
+	completionTokensUsed?: number;
+	/** Model that actually ran the role. */
+	providerName?: ProviderName;
+	modelName?: string;
 	/** Whether the result was truncated due to step/wall-clock limit */
 	truncated?: boolean;
 	/** Structured explore report (only for type='explore') */
@@ -160,8 +171,6 @@ export interface IVibeSubagentService {
 /** Maximum characters in any SubagentResult field — enforces compact handoff contract */
 const MAX_RESULT_SUMMARY_CHARS = 500;
 const DEFAULT_MAX_STEPS = 20;
-/** Fallback per-subagent token quota when the config value is missing (config is the source of truth). */
-const DEFAULT_SUBAGENT_TOKEN_QUOTA = 100_000;
 
 // ── Tool whitelists per type ──────────────────────────────────────────────────
 
@@ -350,6 +359,10 @@ class VibeSubagentService extends Disposable implements IVibeSubagentService {
 			tokensUsed: outcome.tokensUsedEst,
 			truncated: outcome.truncated || undefined,
 			...(outcome.status !== 'success' ? { reason: outcome.stopReason } : {}),
+			...(outcome.stopCode ? { stopCode: outcome.stopCode } : {}),
+			...(outcome.promptTokensUsed ? { promptTokensUsed: outcome.promptTokensUsed } : {}),
+			...(outcome.completionTokensUsed ? { completionTokensUsed: outcome.completionTokensUsed } : {}),
+			...(outcome.providerName ? { providerName: outcome.providerName, modelName: outcome.modelName } : {}),
 			...(outcome.exploreReport ? { exploreReport: outcome.exploreReport } : {}),
 		};
 

@@ -5,8 +5,9 @@
 
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import type { CancellationToken } from '../../../../base/common/cancellation.js';
-import type { ModelSelection } from './vibeideSettingsTypes.js';
+import type { ModelSelection, ProviderName } from './vibeideSettingsTypes.js';
 import type { SubagentType, ExploreSubagentReport } from './vibeSubagentService.js';
+import type { SubagentStopReason } from './subagentLoopPolicy.js';
 
 /**
  * Headless subagent runner contract (Phase 3b). Declared in `common` so
@@ -52,6 +53,14 @@ export interface SubagentRunOutcome {
 	readonly truncated: boolean;
 	/** Human-readable stop cause for logs/summary. */
 	readonly stopReason: string;
+	/** Machine-readable stop cause when a limit ended the run — drives the resume policy (auto vs manual). */
+	readonly stopCode?: SubagentStopReason;
+	/** Provider-reported prompt/completion token sums (raw, incl. cached reads) — for cost display. */
+	readonly promptTokensUsed?: number;
+	readonly completionTokensUsed?: number;
+	/** Model that actually ran the role (per-role mapping may differ from the Chat model). */
+	readonly providerName?: ProviderName;
+	readonly modelName?: string;
 	readonly exploreReport?: ExploreSubagentReport;
 }
 

@@ -19,7 +19,7 @@ import { approvalTypeOfBuiltinToolName } from '../common/prompt/tools/index.js';
 import { truncateHeadTail } from '../common/toolHardening.js';
 import { IVibeSubagentRunner, SubagentRunRequest, SubagentRunOutcome } from '../common/vibeSubagentRunner.js';
 import { IVibeSubagentRegistryService } from '../common/vibeSubagentRegistryService.js';
-import { decideStop, hopTokenCost, truncateSummary, chatModeForAllowedTools, collectPathsFromRawParams, buildExploreReport, buildSubagentTaskMessage, stopReasonToRussian, SUBAGENT_MAX_DENIED_ACTIONS } from '../common/subagentLoopPolicy.js';
+import { decideStop, hopTokenCost, truncateSummary, chatModeForAllowedTools, collectPathsFromRawParams, buildExploreReport, buildSubagentTaskMessage, stopReasonToRussian, SUBAGENT_MAX_DENIED_ACTIONS, SubagentStopReason } from '../common/subagentLoopPolicy.js';
 import { IConvertToLLMMessageService } from './convertToLLMMessageService.js';
 import { IToolsService } from './toolsService.js';
 import { IVibeAgentActivityLogService } from './vibeAgentActivityLogService.js';
@@ -94,6 +94,9 @@ class VibeSubagentRunnerService extends Disposable implements IVibeSubagentRunne
 		// Counted per hop below: the dominant cost of an agent loop is INPUT — the whole
 		// history is re-sent on every hop (audit E: output-only counting made the quota fictional).
 		let tokensUsedEst = 0;
+		// Raw provider-reported sums (incl. cached reads) — for cost display, not for the quota.
+		let promptTokensUsed = 0;
+		let completionTokensUsed = 0;
 		let lastText = '';
 		const artifacts: string[] = [];
 		const touchedPaths: string[] = [];
@@ -105,17 +108,22 @@ class VibeSubagentRunnerService extends Disposable implements IVibeSubagentRunne
 			if (stop) {
 				const reason = stopReasonToRussian(stop);
 				const modelLabel = `${modelSelection.providerName}/${modelSelection.modelName}`;
+				this._activityLog.logError(`Subagent ${req.subagentId}: остановлен — ${reason} (${modelLabel})`);
+				// Cancellation is the USER's explicit decision — a hard stop, never a resume bait
+				// (auto-resuming a cancelled subagent would restart it against the user's will).
+				if (stop === 'cancelled') {
+					return this._outcome(req, 'failed', `Роль «${preset.displayName}»: ${reason}.`, artifacts, tokensUsedEst, true, reason, touchedPaths, { stopCode: stop, model: modelSelection, promptTokens: promptTokensUsed, completionTokens: completionTokensUsed });
+				}
 				// token-budget is VibeIDE's OWN per-subagent cap, not the provider's quota — say so
 				// and show the numbers, so «исчерпана квота» isn't misread as a provider limit.
 				const budgetNote = stop === 'token-budget'
 					? ` (лимит VibeIDE на субагента, не квота провайдера: ~${tokensUsedEst}/${limits.maxTokensEst} токенов)`
 					: '';
-				this._activityLog.logError(`Subagent ${req.subagentId}: остановлен — ${reason} (${modelLabel})`);
 				// Soft degradation: NOT a hard failure. Keep the partial result (lastText + artifacts +
 				// touched paths) and return status 'stopped' so the route/report shows partial work that
 				// can be resumed, instead of discarding it as «failed».
-				const summary = `Роль «${preset.displayName}» остановлена: ${reason}${budgetNote}. Модель ${modelLabel}. Частичный результат сохранён — работу можно продолжить. Последний вывод: ${lastText}`;
-				return this._outcome(req, 'stopped', summary, artifacts, tokensUsedEst, true, reason, touchedPaths);
+				const summary = `Роль «${preset.displayName}» остановлена: ${reason}${budgetNote}. Модель ${modelLabel}. Частичный результат сохранён. Последний вывод: ${lastText}`;
+				return this._outcome(req, 'stopped', summary, artifacts, tokensUsedEst, true, reason, touchedPaths, { stopCode: stop, model: modelSelection, promptTokens: promptTokensUsed, completionTokens: completionTokensUsed });
 			}
 			stepsDone++;
 
@@ -126,8 +134,17 @@ class VibeSubagentRunnerService extends Disposable implements IVibeSubagentRunne
 			});
 			const hop = await this._sendOnce({ req, messages, separateSystemMessage, chatMode, modelSelection, deadlineAtMs });
 			if (hop.kind === 'error') {
+				// A deadline firing MID-REQUEST aborts the stream and surfaces here as an error — but it
+				// is the same soft limit as a deadline hit between hops: keep the partial and allow resume.
+				const deadlineHit = deadlineAtMs > 0 && Date.now() >= deadlineAtMs && req.cancellationToken?.isCancellationRequested !== true;
+				if (deadlineHit) {
+					const reason = stopReasonToRussian('deadline');
+					this._activityLog.logError(`Subagent ${req.subagentId}: остановлен — ${reason} (в момент запроса к модели)`);
+					const summary = `Роль «${preset.displayName}» остановлена: ${reason}. Частичный результат сохранён. Последний вывод: ${lastText}`;
+					return this._outcome(req, 'stopped', summary, artifacts, tokensUsedEst, true, reason, touchedPaths, { stopCode: 'deadline', model: modelSelection, promptTokens: promptTokensUsed, completionTokens: completionTokensUsed });
+				}
 				this._activityLog.logError(`Subagent ${req.subagentId}: ошибка LLM — ${hop.message}`);
-				return this._outcome(req, 'failed', `Роль «${preset.displayName}»: ошибка запроса к модели — ${hop.message}`, artifacts, tokensUsedEst, false, 'llm-error', touchedPaths);
+				return this._outcome(req, 'failed', `Роль «${preset.displayName}»: ошибка запроса к модели — ${hop.message}`, artifacts, tokensUsedEst, false, 'llm-error', touchedPaths, { model: modelSelection, promptTokens: promptTokensUsed, completionTokens: completionTokensUsed });
 			}
 
 			// Charge this hop by the provider's real usage (uncached input + output); the char
@@ -136,6 +153,8 @@ class VibeSubagentRunnerService extends Disposable implements IVibeSubagentRunne
 			// this is what keeps later hops from exhausting the quota. Tool results are not charged
 			// here: they enter the next hop's prompt tokens and are counted there.
 			tokensUsedEst += hopTokenCost(hop.usage, JSON.stringify(messages).length + (separateSystemMessage?.length ?? 0) + hop.fullText.length);
+			promptTokensUsed += hop.usage?.promptTokens ?? 0;
+			completionTokensUsed += hop.usage?.completionTokens ?? 0;
 			lastText = hop.fullText || lastText;
 			const toolCall = hop.toolCall;
 
@@ -145,7 +164,7 @@ class VibeSubagentRunnerService extends Disposable implements IVibeSubagentRunne
 					? String(toolCall.rawParams['summary'] ?? toolCall.rawParams['result'] ?? lastText)
 					: lastText;
 				this._activityLog.logFinished(`Subagent ${req.subagentId}: завершено за ${stepsDone} шаг(ов), ~${tokensUsedEst} ток. (оценка)`);
-				return this._outcome(req, 'success', completeSummary || `Роль «${preset.displayName}» завершила задачу.`, artifacts, tokensUsedEst, false, 'completed', touchedPaths);
+				return this._outcome(req, 'success', completeSummary || `Роль «${preset.displayName}» завершила задачу.`, artifacts, tokensUsedEst, false, 'completed', touchedPaths, { model: modelSelection, promptTokens: promptTokensUsed, completionTokens: completionTokensUsed });
 			}
 
 			// From here on the model asked for a real tool — append its assistant turn first.
@@ -269,7 +288,7 @@ class VibeSubagentRunnerService extends Disposable implements IVibeSubagentRunne
 		} as ChatMessage;
 	}
 
-	private _outcome(req: SubagentRunRequest, status: 'success' | 'failed' | 'stopped', summary: string, artifacts: string[], tokensUsedEst: number, truncated: boolean, stopReason: string, touchedPaths: string[]): SubagentRunOutcome {
+	private _outcome(req: SubagentRunRequest, status: 'success' | 'failed' | 'stopped', summary: string, artifacts: string[], tokensUsedEst: number, truncated: boolean, stopReason: string, touchedPaths: string[], extra?: { stopCode?: SubagentStopReason; model?: ModelSelection; promptTokens?: number; completionTokens?: number }): SubagentRunOutcome {
 		return {
 			status,
 			summary: truncateSummary(summary, MAX_SUMMARY_CHARS),
@@ -277,6 +296,10 @@ class VibeSubagentRunnerService extends Disposable implements IVibeSubagentRunne
 			tokensUsedEst,
 			truncated,
 			stopReason,
+			...(extra?.stopCode ? { stopCode: extra.stopCode } : {}),
+			...(extra?.model && extra.model.providerName !== 'auto' ? { providerName: extra.model.providerName, modelName: extra.model.modelName } : {}),
+			...(extra?.promptTokens ? { promptTokensUsed: extra.promptTokens } : {}),
+			...(extra?.completionTokens ? { completionTokensUsed: extra.completionTokens } : {}),
 			...(req.type === 'explore' ? { exploreReport: buildExploreReport(touchedPaths, truncated) } : {}),
 		};
 	}

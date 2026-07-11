@@ -18,6 +18,8 @@ import { INotificationService, Severity } from '../../../../platform/notificatio
 import { approvalTypeOfBuiltinToolName } from '../common/prompt/tools/index.js';
 import { IVibeSubagentOrchestratorService } from '../common/vibeSubagentOrchestratorService.js';
 import { IVibeSubagentRegistryService } from '../common/vibeSubagentRegistryService.js';
+import { IVibeideSettingsService } from '../common/vibeideSettingsService.js';
+import { subagentCostUsd, formatUsd } from '../common/subagentCostEstimate.js';
 import { IChatThreadService } from './chatThreadService.js';
 
 registerAction2(
@@ -73,6 +75,7 @@ registerAction2(
 			const orchestrator = accessor.get(IVibeSubagentOrchestratorService);
 			const notice = accessor.get(INotificationService);
 			const chatThreadService = accessor.get(IChatThreadService);
+			const settings = accessor.get(IVibeideSettingsService);
 
 			const task = await quickInput.input({
 				title: localize('vibeAgents.executeRoute.title', "Опишите задачу — команда ролей выполнит её"),
@@ -86,31 +89,46 @@ registerAction2(
 			const stages = route.stages.map(stage => (stage.length > 1 ? `[${stage.join(' ∥ ')}]` : stage[0])).join(' → ');
 			notice.info(localize('vibeAgents.executeRoute.started', "Команда ролей запущена: {0}. Прогресс — в статус-баре субагентов; отмена — клик по нему.", stages));
 
+			// Capture the LAUNCH thread now: the report must land where the route was started,
+			// not wherever the user happens to be when it finishes.
+			const threadId = chatThreadService.state.currentThreadId;
+			const startedAtMs = Date.now();
 			try {
 				const results = await orchestrator.executeRoute({
-					parentThreadId: chatThreadService.state.currentThreadId,
+					parentThreadId: threadId,
 					taskText: task.trim(),
 				});
 				const ok = results.filter(r => r.status === 'success').length;
+				const overrides = settings.state.overridesOfModel;
+				const totalTokens = results.reduce((s, r) => s + r.tokensUsed, 0);
+				const totalUsd = results.reduce((s, r) => s + (subagentCostUsd(r, overrides) ?? 0), 0);
+				const openHandoffs = orchestrator.listOpenHandoffs().length;
+				const elapsedSec = Math.round((Date.now() - startedAtMs) / 1000);
 				const md = [
 					localize('vibeAgents.executeRoute.reportTitle', "# Vibe Agents — отчёт команды ролей"),
 					'',
 					localize('vibeAgents.executeRoute.reportTask', "Задача: {0}", task.trim()),
 					localize('vibeAgents.executeRoute.reportRoute', "Маршрут: {0}", stages),
 					'',
-					...results.map(r => [
-						`## ${r.subagentId} — ${r.status}`,
-						r.summary,
-						r.artifacts?.length ? localize('vibeAgents.executeRoute.reportArtifacts', "Артефакты: {0}", r.artifacts.join(', ')) : undefined,
-						r.reason ? localize('vibeAgents.executeRoute.reportReason', "Причина: {0}", r.reason) : undefined,
-						localize('vibeAgents.executeRoute.reportTokens', "~{0} токенов (оценка)", String(r.tokensUsed)),
-						'',
-					].filter((l): l is string => l !== undefined)).flat(),
+					...results.map(r => {
+						const usd = subagentCostUsd(r, overrides);
+						return [
+							`## ${r.subagentId} — ${r.status}`,
+							r.summary,
+							r.artifacts?.length ? localize('vibeAgents.executeRoute.reportArtifacts', "Артефакты: {0}", r.artifacts.join(', ')) : undefined,
+							r.reason ? localize('vibeAgents.executeRoute.reportReason', "Причина: {0}", r.reason) : undefined,
+							localize('vibeAgents.executeRoute.reportTokens', "~{0} токенов (оценка){1}{2}", String(r.tokensUsed), usd !== undefined ? ` · ≈$${formatUsd(usd)}` : '', r.modelName ? ` · ${r.providerName}/${r.modelName}` : ''),
+							'',
+						].filter((l): l is string => l !== undefined);
+					}).flat(),
+					'---',
+					localize('vibeAgents.executeRoute.reportTotals', "Итого: {0}/{1} успешно · ~{2} токенов{3} · {4} с", String(ok), String(results.length), String(totalTokens), totalUsd > 0 ? ` · ≈$${formatUsd(totalUsd)}` : '', String(elapsedSec)),
+					...(openHandoffs > 0 ? [localize('vibeAgents.executeRoute.reportHandoffs', "⏸ Открытых продолжений (см. «субпин» в статус-баре): {0}", String(openHandoffs))] : []),
 				].join('\n');
 				// Post the report AS A CHAT MESSAGE (not an untitled editor): the work lives in the chat,
 				// and a display-only assistant message is never «dirty», so it can't trigger the
 				// save-on-close dialog / loop that untitled `contents` editors did.
-				chatThreadService.addAssistantNotice(chatThreadService.state.currentThreadId, md);
+				chatThreadService.addAssistantNotice(threadId, md);
 				notice.notify({
 					severity: ok === results.length ? Severity.Info : Severity.Warning,
 					message: localize('vibeAgents.executeRoute.done', "Команда ролей завершена: {0}/{1} успешно. Отчёт добавлен в чат.", String(ok), String(results.length)),

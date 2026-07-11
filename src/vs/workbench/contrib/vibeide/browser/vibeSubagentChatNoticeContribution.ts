@@ -22,6 +22,8 @@ import { IWorkbenchContributionsRegistry, Extensions as WorkbenchExtensions } fr
 import { LifecyclePhase } from '../../../services/lifecycle/common/lifecycle.js';
 import { IVibeSubagentService, SubagentEntry, SubagentType } from '../common/vibeSubagentService.js';
 import { IVibeSubagentRegistryService } from '../common/vibeSubagentRegistryService.js';
+import { IVibeideSettingsService } from '../common/vibeideSettingsService.js';
+import { subagentCostUsd, formatUsd } from '../common/subagentCostEstimate.js';
 import { IChatThreadService } from './chatThreadService.js';
 
 const INTERNAL_TYPES = new Set<SubagentType>(['explore', 'implement-step', 'recover-or-skip']);
@@ -36,6 +38,7 @@ class VibeSubagentChatNoticeContribution extends Disposable {
 		@IChatThreadService private readonly _chat: IChatThreadService,
 		@IVibeSubagentRegistryService private readonly _registry: IVibeSubagentRegistryService,
 		@IConfigurationService private readonly _config: IConfigurationService,
+		@IVibeideSettingsService private readonly _settings: IVibeideSettingsService,
 	) {
 		super();
 		this._register(this._subagentSvc.onSubagentStatusChanged(e => this._onStatus(e)));
@@ -61,6 +64,10 @@ class VibeSubagentChatNoticeContribution extends Disposable {
 		const terminal = entry.status === 'completed' || entry.status === 'failed' || entry.status === 'stopped' || entry.status === 'skipped';
 		if (terminal && !this._notified.has(`${entry.id}:end`)) {
 			this._notified.add(`${entry.id}:end`);
+			// Subagent ids are never reused after a terminal state — drop the start key right away
+			// ('disposed' events don't fire, so this is the only cleanup), and bound the set overall.
+			this._notified.delete(`${entry.id}:start`);
+			if (this._notified.size > 512) { this._notified.clear(); }
 			this._post(entry.parentThreadId, this._finishText(name, entry));
 		}
 	}
@@ -69,10 +76,15 @@ class VibeSubagentChatNoticeContribution extends Disposable {
 		const reason = entry.result?.reason ?? '';
 		const tokens = entry.result?.tokensUsed ?? 0;
 		switch (entry.status) {
-			case 'completed':
-				return localize('vibeide.subagent.chatDone', "✅ Субагент «{0}» завершил задачу (~{1} токенов).", name, String(tokens));
+			case 'completed': {
+				const usd = entry.result ? subagentCostUsd(entry.result, this._settings.state.overridesOfModel) : undefined;
+				const costPart = usd !== undefined ? localize('vibeide.subagent.chatCost', ", ≈${0}", formatUsd(usd)) : '';
+				return localize('vibeide.subagent.chatDone', "✅ Субагент «{0}» завершил задачу (~{1} токенов{2}).", name, String(tokens), costPart);
+			}
 			case 'stopped':
-				return localize('vibeide.subagent.chatStopped', "⏸️ Субагент «{0}» остановлен: {1}. Частичный результат сохранён — продолжить можно через «субпин».", name, reason);
+				// No «субпин» promise here: while auto-resume is running the ticket is not yet open —
+				// the indicator appears only when the human's decision is actually needed.
+				return localize('vibeide.subagent.chatStopped', "⏸️ Субагент «{0}» остановлен: {1}. Частичный результат сохранён.", name, reason);
 			case 'skipped':
 				return localize('vibeide.subagent.chatSkipped', "⏭️ Субагент «{0}» пропущен: {1}", name, reason);
 			default:

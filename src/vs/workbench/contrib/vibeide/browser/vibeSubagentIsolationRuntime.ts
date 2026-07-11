@@ -58,6 +58,13 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 			maximum: 10,
 			description: localize('vibeide.subagent.maxResumes', 'Сколько раз субагента, остановленного по лимиту (токены/шаги/время), автоматически продолжать с сохранённым прогрессом, прежде чем оставить решение человеку. 0 — не продолжать автоматически. По умолчанию 2.'),
 		},
+		'vibeide.subagent.resumeBudgetFactor': {
+			type: 'number',
+			default: 1.5,
+			minimum: 1,
+			maximum: 3,
+			description: localize('vibeide.subagent.resumeBudgetFactor', 'Во сколько раз увеличивать токен-бюджет субагента на каждое авто-продолжение после остановки по лимиту (эскалация; общий потолок — 4× базового бюджета). 1 — продолжать с тем же бюджетом. По умолчанию 1.5.'),
+		},
 		'vibeide.subagent.chatNotices': {
 			type: 'boolean',
 			default: true,

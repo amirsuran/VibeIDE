@@ -49,7 +49,10 @@ export interface SubagentIsolationInput {
 	readonly forceInline?: boolean;
 }
 
-const DEFAULT_MAX_TOKENS = 100_000;
+/** Single source of the default per-subagent token quota (config `vibeide.subagent.maxTokens` default,
+ *  quota fallback in vibeSubagentService, isolation context ceiling here). */
+export const DEFAULT_SUBAGENT_TOKEN_QUOTA = 100_000;
+const DEFAULT_MAX_TOKENS = DEFAULT_SUBAGENT_TOKEN_QUOTA;
 const KILL_TIMEOUT_MS_BY_KIND: Record<SubagentKind, number> = {
 	explore: 120_000,
 	planner: 180_000,
