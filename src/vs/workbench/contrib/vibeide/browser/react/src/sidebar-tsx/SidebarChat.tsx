@@ -5603,12 +5603,16 @@ export const SidebarChat = () => {
 				render: () => <ProseWrapper>
 					<div className="flex flex-col gap-1 loading-state-transition" role="status" aria-live="polite" aria-atomic="true">
 						{subagentActivity.map(role => {
-							// Live context/token readout: role's own spend vs its quota (not the main
-							// thread's context window — those are separate budgets). Compact «k» form.
+							// Live readout: STEPS are the usual binding limit for weak models (they hit
+							// maxSteps long before the token quota), so show them first; tokens are a
+							// secondary «~k» hint. Role's own budgets — not the main thread's context.
 							const fmtK = (n: number) => n >= 1000 ? `${Math.round(n / 100) / 10}k` : String(n);
-							const tokenReadout = (role.tokenQuota && role.tokenQuota > 0)
-								? ` (~${fmtK(role.liveTokensUsed ?? 0)} / ${fmtK(role.tokenQuota)})`
-								: (role.liveTokensUsed && role.liveTokensUsed > 0 ? ` (~${fmtK(role.liveTokensUsed)})` : '');
+							const stepPart = (role.maxSteps && role.maxSteps > 0)
+								? `шаг ${role.liveStepsDone ?? 0}/${role.maxSteps}`
+								: '';
+							const tokenPart = (role.liveTokensUsed && role.liveTokensUsed > 0) ? `~${fmtK(role.liveTokensUsed)}` : '';
+							const parts = [stepPart, tokenPart].filter(Boolean).join(' · ');
+							const tokenReadout = parts ? ` (${parts})` : '';
 							return (
 								<div key={role.id} className="flex items-center gap-2">
 									<span className="text-vibe-fg-2 opacity-70 flex-shrink-0 text-sm leading-none">

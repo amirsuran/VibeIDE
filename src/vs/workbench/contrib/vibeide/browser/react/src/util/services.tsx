@@ -436,7 +436,7 @@ export const useFullChatThreadsStreamState = () => {
 const SUBAGENT_INTERNAL_TYPES = new Set<SubagentType>(['explore', 'implement-step', 'recover-or-skip']);
 const EMPTY_SUBAGENT_ACTIVITY: SubagentActivityItem[] = [];
 
-export type SubagentActivityItem = { id: string; displayName: string; liveTokensUsed?: number; tokenQuota?: number };
+export type SubagentActivityItem = { id: string; displayName: string; liveTokensUsed?: number; tokenQuota?: number; liveStepsDone?: number; maxSteps?: number };
 
 /** Running/pending curated roles for a parent thread — drives the live "role thinking" spinner. */
 export const useSubagentActivity = (threadId: string): SubagentActivityItem[] => {
@@ -444,7 +444,7 @@ export const useSubagentActivity = (threadId: string): SubagentActivityItem[] =>
 		if (!subagentSvc || !subagentRegistry || !threadId) { return EMPTY_SUBAGENT_ACTIVITY; }
 		const active = subagentSvc.getByParentThread(threadId)
 			.filter(e => (e.status === 'running' || e.status === 'pending') && !SUBAGENT_INTERNAL_TYPES.has(e.type))
-			.map(e => ({ id: e.id, displayName: subagentRegistry!.getPreset(e.type).displayName, liveTokensUsed: e.liveTokensUsed, tokenQuota: e.tokenQuota }));
+			.map(e => ({ id: e.id, displayName: subagentRegistry!.getPreset(e.type).displayName, liveTokensUsed: e.liveTokensUsed, tokenQuota: e.tokenQuota, liveStepsDone: e.liveStepsDone, maxSteps: e.maxSteps }));
 		return active.length === 0 ? EMPTY_SUBAGENT_ACTIVITY : active;
 	};
 	const [s, ss] = useState<SubagentActivityItem[]>(compute);

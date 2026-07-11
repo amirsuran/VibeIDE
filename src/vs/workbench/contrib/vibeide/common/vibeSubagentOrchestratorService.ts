@@ -61,7 +61,14 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 			default: 2,
 			minimum: 0,
 			maximum: 10,
-			description: localize('vibeide.subagent.maxResumes', 'Сколько раз VibeIDE САМ продолжит остановленную по лимиту (токены/шаги/время) роль-субагента с сохранённого места, прежде чем передать решение пользователю (ручной список «Продолжить роль»). 0 = не продолжать автоматически. Субагентный аналог «подпин.» основного агента. Дефолт 2.'),
+			description: localize('vibeide.subagent.maxResumes', 'Сколько раз VibeIDE САМ продолжит остановленную по лимиту (токены/шаги/время) роль-субагента с сохранённого места, прежде чем передать решение пользователю (ручной список «Продолжить роль»). 0 = не продолжать автоматически. Субагентный аналог «подпин.» основного агента. Дефолт 2. ПРИМЕЧАНИЕ: при включённом автопилоте ресурсные лимиты роли авто-продлеваются и роль не паркуется — этот лимит действует в ручном режиме.'),
+		},
+		'vibeide.subagent.maxSteps': {
+			type: 'number',
+			default: 60,
+			minimum: 5,
+			maximum: 500,
+			description: localize('vibeide.subagent.maxSteps', 'Лимит шагов (обращений к модели/инструментам) на ОДИН прогон роли-субагента, прежде чем она остановится по «исчерпан лимит шагов». Переопределяет дефолт роли. Для слабых моделей поднимайте — они жгут шаги на чтении файлов. При включённом автопилоте лимит авто-продлевается (роль не встаёт). Дефолт 60.'),
 		},
 	},
 });
@@ -208,11 +215,15 @@ class VibeSubagentOrchestratorService extends Disposable implements IVibeSubagen
 	private async _spawnRole(role: SubagentType, parentThreadId: string, goal: string, maxTokens?: number): Promise<SubagentResult | undefined> {
 		const preset = this._registry.getPreset(role);
 		try {
+			// Global step limit (config) overrides the per-role default — one knob users can raise for
+			// weak models that burn steps on reads. Under autopilot the runner auto-extends it anyway.
+			const cfgMaxSteps = this._config.getValue<number>('vibeide.subagent.maxSteps');
+			const maxSteps = typeof cfgMaxSteps === 'number' && cfgMaxSteps > 0 ? cfgMaxSteps : preset.defaultMaxSteps;
 			const subagentId = await this._subagentSvc.spawn({
 				parentThreadId,
 				type: role,
 				goal,
-				maxSteps: preset.defaultMaxSteps,
+				maxSteps,
 				maxWallClockMs: preset.defaultMaxWallClockMs,
 				...(maxTokens ? { maxTokens } : {}),
 			});

@@ -24,6 +24,11 @@ import { IConvertToLLMMessageService } from './convertToLLMMessageService.js';
 import { IToolsService } from './toolsService.js';
 import { IVibeAgentActivityLogService } from './vibeAgentActivityLogService.js';
 
+/** Under Autopilot, resource limits auto-extend rather than stop the role. This cooldown backstops a
+ *  pathological tight loop (instant hops) from resetting the budget hundreds of times per second —
+ *  mirrors vibeTokenBudgetService's AUTOPILOT_RESET_COOLDOWN_MS. */
+const SUBAGENT_AUTOPILOT_RESET_COOLDOWN_MS = 1_000;
+
 /** The compact-handoff contract: no result field exceeds this. */
 const MAX_SUMMARY_CHARS = 500;
 /**
@@ -78,7 +83,9 @@ class VibeSubagentRunnerService extends Disposable implements IVibeSubagentRunne
 
 		const chatMode = chatModeForAllowedTools(req.allowedTools);
 		const deadlineAtMs = req.maxWallClockMs > 0 ? Date.now() + req.maxWallClockMs : 0;
-		const limits = { maxSteps: req.maxSteps, maxTokensEst: req.maxTokensEst, deadlineAtMs, maxDeniedActions: SUBAGENT_MAX_DENIED_ACTIONS };
+		// Mutable: under Autopilot the resource limits are SOFT — they auto-extend instead of stopping
+		// the role (see the reset block in the loop). cancelled/denied-actions stay hard.
+		let limits = { maxSteps: req.maxSteps, maxTokensEst: req.maxTokensEst, deadlineAtMs, maxDeniedActions: SUBAGENT_MAX_DENIED_ACTIONS };
 
 		const taskMessage = buildSubagentTaskMessage({ displayName: preset.displayName, systemAppendix: preset.systemAppendix, goal: req.goal, acceptanceCriteria: req.acceptanceCriteria, contextItems: req.contextItems });
 		const history: ChatMessage[] = [{
@@ -103,8 +110,29 @@ class VibeSubagentRunnerService extends Disposable implements IVibeSubagentRunne
 
 		this._activityLog.logStarted(`Subagent ${req.type} (${req.subagentId}): ${chatMode}-режим, шагов ≤${req.maxSteps}, модель ${modelSelection.providerName}/${modelSelection.modelName}`);
 
+		// Autopilot inheritance: the user opted into unattended completion, so a subagent must NOT
+		// introduce a NEW stop point. Resource limits (steps/time/tokens) auto-extend instead of
+		// parking the role — mirroring the main agent's session-budget auto-reset (vibeTokenBudgetService).
+		// A short cooldown backstops a pathological tight loop (instant hops). cancelled/denied-actions
+		// remain hard stops (user intent / safety). Read fresh each iteration: toggling Autopilot OFF
+		// mid-run re-arms the limits so the user can rein in a runaway role.
+		let lastAutoResetAt = 0;
+
 		while (true) {
+			const autopilot = this._settings.state.globalSettings.chatAgentAutopilot === true;
 			const stop = decideStop({ stepsDone, tokensUsedEst, deniedActions, nowMs: Date.now(), cancelled: req.cancellationToken?.isCancellationRequested === true }, limits);
+			if (stop && autopilot && (stop === 'max-steps' || stop === 'deadline' || stop === 'token-budget')) {
+				const now = Date.now();
+				if (now - lastAutoResetAt >= SUBAGENT_AUTOPILOT_RESET_COOLDOWN_MS) {
+					lastAutoResetAt = now;
+					if (stop === 'max-steps') { limits = { ...limits, maxSteps: limits.maxSteps + req.maxSteps }; }
+					else if (stop === 'deadline') { limits = { ...limits, deadlineAtMs: limits.deadlineAtMs + req.maxWallClockMs }; }
+					else { limits = { ...limits, maxTokensEst: limits.maxTokensEst + req.maxTokensEst }; }
+					this._activityLog.logStarted(`Subagent ${req.subagentId}: автопилот — авто-сброс лимита «${stopReasonToRussian(stop)}», продолжаю`);
+					continue;
+				}
+				// Inside cooldown: fall through and stop (prevents a tight infinite reset loop).
+			}
 			if (stop) {
 				const reason = stopReasonToRussian(stop);
 				const modelLabel = `${modelSelection.providerName}/${modelSelection.modelName}`;
@@ -134,7 +162,7 @@ class VibeSubagentRunnerService extends Disposable implements IVibeSubagentRunne
 				// Do not clobber the parent thread's context meter with this role's prompt size.
 				skipContextGuardUpdate: true,
 			});
-			const hop = await this._sendOnce({ req, messages, separateSystemMessage, chatMode, modelSelection, deadlineAtMs });
+			const hop = await this._sendOnce({ req, messages, separateSystemMessage, chatMode, modelSelection, deadlineAtMs: limits.deadlineAtMs });
 			if (hop.kind === 'error') {
 				// A deadline firing MID-REQUEST aborts the stream and surfaces here as an error — but it
 				// is the same soft limit as a deadline hit between hops: keep the partial and allow resume.
@@ -157,7 +185,7 @@ class VibeSubagentRunnerService extends Disposable implements IVibeSubagentRunne
 			tokensUsedEst += hopTokenCost(hop.usage, JSON.stringify(messages).length + (separateSystemMessage?.length ?? 0) + hop.fullText.length);
 			promptTokensUsed += hop.usage?.promptTokens ?? 0;
 			completionTokensUsed += hop.usage?.completionTokens ?? 0;
-			req.onProgress?.(tokensUsedEst);
+			req.onProgress?.(tokensUsedEst, stepsDone);
 			lastText = hop.fullText || lastText;
 			const toolCall = hop.toolCall;
 
