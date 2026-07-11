@@ -287,6 +287,12 @@ export const VibeModalSimple: React.FC<{ entry: VibeModalQueueEntry }> = ({ entr
 					</div>
 				)}
 
+				{options.content != null && (
+					<div className="@@vibeide-modal-content">
+						{options.content as React.ReactNode}
+					</div>
+				)}
+
 				{options.input && (
 					<div className="@@vibeide-modal-input-wrap">
 						{options.input.multiline ? (
@@ -366,6 +372,16 @@ export const VibeModalSimple: React.FC<{ entry: VibeModalQueueEntry }> = ({ entr
 				)}
 
 				<div className="@@vibeide-modal-buttons">
+					{options.footerLeftButton && (
+						<button
+							type="button"
+							className={`@@vibeide-modal-button @@role-${options.footerLeftButton.role ?? 'secondary'} @@vibeide-modal-footer-left`}
+							disabled={!!options.footerLeftButton.disabled || !!options.loading}
+							onClick={() => onButtonClick(options.footerLeftButton!)}
+						>
+							{renderButtonLabel(options.footerLeftButton.label, options.footerLeftButton.hotkey)}
+						</button>
+					)}
 					{options.buttons.map(btn => {
 						const role = btn.role ?? 'secondary';
 						const disabled = !!btn.disabled

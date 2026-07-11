@@ -88,9 +88,17 @@ export interface VibeModalOptions<TButtonId extends string = string> {
 	 */
 	readonly bodyMarkdown?: boolean;
 	readonly buttons: ReadonlyArray<VibeModalButton<TButtonId>>;
+	/** Optional left-aligned footer button (e.g. «Роли») — resolves the modal with its id like any button. */
+	readonly footerLeftButton?: VibeModalButton<TButtonId>;
 	readonly input?: VibeModalInputSpec;
 	/** Optional numeric fields rendered below `input` — collected into `VibeModalResult.fieldValues`. */
 	readonly numberFields?: ReadonlyArray<VibeModalNumberField>;
+	/**
+	 * Optional React node rendered in the body area (below `body`/`input`). Typed `unknown` because
+	 * `common/` must not import React — the renderer (VibeModalSimple) casts it to a ReactNode. Use for
+	 * embedding a live component (e.g. the per-role model settings) instead of a static string.
+	 */
+	readonly content?: unknown;
 	/**
 	 * Optional «remember my choice» checkbox rendered above the buttons. Its live state is reflected
 	 * back into `VibeModalResult.checked` on EVERY close path (button click, ESC, backdrop) — the

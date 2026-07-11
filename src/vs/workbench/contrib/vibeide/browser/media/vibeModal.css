@@ -301,8 +301,19 @@
 .vibeide-modal-buttons {
 	display: flex;
 	justify-content: flex-end;
+	align-items: center;
 	gap: 8px;
 	padding: 8px 16px 14px;
+}
+
+/* Left-aligned footer button (e.g. «Роли») — pushed to the far left, right buttons stay right. */
+.vibeide-modal-footer-left {
+	margin-right: auto;
+}
+
+/* React content slot (e.g. per-role model settings) — same horizontal gutter as other sections. */
+.vibeide-modal-content {
+	padding: 4px 16px 8px;
 }
 
 .vibeide-modal-button {

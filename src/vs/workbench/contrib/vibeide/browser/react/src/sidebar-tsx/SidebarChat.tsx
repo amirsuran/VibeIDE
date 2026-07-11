@@ -10,6 +10,7 @@ import { Virtuoso, VirtuosoHandle } from 'react-virtuoso';
 
 
 import { useAccessor, useChatThreadsState, useChatThreadsStreamState, useSettingsState, useActiveURI, useCommandBarState, useFullChatThreadsStreamState, useSubagentActivity, useSubagentHandoffCount, SubagentActivityItem } from '../util/services.js';
+import { AgentRoleModels } from '../vibe-settings-tsx/AgentRoleModels.js';
 import { ScrollType } from '../../../../../../../editor/common/editorCommon.js';
 
 import { ChatMarkdownRender, ChatMessageLocation, getApplyBoxId } from '../markdown/ChatMarkdownRender.js';
@@ -1021,25 +1022,53 @@ const ChatRunRouteButton = () => {
 			const v = config.getValue<number>(key);
 			return typeof v === 'number' && v > 0 ? v : fallback;
 		};
-		const { buttonId, inputValue, fieldValues } = await modal.showModal({
-			title: 'Выполнить маршрут ролей',
-			body: '**Промпт для субагента.** Команда ролей (планировщик → разработчики → ревьюер → QA → security) выполнит задачу под автопилотом. Лимиты ниже — на этот прогон (под автопилотом всё равно авто-продлеваются; правьте базу).',
-			bodyMarkdown: true,
-			input: { placeholder: 'Что должна сделать команда ролей? Напр.: добавить и проверить страницу входа через OAuth', multiline: true, validator: v => v.trim() ? null : 'Опишите задачу' },
-			numberFields: [
-				{ id: 'maxSteps', label: 'Шаги', default: num('vibeide.subagent.maxSteps', 60), min: 5, max: 500 },
-				{ id: 'maxTokens', label: 'Токены', default: num('vibeide.subagent.maxTokens', 100000), min: 10000, max: 100000000 },
-				{ id: 'maxWallClockSec', label: 'Время', default: num('vibeide.subagent.maxWallClockSec', 300), min: 10, max: 3600, suffix: 'с' },
-				{ id: 'maxResumes', label: 'Авто-резюм', default: num('vibeide.subagent.maxResumes', 2), min: 0, max: 10 },
-			],
-			buttons: [
-				{ id: 'run', label: 'Запустить', role: 'primary' },
-				{ id: 'cancel', label: 'Отмена', role: 'secondary' },
-			],
-			size: 'medium',
-		});
-		if (buttonId === 'run' && inputValue?.trim()) {
-			commandService.executeCommand('vibeide.vibeAgents.executeRoute', { prompt: inputValue.trim(), overrides: fieldValues });
+		// Preserved across a «Роли» round-trip: the modal queue can't stack, so opening the role-model
+		// modal closes the route modal — we reopen it with the user's typed prompt + edited limits intact.
+		let promptInit = '';
+		let steps = num('vibeide.subagent.maxSteps', 60);
+		let tokens = num('vibeide.subagent.maxTokens', 100000);
+		let timeSec = num('vibeide.subagent.maxWallClockSec', 300);
+		let resumes = num('vibeide.subagent.maxResumes', 2);
+		while (true) {
+			const { buttonId, inputValue, fieldValues } = await modal.showModal({
+				title: 'Выполнить маршрут ролей',
+				body: '**Промпт для субагента.** Команда ролей (планировщик → разработчики → ревьюер → QA → security) выполнит задачу под автопилотом. Лимиты ниже — на этот прогон (под автопилотом всё равно авто-продлеваются; правьте базу).',
+				bodyMarkdown: true,
+				input: { placeholder: 'Что должна сделать команда ролей? Напр.: добавить и проверить страницу входа через OAuth', multiline: true, initialValue: promptInit, validator: v => v.trim() ? null : 'Опишите задачу' },
+				numberFields: [
+					{ id: 'maxSteps', label: 'Шаги', default: steps, min: 5, max: 500 },
+					{ id: 'maxTokens', label: 'Токены', default: tokens, min: 10000, max: 100000000 },
+					{ id: 'maxWallClockSec', label: 'Время', default: timeSec, min: 10, max: 3600, suffix: 'с' },
+					{ id: 'maxResumes', label: 'Авто-резюм', default: resumes, min: 0, max: 10 },
+				],
+				footerLeftButton: { id: 'roles', label: '🎭 Роли', role: 'secondary' },
+				buttons: [
+					{ id: 'run', label: 'Запустить', role: 'primary' },
+					{ id: 'cancel', label: 'Отмена', role: 'secondary' },
+				],
+				size: 'medium',
+			});
+			// «Роли» → configure per-role models in a sub-modal, then reopen the route modal preserving input.
+			if (buttonId === 'roles') {
+				promptInit = inputValue ?? promptInit;
+				if (fieldValues) {
+					steps = fieldValues.maxSteps ?? steps;
+					tokens = fieldValues.maxTokens ?? tokens;
+					timeSec = fieldValues.maxWallClockSec ?? timeSec;
+					resumes = fieldValues.maxResumes ?? resumes;
+				}
+				await modal.showModal({
+					title: 'Роли агентов — модель на роль',
+					content: <AgentRoleModels />,
+					buttons: [{ id: 'done', label: 'Готово', role: 'primary' }],
+					size: 'medium',
+				});
+				continue;
+			}
+			if (buttonId === 'run' && inputValue?.trim()) {
+				commandService.executeCommand('vibeide.vibeAgents.executeRoute', { prompt: inputValue.trim(), overrides: fieldValues });
+			}
+			break;
 		}
 		} finally {
 			openRef.current = false;

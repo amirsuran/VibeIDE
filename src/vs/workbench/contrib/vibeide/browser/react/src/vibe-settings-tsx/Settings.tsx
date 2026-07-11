@@ -15,7 +15,7 @@ import { useAccessor, useIsDark, useIsOptedOut, useMCPServiceState, useRefreshMo
 import { X, RefreshCw, Loader2, Check, Asterisk, Plus, ChevronRight, ChevronDown, ImageOff, Image, Play } from 'lucide-react';
 import { joinPath } from '../../../../../../../base/common/resources.js';
 import { ModelDropdown } from './ModelDropdown.js';
-import { VIBE_AGENT_ROLE_PRESETS } from '../../../../common/vibeSubagentRegistryService.js';
+import { AgentRoleModels } from './AgentRoleModels.js';
 import { VibeWorkspaceFormsPanel } from './VibeWorkspaceForms.js';
 import { ChatMarkdownRender } from '../markdown/ChatMarkdownRender.js';
 import { WarningBox } from './WarningBox.js';
@@ -2057,6 +2057,14 @@ const FeatureOptionsSettingsBody = () => {
 				</div>
 			</FeatureOptionsSectionCard>
 
+			{/* Vibe Agents — модель на роль (VA.2): relocated up here (after Tools). */}
+			<ErrorBoundary>
+				<FeatureOptionsSectionCard wide>
+					<h4 className={`text-base`}>Роли агентов — модель на роль</h4>
+					<AgentRoleModels />
+				</FeatureOptionsSectionCard>
+			</ErrorBoundary>
+
 			{/* YOLO Mode Section */}
 			<ErrorBoundary>
 				<FeatureOptionsSectionCard>
@@ -2191,48 +2199,6 @@ const FeatureOptionsSettingsBody = () => {
 				</FeatureOptionsSectionCard>
 			</ErrorBoundary>
 
-			{/* Vibe Agents — модель на роль (VA.2). Roles are an open set, so this is NOT a FeatureName
-			    dropdown: a plain select over the computed model options + «как в чате» (= no mapping). */}
-			<ErrorBoundary>
-				<FeatureOptionsSectionCard wide>
-					<h4 className={`text-base`}>Роли агентов — модель на роль</h4>
-					<div className='text-sm text-vibe-fg-3 mt-1'>
-						Какая модель исполняет каждую роль Vibe Agents. По умолчанию — модель чата. Read-only роли
-						(планировщик, ревьюер, security) выгодно сажать на лёгкую модель: дешевле и быстрее, а
-						писать код им всё равно запрещено.
-					</div>
-					<div className='my-2 flex flex-col gap-y-1'>
-						{VIBE_AGENT_ROLE_PRESETS.map(preset => {
-							const current = settingsState.modelSelectionOfRole?.[preset.type] ?? null;
-							const currentKey = current ? `${current.providerName}:::${current.modelName}` : '';
-							const isReadOnly = !preset.allowedTools.some(t => t === 'edit_file' || t === 'rewrite_file' || t === 'run_command');
-							return (
-								<div key={preset.type} className='flex items-center gap-x-2'>
-									<span className='text-xs text-vibe-fg-2 w-32'>{preset.displayName}</span>
-									{isReadOnly && <span className='text-[10px] text-vibe-fg-3 border border-vibe-border-2 rounded px-1'>только чтение</span>}
-									<select
-										className='text-xs text-vibe-fg-3 bg-vibe-bg-1 border border-vibe-border-1 rounded p-0.5 px-1 max-w-64'
-										value={currentKey}
-										onChange={(e) => {
-											const v = e.target.value;
-											if (!v) { void vibeideSettingsService.setModelSelectionOfRole(preset.type, null); return; }
-											const opt = settingsState._modelOptions.find(o => `${o.selection.providerName}:::${o.selection.modelName}` === v);
-											if (opt) { void vibeideSettingsService.setModelSelectionOfRole(preset.type, opt.selection); }
-										}}
-									>
-										<option value=''>как в чате</option>
-										{settingsState._modelOptions.map(o => (
-											<option key={`${o.selection.providerName}:::${o.selection.modelName}`} value={`${o.selection.providerName}:::${o.selection.modelName}`}>
-												{o.name}
-											</option>
-										))}
-									</select>
-								</div>
-							);
-						})}
-					</div>
-				</FeatureOptionsSectionCard>
-			</ErrorBoundary>
 		</div>
 	);
 };
