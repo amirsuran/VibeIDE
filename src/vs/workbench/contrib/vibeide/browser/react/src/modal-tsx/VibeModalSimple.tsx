@@ -260,6 +260,18 @@ export const VibeModalSimple: React.FC<{ entry: VibeModalQueueEntry }> = ({ entr
 				aria-busy={options.loading ? true : undefined}
 				onKeyDown={onTrapKeyDown}
 			>
+				{/* Shared top-right close «×» — the standard way to close any dismissible modal (mirrors ESC).
+				    Hidden for non-dismissible modals, where ESC/backdrop are also inert. */}
+				{options.dismissible !== false && (
+					<button
+						type="button"
+						className="@@vibeide-modal-close @@codicon @@codicon-close"
+						aria-label="Закрыть"
+						title="Закрыть (Esc)"
+						disabled={options.loading}
+						onClick={() => { void modalService.dismissHeadWithVeto(); }}
+					/>
+				)}
 				<div className="@@vibeide-modal-header">
 					{options.icon && (
 						<span className={`@@vibeide-modal-icon @@codicon @@codicon-${options.icon}`} aria-hidden="true" />
