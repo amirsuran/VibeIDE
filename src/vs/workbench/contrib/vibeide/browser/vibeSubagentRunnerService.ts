@@ -171,10 +171,20 @@ class VibeSubagentRunnerService extends Disposable implements IVibeSubagentRunne
 			});
 			const hop = await this._sendOnce({ req, messages, separateSystemMessage, chatMode, modelSelection, deadlineAtMs: limits.deadlineAtMs });
 			if (hop.kind === 'error') {
-				// A deadline firing MID-REQUEST aborts the stream and surfaces here as an error — but it
-				// is the same soft limit as a deadline hit between hops: keep the partial and allow resume.
-				const deadlineHit = deadlineAtMs > 0 && Date.now() >= deadlineAtMs && req.cancellationToken?.isCancellationRequested !== true;
+				// A deadline firing MID-REQUEST aborts the stream and surfaces here as an error. Use the
+				// CURRENT (possibly auto-extended) deadline, not the stale original — otherwise an extended
+				// run would still trip at the first deadline.
+				const deadlineHit = limits.deadlineAtMs > 0 && Date.now() >= limits.deadlineAtMs && req.cancellationToken?.isCancellationRequested !== true;
 				if (deadlineHit) {
+					// Under Autopilot the wall-clock is soft — same as the between-hops reset: extend and
+					// retry the hop instead of stopping the role (the failed hop does not consume a step).
+					if (autopilot && Date.now() - lastAutoResetAt >= SUBAGENT_AUTOPILOT_RESET_COOLDOWN_MS) {
+						lastAutoResetAt = Date.now();
+						limits = { ...limits, deadlineAtMs: limits.deadlineAtMs + req.maxWallClockMs };
+						this._activityLog.logStarted(`Subagent ${req.subagentId}: автопилот — авто-сброс лимита «${stopReasonToRussian('deadline')}» (в момент запроса), продолжаю`);
+						stepsDone = Math.max(0, stepsDone - 1);
+						continue;
+					}
 					const reason = stopReasonToRussian('deadline');
 					this._activityLog.logError(`Subagent ${req.subagentId}: остановлен — ${reason} (в момент запроса к модели)`);
 					const summary = `Роль «${preset.displayName}» остановлена: ${reason}. Частичный результат сохранён. Последний вывод: ${lastText}`;
