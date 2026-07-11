@@ -687,6 +687,9 @@ import './vibeSubagentCommands.js';
 // VibeIDE: Subagent preset registry — typed presets + delegation heuristic
 import '../common/vibeSubagentRegistryService.js';
 
+// VibeIDE: Durable handoff store — persists stopped subagents' partial work for auto/manual resume
+import '../common/vibeSubagentHandoffStore.js';
+
 // VibeIDE: Roadmap Agent mode — orchestrates subagents from roadmap/plan source
 import './vibeRoadmapAgentContribution.js';
 
