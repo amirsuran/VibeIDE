@@ -359,7 +359,16 @@ export const SELF_CLOSING_PARTIAL_RE = (() => {
  * @param text — accumulated buffer from a streaming response.
  * @returns text with all vendor formats rewritten to canonical block form.
  */
-export const normalizeAlternativeToolSyntax = (text: string): string => {
+export const normalizeAlternativeToolSyntax = (text: string, attribution?: NormalizeAttribution): string => {
+	// Attribution wrapper: pins per-(provider×model) counter attribution for the
+	// duration of one SYNCHRONOUS pass (single-threaded, no awaits inside — race-free).
+	// Keeps the ten `bumpCounter` call sites signature-free.
+	currentAttribution = attribution;
+	try { return normalizeAlternativeToolSyntaxImpl(text); }
+	finally { currentAttribution = undefined; }
+};
+
+const normalizeAlternativeToolSyntaxImpl = (text: string): string => {
 	// Defensive guard: TS types say `string` but runtime may pass undefined
 	// (e.g. an upstream optional-chained field that resolved nullish). Pre-fix
 	// `text.includes(...)` would throw TypeError. Cheap.
@@ -499,7 +508,12 @@ export const normalizeAlternativeToolSyntax = (text: string): string => {
 // Lives in common because the producer (transforms above) is common-layer
 // pure code; the consumer can be wired from any process.
 export type NormalizeCounterKey = 'fullPath' | 'dsml' | 'wrapper' | 'invoke' | 'pairedAttr' | 'selfClosing' | 'jsonArray' | 'safetyNetPaired' | 'safetyNetSelfClosing' | 'safetyNetVendor';
-const normalizeCounters: Record<NormalizeCounterKey, number> = {
+
+/** Per-(provider×model) counter attribution — pinned by the exported wrappers for one synchronous pass. */
+export type NormalizeAttribution = { providerName: string; modelName: string };
+let currentAttribution: NormalizeAttribution | undefined;
+
+const zeroCounters = (): Record<NormalizeCounterKey, number> => ({
 	fullPath: 0,
 	dsml: 0,
 	wrapper: 0,
@@ -510,13 +524,31 @@ const normalizeCounters: Record<NormalizeCounterKey, number> = {
 	safetyNetPaired: 0,
 	safetyNetSelfClosing: 0,
 	safetyNetVendor: 0,
-};
+});
+const normalizeCounters: Record<NormalizeCounterKey, number> = zeroCounters();
+/** Keyed by `${providerName}:${modelName}`; populated only for calls that carried attribution. */
+const normalizeCountersByModel = new Map<string, Record<NormalizeCounterKey, number>>();
 function bumpCounter(key: NormalizeCounterKey): void {
 	normalizeCounters[key] += 1;
+	if (currentAttribution) {
+		const mapKey = `${currentAttribution.providerName}:${currentAttribution.modelName}`;
+		let rec = normalizeCountersByModel.get(mapKey);
+		if (!rec) {
+			rec = zeroCounters();
+			normalizeCountersByModel.set(mapKey, rec);
+		}
+		rec[key] += 1;
+	}
 }
 export const getNormalizeCounters = (): Readonly<Record<NormalizeCounterKey, number>> => ({ ...normalizeCounters });
+export const getNormalizeCountersByModel = (): Readonly<Record<string, Readonly<Record<NormalizeCounterKey, number>>>> => {
+	const out: Record<string, Record<NormalizeCounterKey, number>> = {};
+	for (const [key, rec] of normalizeCountersByModel) { out[key] = { ...rec }; }
+	return out;
+};
 export const resetNormalizeCounters = (): void => {
 	for (const k of Object.keys(normalizeCounters) as NormalizeCounterKey[]) { normalizeCounters[k] = 0; }
+	normalizeCountersByModel.clear();
 };
 
 /**
@@ -605,7 +637,14 @@ const VENDOR_LEAK_FRAGMENT_RE = new RegExp(`<\\/?(?:${vendorLeakAlternation})\\b
  * Restricted to canonical builtin names — aliases like `<read>` (a common
  * English word) are NOT stripped to avoid mangling regular prose.
  */
-export const stripUnclaimedToolTags = (text: string): string => {
+export const stripUnclaimedToolTags = (text: string, attribution?: NormalizeAttribution): string => {
+	// Attribution wrapper — see `normalizeAlternativeToolSyntax`.
+	currentAttribution = attribution;
+	try { return stripUnclaimedToolTagsImpl(text); }
+	finally { currentAttribution = undefined; }
+};
+
+const stripUnclaimedToolTagsImpl = (text: string): string => {
 	if (!text || text.indexOf('<') === -1) { return text; }
 	let out = text;
 	let placeholder: string | null = null;

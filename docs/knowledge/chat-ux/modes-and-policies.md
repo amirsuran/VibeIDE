@@ -73,3 +73,17 @@ Normal/Plan/Agent, autopilot vs auto-approve, pre-flight, Trust Score, T&C Suite
 **Суть:** confidence score — эвристический бейдж (ключевые слова: auth, password, delete → 🔴). LLM-as-judge — отдельный advisory бейдж. Judge НЕ может повысить confidence score до 🟢. 🔴 confidence блокирует Auto режим независимо от judge. В UI два отдельных независимых индикатора.
 
 **Применение:** при реализации diff review UI в Фазе 2.
+
+---
+
+## [правило] Дрифт инструментов персистентного плана: классы + автопилот + чип резюма (2026-07-06)
+
+**Контекст:** план-гард сравнивал вызванный тул со `step.tools` по имени (exact/substring) и паузил план на КАЖДОМ шаге, где планировщик написал синоним (`edit_file` в плане против `rewrite_file` в исполнении, `run_terminal_command` против `run_command`) — даже под автопилотом; пользователь листал вверх к карточке и жал «Возобновить» на каждом шаге (репорт с дог-фудинга 2026-07-06).
+
+**Суть (три слоя фикса):**
+- **Классовая эквивалентность** — pure `common/planToolDrift.ts` (+тесты): класс тула из `approvalTypeOfBuiltinToolName` (edits/terminal; read — всё остальное builtin), для свободных имён планировщика — эвристика по подстрокам (порядок важен: terminal-глаголы раньше edits). Классовый матч — ТОЛЬКО для builtin-тулов; MCP по-прежнему только по явному имени (их side effects внешние).
+- **Режимы паузы** — `vibeide.plans.toolDriftPause`: `always` / `manual-only` (дефолт: под автопилотом продолжать с инфо-уведомлением и записью в activity-log) / `never`. Гейт в `_pauseRunningPlanStepForToolDrift` (покрывает оба call-site гарда).
+- **Чип у инпута** — `CommandBarInChat` (SidebarChat.tsx): при paused-шаге в текущем треде — «⏸ План на паузе — возобновить» (`resumeAgentExecution`, без скролла) + «↑» к карточке (`virtuoso.scrollToIndex` по индексу PlanMessage; индексы chatItems выровнены с messages — сообщения пушатся первыми по одному).
+- **Профилактика у источника:** промпт генерации плана (`planPrompt` в chatThreadService) теперь перечисляет канонические имена тулов и явно запрещает выдуманные (`write_file`, `run_terminal_command`) — та же болезнь имён, что была в whitelist'ах ролей (см. plans-and-agents.md, Phase 3b).
+
+**Применение:** любые новые сравнения «планируемый тул ↔ фактический» вести через `toolMatchesPlanHints`/`resolveToolClass`, а не по именам; при добавлении тулов сверять имена с `builtinToolDefs`.

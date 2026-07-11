@@ -44,12 +44,31 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 			default: 100000,
 			minimum: 1024,
 			maximum: 1000000,
-			description: localize('vibeide.subagent.maxTokens', 'Максимальный размер контекстного окна изолированного субагента (worker/process), в токенах. Используется как верхний потолок при расчёте квоты «половина от родителя». По умолчанию 100 000.'),
+			description: localize('vibeide.subagent.maxTokens', 'Токен-бюджет одного субагента: и размер контекстного окна изоляции (worker/process), и потолок суммарного расхода токенов, после которого субагент останавливается. Бюджет независим от остатка бюджета сессии. По умолчанию 100 000.'),
 		},
 		'vibeide.subagent.forceInline': {
 			type: 'boolean',
 			default: false,
 			description: localize('vibeide.subagent.forceInline', 'Принудительно запускать субагентов в inline-режиме без изоляции (worker/process). Полезно для отладки; ломает гарантию «explore-subagent не сжигает родительский контекст». По умолчанию выключено.'),
+		},
+		'vibeide.subagent.maxResumes': {
+			type: 'number',
+			default: 2,
+			minimum: 0,
+			maximum: 10,
+			description: localize('vibeide.subagent.maxResumes', 'Сколько раз субагента, остановленного по лимиту (токены/шаги/время), автоматически продолжать с сохранённым прогрессом, прежде чем оставить решение человеку. 0 — не продолжать автоматически. По умолчанию 2.'),
+		},
+		'vibeide.subagent.resumeBudgetFactor': {
+			type: 'number',
+			default: 1.5,
+			minimum: 1,
+			maximum: 3,
+			description: localize('vibeide.subagent.resumeBudgetFactor', 'Во сколько раз увеличивать токен-бюджет субагента на каждое авто-продолжение после остановки по лимиту (эскалация; общий потолок — 4× базового бюджета). 1 — продолжать с тем же бюджетом. По умолчанию 1.5.'),
+		},
+		'vibeide.subagent.chatNotices': {
+			type: 'boolean',
+			default: true,
+			description: localize('vibeide.subagent.chatNotices', 'Показывать в чате компактные уведомления о старте и завершении субагентов команды ролей (Vibe Agents). Внутренние субагенты (поиск/шаги плана) не показываются. По умолчанию включено.'),
 		},
 	},
 });

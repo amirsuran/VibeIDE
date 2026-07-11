@@ -77,6 +77,9 @@ import { IVibeDynamicProvidersService } from '../../../vibeDynamicProvidersServi
 import { IVibeNotifySoundService } from '../../../vibeNotifySoundService.js';
 import { IVibeNotifySoundsModalService } from '../../../../common/vibeNotifySoundsModalService.js';
 import { IEditorService } from '../../../../../../../workbench/services/editor/common/editorService.js';
+import { IVibeSubagentService, SubagentType } from '../../../../common/vibeSubagentService.js';
+import { IVibeSubagentRegistryService } from '../../../../common/vibeSubagentRegistryService.js';
+import { IVibeSubagentHandoffStore } from '../../../../common/vibeSubagentHandoffStore.js';
 
 
 // normally to do this you'd use a useEffect that calls .onDidChangeState(), but useEffect mounts too late and misses initial state changes
@@ -107,6 +110,19 @@ const activeURIListeners: Set<(uri: URI | null) => void> = new Set();
 
 const mcpListeners: Set<() => void> = new Set();
 
+// Live subagent activity (VA.6): the running/pending roles per parent thread, surfaced as a
+// transient spinner in the chat. Non-persistent by design — inserting a real message mid-turn
+// would break the `messages[messages.length-1]` streaming invariant, so this never touches
+// thread.messages. Module-level service refs let `useSubagentActivity` query on each event.
+let subagentSvc: IVibeSubagentService | undefined;
+let subagentRegistry: IVibeSubagentRegistryService | undefined;
+const subagentActivityListeners: Set<(parentThreadId: string) => void> = new Set();
+
+// Durable-handoff tickets (stopped roles awaiting manual resume) — drives the in-chat «Продолжить роль»
+// affordance. Reactive off the store's onDidChange.
+let subagentHandoffStore: IVibeSubagentHandoffStore | undefined;
+const subagentHandoffListeners: Set<() => void> = new Set();
+
 
 // must call this before you can use any of the hooks below
 // this is called ONCE PER BUNDLE — each tsup entry (sidebar-tsx, modal-tsx,
@@ -135,9 +151,12 @@ export const _registerServices = (accessor: ServicesAccessor) => {
 		vibeideCommandBarService: accessor.get(IVibeideCommandBarService),
 		modelService: accessor.get(IModelService),
 		mcpService: accessor.get(IMCPService),
+		subagentService: accessor.get(IVibeSubagentService),
+		subagentRegistryService: accessor.get(IVibeSubagentRegistryService),
+		subagentHandoffStoreService: accessor.get(IVibeSubagentHandoffStore),
 	};
 
-	const { settingsStateService, chatThreadsStateService, refreshModelService, themeService, editCodeService, vibeideCommandBarService, modelService, mcpService } = stateServices;
+	const { settingsStateService, chatThreadsStateService, refreshModelService, themeService, editCodeService, vibeideCommandBarService, modelService, mcpService, subagentService, subagentRegistryService, subagentHandoffStoreService } = stateServices;
 
 
 
@@ -212,6 +231,21 @@ export const _registerServices = (accessor: ServicesAccessor) => {
 	disposables.push(
 		mcpService.onDidChangeState(() => {
 			mcpListeners.forEach(l => l());
+		})
+	);
+
+	subagentSvc = subagentService;
+	subagentRegistry = subagentRegistryService;
+	disposables.push(
+		subagentService.onSubagentStatusChanged(e => {
+			subagentActivityListeners.forEach(l => l(e.parentThreadId));
+		})
+	);
+
+	subagentHandoffStore = subagentHandoffStoreService;
+	disposables.push(
+		subagentHandoffStoreService.onDidChange(() => {
+			subagentHandoffListeners.forEach(l => l());
 		})
 	);
 
@@ -396,6 +430,49 @@ export const useFullChatThreadsStreamState = () => {
 };
 
 
+
+// Internal roadmap-agent subagents run mid-stream during a normal turn and would clutter the
+// thread — mirror the chat-notice contribution and never surface them as live activity.
+const SUBAGENT_INTERNAL_TYPES = new Set<SubagentType>(['explore', 'implement-step', 'recover-or-skip']);
+const EMPTY_SUBAGENT_ACTIVITY: SubagentActivityItem[] = [];
+
+export type SubagentActivityItem = { id: string; displayName: string; liveTokensUsed?: number; tokenQuota?: number; liveStepsDone?: number; maxSteps?: number; deadlineAtMs?: number };
+
+/** Running/pending curated roles for a parent thread — drives the live "role thinking" spinner. */
+export const useSubagentActivity = (threadId: string): SubagentActivityItem[] => {
+	const compute = (): SubagentActivityItem[] => {
+		if (!subagentSvc || !subagentRegistry || !threadId) { return EMPTY_SUBAGENT_ACTIVITY; }
+		const active = subagentSvc.getByParentThread(threadId)
+			.filter(e => (e.status === 'running' || e.status === 'pending') && !SUBAGENT_INTERNAL_TYPES.has(e.type))
+			.map(e => ({ id: e.id, displayName: subagentRegistry!.getPreset(e.type).displayName, liveTokensUsed: e.liveTokensUsed, tokenQuota: e.tokenQuota, liveStepsDone: e.liveStepsDone, maxSteps: e.maxSteps, deadlineAtMs: e.deadlineAtMs }));
+		return active.length === 0 ? EMPTY_SUBAGENT_ACTIVITY : active;
+	};
+	const [s, ss] = useState<SubagentActivityItem[]>(compute);
+	useEffect(() => {
+		ss(compute());
+		const listener = (parentThreadId: string) => {
+			if (parentThreadId !== threadId) { return; }
+			ss(compute());
+		};
+		subagentActivityListeners.add(listener);
+		return () => { subagentActivityListeners.delete(listener); };
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [threadId]);
+	return s;
+};
+
+/** Count of stopped roles awaiting manual resume (durable handoff) — drives the «Продолжить роль» button. */
+export const useSubagentHandoffCount = (): number => {
+	const read = () => subagentHandoffStore ? subagentHandoffStore.listOpen().length : 0;
+	const [n, setN] = useState<number>(read);
+	useEffect(() => {
+		setN(read());
+		const listener = () => setN(read());
+		subagentHandoffListeners.add(listener);
+		return () => { subagentHandoffListeners.delete(listener); };
+	}, []);
+	return n;
+};
 
 export const useRefreshModelState = () => {
 	const [s, ss] = useState(refreshModelState);

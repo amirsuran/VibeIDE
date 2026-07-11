@@ -20,13 +20,18 @@
  */
 
 import { Disposable } from '../../../../base/common/lifecycle.js';
+import { CancellationTokenSource } from '../../../../base/common/cancellation.js';
 import { Emitter, Event } from '../../../../base/common/event.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { registerSingleton, InstantiationType } from '../../../../platform/instantiation/common/extensions.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
-import { IVibeTokenBudgetService } from './vibeTokenBudgetService.js';
+import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+import { DEFAULT_SUBAGENT_TOKEN_QUOTA } from './subagentIsolationPolicy.js';
+import type { SubagentStopReason } from './subagentLoopPolicy.js';
+import type { ProviderName } from './vibeideSettingsTypes.js';
 import { IAuditLogService } from './auditLogService.js';
 import { IVibeConstraintsService } from './vibeConstraintsService.js';
+import { IVibeSubagentRunner } from './vibeSubagentRunner.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -35,7 +40,7 @@ export type SubagentType =
 	| 'explore' | 'implement-step' | 'recover-or-skip'
 	// Vibe Agents — curated role pack (VA). Read-only roles get a read-only tool whitelist.
 	| 'orchestrator' | 'planner' | 'designer' | 'frontend-dev' | 'backend-dev' | 'code-reviewer' | 'qa' | 'security';
-export type SubagentStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped' | 'disposed';
+export type SubagentStatus = 'pending' | 'running' | 'completed' | 'failed' | 'stopped' | 'skipped' | 'disposed';
 
 /** What the parent sends to spawn a subagent */
 export interface SubagentHandoff {
@@ -68,7 +73,7 @@ export interface SubagentHandoff {
 /** Compact result returned to the parent — bounded by MAX_RESULT_CHARS */
 export interface SubagentResult {
 	subagentId: string;
-	status: 'success' | 'failed' | 'skipped';
+	status: 'success' | 'failed' | 'stopped' | 'skipped';
 	/** Brief summary (≤500 chars) */
 	summary: string;
 	/** Changed file paths (if any) */
@@ -79,6 +84,14 @@ export interface SubagentResult {
 	suggestedNext?: string;
 	/** Token usage by this subagent */
 	tokensUsed: number;
+	/** Machine-readable stop cause when a limit ended the run — drives the resume policy. */
+	stopCode?: SubagentStopReason;
+	/** Provider-reported prompt/completion token sums (raw) — for cost display. */
+	promptTokensUsed?: number;
+	completionTokensUsed?: number;
+	/** Model that actually ran the role. */
+	providerName?: ProviderName;
+	modelName?: string;
 	/** Whether the result was truncated due to step/wall-clock limit */
 	truncated?: boolean;
 	/** Structured explore report (only for type='explore') */
@@ -111,6 +124,16 @@ export interface SubagentEntry {
 	startedAt: number;
 	handoff: SubagentHandoff;
 	result?: SubagentResult;
+	/** Live estimated tokens spent so far (updated per hop while `running`) — drives the chat spinner readout. */
+	liveTokensUsed?: number;
+	/** Resolved token quota for this run (`vibeide.subagent.maxTokens` or per-handoff) — the denominator in the readout. */
+	tokenQuota?: number;
+	/** Live completed steps (updated per hop while `running`) — the usual binding limit for weak models. */
+	liveStepsDone?: number;
+	/** Resolved step limit for this run — the denominator in the readout. */
+	maxSteps?: number;
+	/** Current absolute wall-clock deadline (unix ms; 0 = none) — drives the countdown in the readout. */
+	deadlineAtMs?: number;
 }
 
 export const IVibeSubagentService = createDecorator<IVibeSubagentService>('vibeSubagentService');
@@ -158,24 +181,30 @@ export interface IVibeSubagentService {
 /** Maximum characters in any SubagentResult field — enforces compact handoff contract */
 const MAX_RESULT_SUMMARY_CHARS = 500;
 const DEFAULT_MAX_STEPS = 20;
-const DEFAULT_MAX_TOKENS = 20_000;
 
 // ── Tool whitelists per type ──────────────────────────────────────────────────
 
+// Tool names MUST be real builtin tool ids (`builtinToolDefs` keys) — the Phase 3b runner
+// enforces this whitelist at every call, so a phantom name here silently bricks the role.
+// (Pre-3b these tables carried nonexistent names — list_dir/write_file/semantic_search/
+// run_terminal_command — which the MVP stub never exercised.)
+const READONLY_TOOLS: string[] = ['read_file', 'ls_dir', 'grep', 'glob', 'search_for_files', 'search_pathnames_only'];
+const FULL_TOOLS: string[] = [...READONLY_TOOLS, 'edit_file', 'rewrite_file', 'create_file_or_folder', 'run_command'];
+
 const TOOL_WHITELIST: Record<SubagentType, string[]> = {
-	'explore': ['read_file', 'list_dir', 'grep', 'glob', 'semantic_search'],
-	'implement-step': ['read_file', 'write_file', 'edit_file', 'run_terminal_command', 'list_dir', 'grep'],
-	'recover-or-skip': ['read_file', 'run_terminal_command', 'grep'],
+	'explore': READONLY_TOOLS,
+	'implement-step': FULL_TOOLS,
+	'recover-or-skip': ['read_file', 'run_command', 'grep'],
 	// Vibe Agents (VA) — must mirror allowedTools in vibeSubagentRegistryService presets.
 	// Read-only roles (orchestrator/planner/code-reviewer/security) cannot write or run.
-	'orchestrator': ['read_file', 'list_dir', 'grep', 'glob', 'semantic_search'],
-	'planner': ['read_file', 'list_dir', 'grep', 'glob', 'semantic_search'],
-	'code-reviewer': ['read_file', 'list_dir', 'grep', 'glob', 'semantic_search'],
-	'security': ['read_file', 'list_dir', 'grep', 'glob', 'semantic_search'],
-	'designer': ['read_file', 'write_file', 'edit_file', 'run_terminal_command', 'list_dir', 'grep', 'glob'],
-	'frontend-dev': ['read_file', 'write_file', 'edit_file', 'run_terminal_command', 'list_dir', 'grep', 'glob'],
-	'backend-dev': ['read_file', 'write_file', 'edit_file', 'run_terminal_command', 'list_dir', 'grep', 'glob'],
-	'qa': ['read_file', 'write_file', 'edit_file', 'run_terminal_command', 'list_dir', 'grep', 'glob'],
+	'orchestrator': READONLY_TOOLS,
+	'planner': READONLY_TOOLS,
+	'code-reviewer': READONLY_TOOLS,
+	'security': READONLY_TOOLS,
+	'designer': FULL_TOOLS,
+	'frontend-dev': FULL_TOOLS,
+	'backend-dev': FULL_TOOLS,
+	'qa': FULL_TOOLS,
 };
 
 // ── Implementation ────────────────────────────────────────────────────────────
@@ -185,15 +214,18 @@ class VibeSubagentService extends Disposable implements IVibeSubagentService {
 
 	private readonly _registry = new Map<string, SubagentEntry>();
 	private readonly _waiters = new Map<string, { resolve: (r: SubagentResult) => void; reject: (e: Error) => void }>();
+	/** Cancellation per live subagent (audit A) — disposeSubagent cancels the runner's loop. */
+	private readonly _ctsById = new Map<string, CancellationTokenSource>();
 
 	private readonly _onStatusChanged = this._register(new Emitter<SubagentEntry>());
 	readonly onSubagentStatusChanged: Event<SubagentEntry> = this._onStatusChanged.event;
 
 	constructor(
 		@ILogService private readonly _log: ILogService,
-		@IVibeTokenBudgetService private readonly _budget: IVibeTokenBudgetService,
+		@IConfigurationService private readonly _configuration: IConfigurationService,
 		@IAuditLogService private readonly _audit: IAuditLogService,
 		@IVibeConstraintsService private readonly _constraints: IVibeConstraintsService,
+		@IVibeSubagentRunner private readonly _runner: IVibeSubagentRunner,
 	) {
 		super();
 	}
@@ -210,6 +242,7 @@ class VibeSubagentService extends Disposable implements IVibeSubagentService {
 			handoff,
 		};
 		this._registry.set(id, entry);
+		this._ctsById.set(id, new CancellationTokenSource());
 
 		this._log.info(`[VibeSubagent] Spawning ${handoff.type} subagent ${id} for thread ${handoff.parentThreadId}`);
 		this._audit.append({ ts: Date.now(), action: 'subagent_spawned', ok: true, meta: { subagentId: id, type: handoff.type, parentThreadId: handoff.parentThreadId } });
@@ -254,6 +287,14 @@ class VibeSubagentService extends Disposable implements IVibeSubagentService {
 		entry.status = 'disposed';
 		this._registry.delete(subagentId);
 		this._waiters.delete(subagentId);
+		// Audit A: a live runner loop must die with its registry entry — cancel stops it at
+		// the hop boundary and aborts the in-flight LLM request (no more token burn).
+		const cts = this._ctsById.get(subagentId);
+		if (cts) {
+			cts.cancel();
+			cts.dispose();
+			this._ctsById.delete(subagentId);
+		}
 		this._log.info(`[VibeSubagent] Disposed ${subagentId}`);
 	}
 
@@ -282,81 +323,87 @@ class VibeSubagentService extends Disposable implements IVibeSubagentService {
 		this._onStatusChanged.fire(entry);
 
 		const handoff = entry.handoff;
-		const budgetStatus = this._budget.getStatus();
-		const maxTokens = handoff.maxTokens ?? Math.min(DEFAULT_MAX_TOKENS, budgetStatus.sessionTokensLimit - budgetStatus.sessionTokensUsed);
+		// The subagent's token quota is its OWN budget (config `vibeide.subagent.maxTokens`), NOT the
+		// session remainder. Coupling to the remainder starved a role (and, on autopilot, every role)
+		// the moment the parent had spent most of the session — the ~20k first-hop abort. The global
+		// session guard (sendLLMMessageService) stays the backstop against overspend.
+		const configuredQuota = this._configuration.getValue<number>('vibeide.subagent.maxTokens');
+		const maxTokens = handoff.maxTokens ?? (typeof configuredQuota === 'number' && configuredQuota > 0 ? configuredQuota : DEFAULT_SUBAGENT_TOKEN_QUOTA);
 		const maxSteps = handoff.maxSteps ?? DEFAULT_MAX_STEPS;
 		const allowedTools = TOOL_WHITELIST[entry.type];
 
+		// Live readout (chat spinner): expose the quotas now and stream per-hop spend below.
+		entry.tokenQuota = Math.max(0, maxTokens);
+		entry.liveTokensUsed = 0;
+		entry.maxSteps = maxSteps;
+		entry.liveStepsDone = 0;
+
 		// Constraints / permissions are ALWAYS inherited from parent — never weakened.
-		// The subagent's tool-loop will call _constraints.checkWriteAllowed() before any write,
-		// exactly as the parent agent does. No additional constraint downgrade is possible.
-		// This check is a pre-flight: ensure the constraints service is reachable.
+		// The runner executes tools through the same IToolsService as the parent agent, so
+		// every constraints check (checkWriteAllowed etc.) applies identically; on top of
+		// that the runner enforces the role's tool whitelist at each call.
 		const constraintsOk = !!this._constraints;
 
-		// Worktree binding: implement-step subagents can run in an isolated git worktree
-		// Phase 3b: create worktree via IVibeGitWorktreeService before spawning tool-loop
+		// Worktree binding: implement-step subagents can run in an isolated git worktree.
+		// Still a later phase: create worktree via IVibeGitWorktreeService before the loop.
 		const worktreeInfo = (entry.type === 'implement-step' && handoff.useWorktree)
-			? `worktree=${handoff.worktreeBranch ?? 'auto'}`
+			? `worktree=${handoff.worktreeBranch ?? 'auto'} (not yet created — later phase)`
 			: 'no-worktree';
 
 		this._log.info(`[VibeSubagent] ${entry.id} — type=${entry.type} maxTokens=${maxTokens} maxSteps=${maxSteps} tools=${allowedTools.join(',')} constraintsInherited=${constraintsOk} ${worktreeInfo}`);
 
-		// Wall-clock timeout enforcement
-		const maxWallClockMs = handoff.maxWallClockMs ?? 0;
-		let timedOut = false;
-		let wallClockTimer: ReturnType<typeof setTimeout> | undefined;
-		if (maxWallClockMs > 0) {
-			wallClockTimer = setTimeout(() => {
-				timedOut = true;
-				this._log.warn(`[VibeSubagent] ${entry.id} wall-clock limit hit (${maxWallClockMs}ms) — truncating result`);
-			}, maxWallClockMs);
-		}
-
-		// Phase 3b: wire into real agent runner with isolated context window.
-		// MVP: simulate a compact placeholder result so the service contract is exercisable.
-		// The real implementation delegates to a headless tool-loop runner
-		// (same executor as chatThreadService, but in an isolated context)
-		// and returns a SubagentResult bound by MAX_RESULT_SUMMARY_CHARS.
-		//
-		// Wall-clock and step limits are checked in the tool-loop at each iteration.
-
-		// Simulate minimal async work (Phase 3b: real tool-loop execution)
-		await new Promise(r => setTimeout(r, 50));
-
-		if (wallClockTimer) { clearTimeout(wallClockTimer); }
-
-		const isExplore = entry.type === 'explore';
-		const exploreReport: ExploreSubagentReport | undefined = isExplore ? {
-			paths: handoff.contextItems ?? [],
-			citations: [],
-			confidence: timedOut ? 0.3 : 0.5,
-			truncated: timedOut,
-			truncationSuggestion: timedOut ? 'retry' : undefined,
-		} : undefined;
+		// Phase 3b: the real headless tool-loop. Step / wall-clock / token limits are
+		// enforced inside the runner at every iteration; the outcome is already compact.
+		const outcome = await this._runner.run({
+			subagentId: entry.id,
+			type: entry.type,
+			goal: handoff.goal,
+			acceptanceCriteria: handoff.acceptanceCriteria,
+			contextItems: handoff.contextItems,
+			allowedTools,
+			maxSteps,
+			maxTokensEst: Math.max(0, maxTokens),
+			maxWallClockMs: handoff.maxWallClockMs ?? 0,
+			cancellationToken: this._ctsById.get(entry.id)?.token,
+			onProgress: (tokensUsedEst, stepsDone, deadlineAtMs) => {
+				// Per-hop live spend → chat spinner. Only while still running; terminal state
+				// carries the final tokens in `result`.
+				if (entry.status === 'running') {
+					entry.liveTokensUsed = tokensUsedEst;
+					entry.liveStepsDone = stepsDone;
+					entry.deadlineAtMs = deadlineAtMs;
+					this._onStatusChanged.fire(entry);
+				}
+			},
+		});
 
 		const result: SubagentResult = {
 			subagentId: entry.id,
-			status: 'success',
-			summary: this._truncate(
-				timedOut
-					? `[Truncated — wall-clock limit] Subagent ${entry.type} for: ${handoff.goal}. Use exploreReport for partial findings.`
-					: `[MVP stub] Subagent ${entry.type} for: ${handoff.goal}. ` +
-					`Allowed tools: ${allowedTools.join(', ')}. ` +
-					`Full isolated execution available in Phase 3b.`,
-				MAX_RESULT_SUMMARY_CHARS,
-			),
-			artifacts: [],
-			tokensUsed: 0,
-			truncated: timedOut,
-			exploreReport,
+			status: outcome.status,
+			summary: this._truncate(outcome.summary, MAX_RESULT_SUMMARY_CHARS),
+			artifacts: outcome.artifacts,
+			tokensUsed: outcome.tokensUsedEst,
+			truncated: outcome.truncated || undefined,
+			...(outcome.status !== 'success' ? { reason: outcome.stopReason } : {}),
+			...(outcome.stopCode ? { stopCode: outcome.stopCode } : {}),
+			...(outcome.promptTokensUsed ? { promptTokensUsed: outcome.promptTokensUsed } : {}),
+			...(outcome.completionTokensUsed ? { completionTokensUsed: outcome.completionTokensUsed } : {}),
+			...(outcome.providerName ? { providerName: outcome.providerName, modelName: outcome.modelName } : {}),
+			...(outcome.exploreReport ? { exploreReport: outcome.exploreReport } : {}),
 		};
 
 		this._completeWithResult(entry, result);
 	}
 
 	private _completeWithResult(entry: SubagentEntry, result: SubagentResult): void {
+		// The loop is over — release the cancellation source (dispose-after-complete is a no-op path).
+		const cts = this._ctsById.get(entry.id);
+		if (cts) {
+			cts.dispose();
+			this._ctsById.delete(entry.id);
+		}
 		entry.result = result;
-		entry.status = result.status === 'success' ? 'completed' : (result.status === 'skipped' ? 'skipped' : 'failed');
+		entry.status = result.status === 'success' ? 'completed' : (result.status === 'skipped' ? 'skipped' : (result.status === 'stopped' ? 'stopped' : 'failed'));
 		this._onStatusChanged.fire(entry);
 		this._audit.append({ ts: Date.now(), action: 'subagent_completed', ok: result.status === 'success', meta: { subagentId: entry.id, status: result.status, tokensUsed: result.tokensUsed } });
 

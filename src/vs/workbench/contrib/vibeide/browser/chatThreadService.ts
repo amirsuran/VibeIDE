@@ -30,6 +30,7 @@ import { detectVisionDropResponse } from '../common/visionDropDetector.js';
 import { IVibeideSettingsService } from '../common/vibeideSettingsService.js';
 import { BuiltinToolCallParams, BuiltinToolResultType, TerminalResolveReason, ToolCallParams, ToolName, ToolResult } from '../common/toolsServiceTypes.js';
 import { approvalTypeOfBuiltinToolName } from '../common/prompt/tools/index.js';
+import { toolMatchesPlanHints } from '../common/planToolDrift.js';
 import { IToolsService } from './toolsService.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { ILanguageFeaturesService } from '../../../../editor/common/services/languageFeatures.js';
@@ -42,6 +43,7 @@ import { IVibeideModelService } from '../common/vibeideModelService.js';
 import { findLast, findLastIdx } from '../../../../base/common/arraysFind.js';
 import { IEditCodeService } from './editCodeServiceInterface.js';
 import { IVibeNotifySoundService, NotifySoundEvent } from './vibeNotifySoundService.js';
+import { IVibeQuirkAutoFeedService } from './vibeQuirkAutoFeedService.js';
 import { IVibeDesktopNotificationService } from './vibeDesktopNotificationService.js';
 import { VibeideFileSnapshot } from '../common/editCodeServiceTypes.js';
 import { INotificationHandle, INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
@@ -576,6 +578,9 @@ export interface IChatThreadService {
 	addNewStagingSelection(newSelection: StagingSelectionItem): void;
 
 	dangerousSetState: (newState: ThreadsState) => void;
+
+	/** Append a display-only assistant message (e.g. a Vibe Agents report) to a thread — no LLM call. */
+	addAssistantNotice(threadId: string, markdown: string): void;
 	resetState: () => void;
 
 	// // current thread's staging selections
@@ -909,6 +914,7 @@ class ChatThreadService extends Disposable implements IChatThreadService {
 		@IVibeExternalAccessService private readonly _externalAccessService: IVibeExternalAccessService,
 		@IVibeNotifySoundService private readonly _notifySoundService: IVibeNotifySoundService,
 		@IVibeDesktopNotificationService private readonly _desktopNotificationService: IVibeDesktopNotificationService,
+		@IVibeQuirkAutoFeedService private readonly _quirkAutoFeedService: IVibeQuirkAutoFeedService,
 	) {
 		super();
 		this.state = { allThreads: {}, currentThreadId: null as unknown as string, openTabIds: [] }; // default state
@@ -2928,42 +2934,17 @@ class ChatThreadService extends Disposable implements IChatThreadService {
 	}
 
 	private _toolMatchesPersistedPlanHints(toolName: ToolName, step: PlanStep): boolean {
-		const hints = step.tools;
-		if (!hints?.length) {
-			return true;
-		}
-		// Built-in read-only tools (KNOWN built-in AND not in
-		// approvalTypeOfBuiltinToolName — which is the data-driven authoritative
-		// source of "built-in tools with side effects") are ALWAYS allowed
-		// regardless of the step's `tools` hint.
-		//
-		// Rationale: planners reliably list write/exec tools (create_file_or_folder,
-		// run_command, edit_file) but rarely enumerate read tools (read_file,
-		// ls_dir, get_dir_tree, grep, glob) that the model legitimately uses to
-		// orient itself before performing the write. Hard-blocking on read-only
-		// drift produced false positives where the step paused on an exploration
-		// call that had zero side effects.
-		//
-		// IMPORTANT: MCP tools and any non-built-in tool DON'T get this
-		// exemption — MCP tool side effects are external by definition
-		// (creating issues, posting messages, calling third-party APIs) and
-		// must be subject to strict plan-drift. We can't infer "MCP foo is
-		// read-only" from any data source we control; the planner has to be
-		// explicit about MCP tools in the step hints.
-		const isBuiltIn = isABuiltinToolName(toolName);
-		const isBuiltInReadOnly = isBuiltIn && !Object.hasOwn(approvalTypeOfBuiltinToolName, toolName as string);
-		if (isBuiltInReadOnly) {
-			return true;
-		}
-		const tn = String(toolName).toLowerCase();
-		return hints.some(h => {
-			const raw = (h ?? '').toLowerCase().trim();
-			if (!raw.length) {
-				return false;
-			}
-			return tn === raw || tn.includes(raw) || raw.includes(tn);
-		});
+		// Exact/substring match + CLASS equivalence (edits/terminal) for builtins —
+		// planners write free-form names (edit_file vs rewrite_file, run_terminal_command
+		// vs run_command), and name-level matching alone paused the plan on every synonym.
+		// Builtin read-only tools are always allowed (orientation before the write); MCP /
+		// non-builtin tools never class-match — their side effects are external by
+		// definition, the planner must name them explicitly. Logic + tests: planToolDrift.ts.
+		return toolMatchesPlanHints(String(toolName), step.tools);
 	}
+
+	/** One drift toast per plan step (audit B) — keyed `${threadId}:${planIdx}:${stepIdx}`; session-scoped. */
+	private readonly _driftNotifiedSteps = new Set<string>();
 
 	/** Returns true if execution should stop (plan paused for drift). */
 	private _pauseRunningPlanStepForToolDrift(threadId: string, toolName: ToolName): boolean {
@@ -2972,6 +2953,30 @@ class ChatThreadService extends Disposable implements IChatThreadService {
 			return false;
 		}
 		if (this._toolMatchesPersistedPlanHints(toolName, stepState.step)) {
+			return false;
+		}
+		// Drift-pause policy (`vibeide.plans.toolDriftPause`):
+		//   'always'      — pause on every cross-class drift (pre-existing behavior);
+		//   'manual-only' — DEFAULT: under autopilot keep going (a pause on every step defeats
+		//                   the point of autopilot — the user had to scroll up and press Resume
+		//                   over and over); without autopilot pause as before;
+		//   'never'       — log-only, never pause.
+		const driftMode = this._configurationService.getValue<unknown>('vibeide.plans.toolDriftPause');
+		const autopilotOn = this._settingsService.state.globalSettings.chatAgentAutopilot === true;
+		const shouldPause = driftMode === 'always' ? true : driftMode === 'never' ? false : !autopilotOn;
+		if (!shouldPause) {
+			// Every drifting call lands in the activity log, but the toast fires ONCE per plan
+			// step (audit B) — a step whose tools all drift would otherwise spam a notification
+			// per tool call, recreating the annoyance this mode exists to remove.
+			this._agentActivityLog.logStarted(`Plan drift auto-continue: инструмент "${String(toolName)}" вне списка шага (${driftMode === 'never' ? 'режим never' : 'автопилот'})`);
+			const driftKey = `${threadId}:${stepState.planIdx}:${stepState.stepIdx}`;
+			if (!this._driftNotifiedSteps.has(driftKey)) {
+				this._driftNotifiedSteps.add(driftKey);
+				this._notificationService.notify({
+					severity: Severity.Info,
+					message: localize('vibeide.planToolDriftAutoContinue', 'Шаг плана: инструмент "{0}" вне запланированных — продолжаю без паузы ({1}). Строгий режим: настройка vibeide.plans.toolDriftPause = always.', String(toolName), driftMode === 'never' ? 'режим never' : 'автопилот'),
+				});
+			}
 			return false;
 		}
 		const { planIdx, stepIdx } = stepState;
@@ -3198,7 +3203,7 @@ Please generate a structured execution plan for this task. Output your plan in t
 
 Think through the task carefully. Break it down into logical steps. For each step:
 - Describe what needs to be done
-- List the tools that will be needed (e.g., read_file, edit_file, create_file_or_folder, run_command, search_for_files)
+- List the tools that will be needed. Use ONLY these canonical tool names in "tools" (execution is checked against them): read_file, ls_dir, get_dir_tree, search_pathnames_only, search_for_files, glob, grep, search_in_file, read_lint_errors, edit_file, rewrite_file, create_file_or_folder, delete_file_or_folder, run_command. Do NOT invent names like write_file or run_terminal_command.
 - List files that will be affected (if known or likely)
 
 Output ONLY the JSON, no other text. Start with { and end with }.`;
@@ -7362,6 +7367,10 @@ Output ONLY the JSON, no other text. Start with { and end with }.`;
 									`Модель ${resolvedModelSelection.modelName} (${resolvedModelSelection.providerName}) ${reasonHuman}. Переключили её на XML-формат тулов (медленнее, но совместимее). Откат: Settings → Models → Overrides → этот провайдер/модель → сбросить specialToolFormat.`
 								);
 								this._agentActivityLog.logFinished(`Auto-downgrade: ${modelKey} → XML (${reason})`);
+								// Feed the cross-session evidence store (roadmap O.13): a model that goes
+								// through this downgrade in session after session earns a durable-quirk
+								// suggestion instead of re-burning failing turns every time.
+								this._quirkAutoFeedService.recordAutoDowngrade(providerForOverride, resolvedModelSelection.modelName);
 								// Don't return — continue loop. Next LLM call picks up the override
 								// via getModelCapabilities and routes through XML-fallback path.
 							} catch (e) {
@@ -9045,6 +9054,10 @@ We only need to do it for files that were edited since `from`, ie files between 
 		// Deferred: we are inside the _setStreamState funnel; let the current state update settle before
 		// starting a new turn (which re-enters _setStreamState).
 		queueMicrotask(() => { void this._addUserMessageAndStreamResponse({ userMessage: content, threadId, displayContent: content, images, pdfs }); });
+	}
+
+	addAssistantNotice(threadId: string, markdown: string): void {
+		this._addMessageToThread(threadId, { role: 'assistant', displayContent: markdown, reasoning: '', anthropicReasoning: null });
 	}
 
 	private _addMessageToThread(threadId: string, message: ChatMessage) {

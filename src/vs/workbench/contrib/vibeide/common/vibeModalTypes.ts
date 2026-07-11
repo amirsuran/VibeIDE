@@ -53,6 +53,19 @@ export interface VibeModalInputSpec {
 }
 
 /**
+ * Extra numeric field rendered BELOW the main input (grid). Values are collected into
+ * `VibeModalResult.fieldValues` keyed by `id`. Used for compact «override these limits» forms
+ * (e.g. the role-route launcher: steps / tokens / time / auto-resumes) without a bespoke modal.
+ */
+export interface VibeModalNumberField {
+	readonly id: string;
+	readonly label: string;
+	readonly default: number;
+	readonly min?: number;
+	readonly max?: number;
+}
+
+/**
  * Modal size variant — drives max-width via CSS class (`size-{small,medium,large}`).
  * Default `medium` (560px). Use `small` for confirmations, `large` for diff/preview.
  */
@@ -73,7 +86,18 @@ export interface VibeModalOptions<TButtonId extends string = string> {
 	 */
 	readonly bodyMarkdown?: boolean;
 	readonly buttons: ReadonlyArray<VibeModalButton<TButtonId>>;
+	/** Optional left-aligned footer button (e.g. «Роли») — resolves the modal with its id like any button. */
+	readonly footerLeftButton?: VibeModalButton<TButtonId>;
 	readonly input?: VibeModalInputSpec;
+	/** Optional numeric fields rendered below `input` — collected into `VibeModalResult.fieldValues`. */
+	readonly numberFields?: ReadonlyArray<VibeModalNumberField>;
+	/**
+	 * Optional live component rendered in the body area, addressed by KEY (not a React element).
+	 * The modal lives in its own React root/bundle, so a JSX element created by a caller bundle can't
+	 * be rendered here («mismatching React versions»). VibeModalSimple maps the key → a component it
+	 * imports itself. Extend the union + the switch in VibeModalSimple to add a new content component.
+	 */
+	readonly contentKey?: 'agentRoleModels';
 	/**
 	 * Optional «remember my choice» checkbox rendered above the buttons. Its live state is reflected
 	 * back into `VibeModalResult.checked` on EVERY close path (button click, ESC, backdrop) — the
@@ -211,6 +235,8 @@ export interface VibeModalResult<TButtonId extends string = string> {
 	readonly inputValue?: string;
 	/** Live checkbox state at close time, when `options.checkbox` was set; undefined otherwise. */
 	readonly checked?: boolean;
+	/** Values of `options.numberFields` at close time, keyed by field id; undefined if none. */
+	readonly fieldValues?: Record<string, number>;
 }
 
 /** Sentinel used in `buttonId` when the modal was dismissed (ESC/backdrop). */

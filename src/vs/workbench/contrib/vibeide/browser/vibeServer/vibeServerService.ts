@@ -356,7 +356,22 @@ class VibeServerService extends Disposable implements IVibeServerService {
 
 	private _ensureBrowser(): VibeBrowserManager {
 		if (!this._browser.value) {
-			const manager = this._instantiationService.createInstance(VibeBrowserManager);
+			// Cookie compat (VS.6): while a preview tab shows a loopback URL, main rewrites its
+			// Set-Cookie to `SameSite=None; Secure` so dev-site logins survive the cross-site
+			// iframe. The config gate lives HERE (register is simply skipped when disabled) —
+			// zero config plumbing in the main process. Unregister is unconditional: the
+			// refcounted registry ignores unknown origins, and this way a mid-session config
+			// flip can never leak a stale registration.
+			const manager = this._instantiationService.createInstance(VibeBrowserManager, {
+				register: (url: string) => {
+					if (this._configurationService.getValue<boolean>(VibeServerConfigKeys.cookieCompat) !== false) {
+						void this._main.registerPreviewOrigin(url);
+					}
+				},
+				unregister: (url: string) => {
+					void this._main.unregisterPreviewOrigin(url);
+				},
+			});
 			manager.setScrollSync(this._configurationService.getValue<boolean>(VibeServerConfigKeys.scrollSync) === true);
 			// Surface new preview problems on the status bar via the status-change event.
 			manager.onDidChangeProblems(() => this._onDidChangeStatus.fire());

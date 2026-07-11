@@ -6,6 +6,7 @@
 // disable foreign import complaints
 /* eslint-disable */
 import { vibeLog } from '../../common/vibeLog.js';
+import { traceSendEvent } from '../../common/llmSendTrace.js';
 import { lenientJsonParseObject } from '../../common/lenientJson.js';
 import Anthropic, { ClientOptions as AnthropicClientOptions } from '@anthropic-ai/sdk';
 import { Ollama } from 'ollama';
@@ -90,6 +91,7 @@ const getOpenAICompatibleClient = async ({ settingsOfProvider, providerName, inc
 		const cacheKey = buildOpenAICacheKey(providerName, settingsOfProvider);
 		const cached = openAIClientCache.get(cacheKey);
 		if (cached) {
+			traceSendEvent({ kind: 'client-cache-hit', providerName, detail: 'openai-compatible (local)' });
 			return cached;
 		}
 	}
@@ -97,6 +99,7 @@ const getOpenAICompatibleClient = async ({ settingsOfProvider, providerName, inc
 	// Create new client (will cache if local). runtimeOptions only affects timeout — local
 	// clients are cached, so cache hits use the timeout from the FIRST call's runtimeOptions.
 	// Acceptable: tunable timeouts mostly matter for cloud/aggregator (we don't cache those).
+	traceSendEvent({ kind: 'client-cache-miss', providerName, detail: isLocalProvider ? 'local: создан и закэширован' : 'cloud: клиент на запрос (не кэшируется)' });
 	const client = await newOpenAICompatibleSDK({ settingsOfProvider, providerName, includeInPayload, runtimeOptions });
 
 	// Cache if local provider
@@ -116,9 +119,11 @@ const getOllamaClient = ({ endpoint }: { endpoint: string }): Ollama => {
 
 	const cached = ollamaClientCache.get(endpoint);
 	if (cached) {
+		traceSendEvent({ kind: 'client-cache-hit', providerName: 'ollama' });
 		return cached;
 	}
 
+	traceSendEvent({ kind: 'client-cache-miss', providerName: 'ollama', detail: 'local: создан и закэширован' });
 	const ollama = new Ollama({ host: endpoint });
 	ollamaClientCache.set(endpoint, ollama);
 	return ollama;
@@ -137,6 +142,7 @@ export const clearProviderClientCaches = (): void => {
 	openAIClientCache.clear();
 	ollamaClientCache.clear();
 	resetSystemCADispatcher();
+	traceSendEvent({ kind: 'clients-reset', detail: `очищено ${openCount} OpenAI + ${ollamaCount} Ollama клиентов` });
 	vibeLog.warn('sendLLMMessage.impl', `[resetProviderClients] cleared ${openCount} OpenAI + ${ollamaCount} Ollama cached clients; recreated shared dispatcher`);
 };
 
@@ -743,7 +749,7 @@ const _sendOpenAICompatibleChat = async ({ messages, onText, onFinalMessage, onE
 
 	// manually parse out tool results if XML
 	if (!specialToolFormat) {
-		const { newOnText, newOnFinalMessage } = extractXMLToolsWrapper(onText, onFinalMessage, chatMode, mcpTools);
+		const { newOnText, newOnFinalMessage } = extractXMLToolsWrapper(onText, onFinalMessage, chatMode, mcpTools, { providerName, modelName: modelName_ });
 		onText = newOnText;
 		onFinalMessage = newOnFinalMessage;
 	}
@@ -1276,7 +1282,7 @@ const sendAnthropicChat = async ({ messages, providerName, onText, onFinalMessag
 
 	// manually parse out tool results if XML
 	if (!specialToolFormat) {
-		const { newOnText, newOnFinalMessage } = extractXMLToolsWrapper(onText, onFinalMessage, chatMode, mcpTools);
+		const { newOnText, newOnFinalMessage } = extractXMLToolsWrapper(onText, onFinalMessage, chatMode, mcpTools, { providerName, modelName: modelName_ });
 		onText = newOnText;
 		onFinalMessage = newOnFinalMessage;
 	}
@@ -1564,7 +1570,7 @@ const sendGeminiChat = async ({
 
 	// manually parse out tool results if XML
 	if (!specialToolFormat) {
-		const { newOnText, newOnFinalMessage } = extractXMLToolsWrapper(onText, onFinalMessage, chatMode, mcpTools);
+		const { newOnText, newOnFinalMessage } = extractXMLToolsWrapper(onText, onFinalMessage, chatMode, mcpTools, { providerName, modelName: modelName_ });
 		onText = newOnText;
 		onFinalMessage = newOnFinalMessage;
 	}

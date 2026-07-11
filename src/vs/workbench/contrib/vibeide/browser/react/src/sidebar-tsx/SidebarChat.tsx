@@ -9,7 +9,7 @@ import React, { ButtonHTMLAttributes, FormEvent, FormHTMLAttributes, Fragment, K
 import { Virtuoso, VirtuosoHandle } from 'react-virtuoso';
 
 
-import { useAccessor, useChatThreadsState, useChatThreadsStreamState, useSettingsState, useActiveURI, useCommandBarState, useFullChatThreadsStreamState } from '../util/services.js';
+import { useAccessor, useChatThreadsState, useChatThreadsStreamState, useSettingsState, useActiveURI, useCommandBarState, useFullChatThreadsStreamState, useSubagentActivity, useSubagentHandoffCount, SubagentActivityItem } from '../util/services.js';
 import { ScrollType } from '../../../../../../../editor/common/editorCommon.js';
 
 import { ChatMarkdownRender, ChatMessageLocation, getApplyBoxId } from '../markdown/ChatMarkdownRender.js';
@@ -28,7 +28,7 @@ import { ChatMode, displayInfoOfProviderName, FeatureName, isFeatureNameDisabled
 import { ICommandService } from '../../../../../../../platform/commands/common/commands.js';
 import { WarningBox } from '../vibe-settings-tsx/WarningBox.js';
 import { getModelCapabilities, getIsReasoningEnabledState, getReservedOutputTokenSpace } from '../../../../common/modelCapabilities.js';
-import { AlertTriangle, File, Ban, Check, ChevronRight, ChevronDown, Dot, FileIcon, Pencil, Undo, Undo2, X, Flag, Copy as CopyIcon, Info, CirclePlus, Ellipsis, CircleEllipsis, Folder, ALargeSmall, TypeOutline, Text, Image as ImageIcon, FileText, LoaderCircle, Maximize2, Maximize, Pin, FileDown, RotateCcw, StepForward } from 'lucide-react';
+import { AlertTriangle, File, Ban, Check, ChevronRight, ChevronDown, Dot, FileIcon, Pencil, Undo, Undo2, X, Flag, Copy as CopyIcon, Info, CirclePlus, Ellipsis, CircleEllipsis, Folder, ALargeSmall, TypeOutline, Text, Paperclip, Waypoints, LoaderCircle, Maximize2, Maximize, Pin, FileDown, RotateCcw, StepForward } from 'lucide-react';
 import { ChatMessage, CheckpointEntry, StagingSelectionItem, ToolMessage, PlanMessage, ReviewMessage, PlanStep, StepStatus, PlanApprovalState, ChatImageAttachment, ChatPDFAttachment, normalizePendingInjections } from '../../../../common/chatThreadServiceTypes.js';
 import { formatChatTimestamp, chatTimestampToISO, CHAT_TIMESTAMP_STREAMING_PLACEHOLDER } from '../../../../common/chatTimestampFormatter.js';
 import { BuiltinToolCallParams, BuiltinToolName, ToolName, LintErrorItem, ToolApprovalType, toolApprovalTypes } from '../../../../common/toolsServiceTypes.js';
@@ -882,6 +882,72 @@ const ChatAgentQuestionNudgesControl = ({ className }: { className?: string }) =
 	);
 };
 
+/**
+ * Subagent auto-resume control («субпин.»). Bound to `vibeide.subagent.maxResumes`: how many times
+ * VibeIDE auto-continues a role stopped by its own limit (tokens/steps/time) from the saved point
+ * before handing the decision to the user. The subagent analog of «подпин.» (main-agent nudges) —
+ * lives right next to it so all the pin controls sit together. 0 = never auto-resume.
+ */
+const SUBPIN_RESUMES_DEFAULT = 2;
+const SUBPIN_RESUMES_UPPER = 10;
+const SUBPIN_RESUMES_KEY = 'vibeide.subagent.maxResumes';
+
+/** One running-role line in the live activity indicator: «🧩 Роль «X» работает… (шаг N/M · ~Xk / Yk · ⏱ 2:34)».
+ *  Steps/tokens are the binding limits; the wall-clock deadline counts DOWN via an internal 1s ticker
+ *  (independent of the per-hop status events, which can be tens of seconds apart). Role's own budgets. */
+const SubagentActivityRow = ({ role }: { role: SubagentActivityItem }) => {
+	const [now, setNow] = useState<number>(() => Date.now());
+	const hasDeadline = !!role.deadlineAtMs && role.deadlineAtMs > 0;
+	useEffect(() => {
+		if (!hasDeadline) { return; }
+		const id = setInterval(() => setNow(Date.now()), 1000);
+		return () => clearInterval(id);
+	}, [hasDeadline]);
+
+	const fmtK = (n: number) => n >= 1000 ? `${Math.round(n / 100) / 10}k` : String(n);
+	const fmtClock = (ms: number) => {
+		const s = Math.max(0, Math.ceil(ms / 1000));
+		return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+	};
+	const stepPart = (role.maxSteps && role.maxSteps > 0) ? `шаг ${role.liveStepsDone ?? 0}/${role.maxSteps}` : '';
+	const tokenPart = (role.liveTokensUsed && role.liveTokensUsed > 0)
+		? (role.tokenQuota && role.tokenQuota > 0 ? `~${fmtK(role.liveTokensUsed)} / ${fmtK(role.tokenQuota)}` : `~${fmtK(role.liveTokensUsed)}`)
+		: '';
+	const timePart = hasDeadline ? `⏱ ${fmtClock(role.deadlineAtMs! - now)}` : '';
+	const parts = [stepPart, tokenPart, timePart].filter(Boolean).join(' · ');
+	const readout = parts ? ` (${parts})` : '';
+	return (
+		<div className="flex items-center gap-2">
+			<span className="text-vibe-fg-2 opacity-70 flex-shrink-0 text-sm leading-none">
+				<IconLoading state="processing" inline />
+			</span>
+			<span className="text-sm text-vibe-fg-2 opacity-80">
+				🧩 Роль «{role.displayName}» работает…{readout}
+			</span>
+		</div>
+	);
+};
+
+const ChatSubagentResumesControl = ({ className }: { className?: string }) => {
+	const settingsState = useSettingsState();
+
+	const mode = settingsState.globalSettings.chatMode;
+	if (mode !== 'agent' && mode !== 'plan') { return null; }
+	return (
+		<NumberStepperControl
+			className={className}
+			configKey={SUBPIN_RESUMES_KEY}
+			defaultValue={SUBPIN_RESUMES_DEFAULT}
+			upper={SUBPIN_RESUMES_UPPER}
+			label={chatS.subpinLabel}
+			offLabel={chatS.subpinOffLabel}
+			offHint={chatS.subpinOffHint}
+			title={chatS.subpinTitle}
+			presets={[0, 2, 5]}
+		/>
+	);
+};
+
 
 
 interface VibeideChatAreaProps {
@@ -932,6 +998,94 @@ interface VibeideChatAreaProps {
 /** Config-backed text for the quick-continue button — also used as its tooltip. */
 const CONTINUE_TEXT_KEY = 'vibeide.chat.continueButtonText';
 const CONTINUE_TEXT_DEFAULT = 'продолжи';
+
+/**
+ * Launch the role-route («Выполнить маршрут ролей») from the composer. Opens a proper modal with a
+ * «Промпт для субагента» field instead of funneling the user into the thin command-palette quick-input.
+ * On confirm it runs the existing command with the prompt as an argument.
+ */
+const ChatRunRouteButton = () => {
+	const accessor = useAccessor();
+	// One route-modal at a time: modals queue FIFO, so rapid clicks would stack duplicates that each
+	// launch a route on confirm. Ignore clicks while one is already open.
+	const openRef = React.useRef(false);
+	const openRouteModal = useCallback(async () => {
+		if (openRef.current) { return; }
+		openRef.current = true;
+		try {
+		const modal = accessor.get('IVibeModalService');
+		const commandService = accessor.get('ICommandService');
+		const config = accessor.get('IConfigurationService');
+		// Per-run limit defaults pulled from the global config — editing a field overrides just this run.
+		const num = (key: string, fallback: number) => {
+			const v = config.getValue<number>(key);
+			return typeof v === 'number' && v > 0 ? v : fallback;
+		};
+		// Preserved across a «Роли» round-trip: the modal queue can't stack, so opening the role-model
+		// modal closes the route modal — we reopen it with the user's typed prompt + edited limits intact.
+		let promptInit = '';
+		let steps = num('vibeide.subagent.maxSteps', 60);
+		let tokens = num('vibeide.subagent.maxTokens', 100000);
+		let timeSec = num('vibeide.subagent.maxWallClockSec', 300);
+		let resumes = num('vibeide.subagent.maxResumes', 2);
+		while (true) {
+			const { buttonId, inputValue, fieldValues } = await modal.showModal({
+				title: 'Выполнить маршрут ролей',
+				body: '**Промпт для субагента.** Команда ролей (планировщик → разработчики → ревьюер → QA → security) выполнит задачу под автопилотом. Лимиты ниже — на этот прогон (под автопилотом всё равно авто-продлеваются; правьте базу).',
+				bodyMarkdown: true,
+				input: { placeholder: 'Что должна сделать команда ролей? Напр.: добавить и проверить страницу входа через OAuth', multiline: true, initialValue: promptInit, validator: v => v.trim() ? null : 'Опишите задачу' },
+				numberFields: [
+					{ id: 'maxSteps', label: 'Шаги', default: steps, min: 5, max: 500 },
+					{ id: 'maxTokens', label: 'Токены', default: tokens, min: 10000, max: 100000000 },
+					{ id: 'maxWallClockSec', label: 'Время, с', default: timeSec, min: 10, max: 3600 },
+					{ id: 'maxResumes', label: 'Авто-резюм', default: resumes, min: 0, max: 10 },
+				],
+				footerLeftButton: { id: 'roles', label: '🎭 Роли', role: 'secondary' },
+				buttons: [
+					{ id: 'run', label: 'Запустить', role: 'primary' },
+					{ id: 'cancel', label: 'Отмена', role: 'secondary' },
+				],
+				size: 'medium',
+			});
+			// «Роли» → configure per-role models in a sub-modal, then reopen the route modal preserving input.
+			if (buttonId === 'roles') {
+				promptInit = inputValue ?? promptInit;
+				if (fieldValues) {
+					steps = fieldValues.maxSteps ?? steps;
+					tokens = fieldValues.maxTokens ?? tokens;
+					timeSec = fieldValues.maxWallClockSec ?? timeSec;
+					resumes = fieldValues.maxResumes ?? resumes;
+				}
+				await modal.showModal({
+					title: 'Роли агентов — модель на роль',
+					contentKey: 'agentRoleModels',
+					buttons: [{ id: 'done', label: 'Готово', role: 'primary' }],
+					size: 'medium',
+				});
+				continue;
+			}
+			if (buttonId === 'run' && inputValue?.trim()) {
+				commandService.executeCommand('vibeide.vibeAgents.executeRoute', { prompt: inputValue.trim(), overrides: fieldValues });
+			}
+			break;
+		}
+		} finally {
+			openRef.current = false;
+		}
+	}, [accessor]);
+
+	return (
+		<button
+			type="button"
+			onClick={openRouteModal}
+			className="flex-shrink-0 p-1.5 rounded-xl hover:bg-vibe-bg-2-alt text-vibe-fg-4 hover:text-vibe-fg-2 transition-colors"
+			aria-label={chatS.runRouteAria}
+			title={chatS.runRouteTitle}
+		>
+			<Waypoints size={16} />
+		</button>
+	);
+};
 
 const ChatContinueButton = ({ onSend }: { onSend: (text: string) => void }) => {
 	const accessor = useAccessor();
@@ -1043,8 +1197,7 @@ export const VibeChatArea: React.FC<VibeideChatAreaProps> = ({
 	onContinue,
 }) => {
 	const [isDragOver, setIsDragOver] = React.useState(false);
-	const imageInputRef = React.useRef<HTMLInputElement>(null);
-	const pdfInputRef = React.useRef<HTMLInputElement>(null);
+	const attachInputRef = React.useRef<HTMLInputElement>(null);
 	const containerRef = React.useRef<HTMLDivElement>(null);
 
 	// Paste of files (images / PDFs) is handled directly on the textarea via onPaste prop in VibeInputBox2 —
@@ -1099,32 +1252,16 @@ export const VibeChatArea: React.FC<VibeideChatAreaProps> = ({
 		}
 	};
 
-	const handleImageUploadClick = () => {
-		imageInputRef.current?.click();
-	};
-
-	const handlePDFUploadClick = () => {
-		pdfInputRef.current?.click();
-	};
-
-	const handleImageInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-		const files = Array.from(e.target.files || []).filter(file =>
-			file.type.startsWith('image/')
-		);
-		if (files.length > 0 && onImageDrop) {
-			onImageDrop(files);
-		}
-		e.target.value = ''; // Reset input
-	};
-
-	const handlePDFInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-		const files = Array.from(e.target.files || []).filter(file =>
-			file.type === 'application/pdf'
-		);
-		if (files.length > 0 && onPDFDrop) {
-			onPDFDrop(files);
-		}
-		e.target.value = ''; // Reset input
+	// Unified «скрепка»: one picker for both images and PDFs — routed to the right handler by type.
+	// There's no meaningful difference to the user between «attach image» and «attach PDF».
+	const handleAttachUploadClick = () => { attachInputRef.current?.click(); };
+	const handleAttachInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+		const all = Array.from(e.target.files || []);
+		const images = all.filter(f => f.type.startsWith('image/'));
+		const pdfs = all.filter(f => f.type === 'application/pdf');
+		if (images.length > 0 && onImageDrop) { onImageDrop(images); }
+		if (pdfs.length > 0 && onPDFDrop) { onPDFDrop(pdfs); }
+		e.target.value = '';
 	};
 
 	return (
@@ -1160,22 +1297,14 @@ export const VibeChatArea: React.FC<VibeideChatAreaProps> = ({
 			onDragLeave={handleDragLeave}
 			onDrop={handleDrop}
 		>
-			{/* Hidden file inputs - separate for images and PDFs */}
+			{/* Hidden file input — one «скрепка» picker for both images and PDFs */}
 			<input
-				ref={imageInputRef}
+				ref={attachInputRef}
 				type="file"
-				accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
+				accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml,application/pdf"
 				multiple
 				className="hidden"
-				onChange={handleImageInputChange}
-			/>
-			<input
-				ref={pdfInputRef}
-				type="file"
-				accept="application/pdf"
-				multiple
-				className="hidden"
-				onChange={handlePDFInputChange}
+				onChange={handleAttachInputChange}
 			/>
 
 			{/* Image attachments section */}
@@ -1202,27 +1331,19 @@ export const VibeChatArea: React.FC<VibeideChatAreaProps> = ({
 
 				{/* Right-side icon bar - Cursor style */}
 				<div className="flex items-center gap-1 flex-shrink-0 pb-0.5">
-					{/* Image upload button */}
+					{/* Attach button — one «скрепка» for images and PDFs */}
 					<button
 						type="button"
-						onClick={handleImageUploadClick}
+						onClick={handleAttachUploadClick}
 						className="flex-shrink-0 p-1.5 rounded-xl hover:bg-vibe-bg-2-alt text-vibe-fg-4 hover:text-vibe-fg-2 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-						aria-label={chatS.uploadImagesAria}
-						title={chatS.uploadImagesTitle}
+						aria-label={chatS.attachAria}
+						title={chatS.attachTitle}
 					>
-						<ImageIcon size={16} />
+						<Paperclip size={16} />
 					</button>
 
-					{/* PDF upload button */}
-					<button
-						type="button"
-						onClick={handlePDFUploadClick}
-						className="flex-shrink-0 p-1.5 rounded-xl hover:bg-vibe-bg-2-alt text-vibe-fg-4 hover:text-vibe-fg-2 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-						aria-label={chatS.uploadPdfsAria}
-						title={chatS.uploadPdfsTitle}
-					>
-						<FileText size={16} />
-					</button>
+					{/* Run role-route button — opens a modal to launch «Выполнить маршрут ролей» */}
+					<ChatRunRouteButton />
 
 					{/* Quick-continue button — left of the send arrow, hidden while streaming */}
 					{!isStreaming && onContinue && <ChatContinueButton onSend={onContinue} />}
@@ -1263,6 +1384,7 @@ export const VibeChatArea: React.FC<VibeideChatAreaProps> = ({
 						{featureName === 'Chat' && <ChatAgentIterationsControl />}
 						{featureName === 'Chat' && <ChatAgentNudgesControl />}
 						{featureName === 'Chat' && <ChatAgentQuestionNudgesControl />}
+						{featureName === 'Chat' && <ChatSubagentResumesControl />}
 						<ReasoningOptionSlider featureName={featureName} />
 					</div>
 				)}
@@ -4420,16 +4542,30 @@ const _ChatBubble = React.memo(({ threadId, chatMessage, currCheckpointIdx, isCo
 		prev._scrollToBottom === next._scrollToBottom;
 });
 
-const CommandBarInChat = () => {
+const CommandBarInChat = ({ onJumpToPlan }: { onJumpToPlan?: (messageIdx: number) => void }) => {
 	const { stateOfURI: commandBarStateOfURI, sortedURIs: sortedCommandBarURIs } = useCommandBarState();
 	const numFilesChanged = sortedCommandBarURIs.length;
 
 	const accessor = useAccessor();
 	const editCodeService = accessor.get('IEditCodeService');
 	const commandService = accessor.get('ICommandService');
+	const chatThreadService = accessor.get('IChatThreadService');
 	const chatThreadsState = useChatThreadsState();
 	const commandBarState = useCommandBarState();
 	const chatThreadsStreamState = useChatThreadsStreamState(chatThreadsState.currentThreadId);
+
+	// Paused persisted plan (tool drift etc.): surface a resume chip HERE, next to the input —
+	// without it the user has to scroll up to the plan card for the «Возобновить» button on
+	// every pause. Latest paused plan wins (that's the one blocking progress).
+	const pausedPlanIdx = useMemo(() => {
+		const threadId = chatThreadsState.currentThreadId;
+		const messages = (threadId ? chatThreadsState.allThreads[threadId]?.messages : undefined) ?? [];
+		for (let i = messages.length - 1; i >= 0; i--) {
+			const m = messages[i];
+			if (m.role === 'plan' && (m as PlanMessage).steps?.some(s => s.status === 'paused')) { return i; }
+		}
+		return undefined;
+	}, [chatThreadsState]);
 
 	// Chat → Markdown: Copy keeps tool-results truncated (small clipboard payload), Export writes
 	// the full log to a .md file. Both serialize collapsed reasoning blocks regardless of UI state.
@@ -4722,6 +4858,32 @@ const CommandBarInChat = () => {
 						data-tooltip-place='top'
 						data-tooltip-content={chatS.exportChatExportTooltip}
 					/>
+					{pausedPlanIdx !== undefined && (
+						<div className="flex items-center gap-0.5 ml-1">
+							<button
+								type='button'
+								className="flex items-center gap-1 px-1.5 py-0.5 rounded text-amber-400 bg-amber-500/10 border border-amber-500/20 hover:bg-amber-500/20 cursor-pointer transition-all duration-200"
+								onClick={() => { void chatThreadService.resumeAgentExecution({ threadId: chatThreadsState.currentThreadId }); }}
+								data-tooltip-id='vibe-tooltip'
+								data-tooltip-place='top'
+								data-tooltip-content='Шаг плана на паузе — возобновить выполнение, не листая к карточке'
+							>
+								⏸ План на паузе — возобновить
+							</button>
+							{onJumpToPlan && (
+								<button
+									type='button'
+									className="px-1 py-0.5 rounded text-amber-400/80 hover:text-amber-400 hover:bg-amber-500/10 cursor-pointer transition-all duration-200"
+									onClick={() => onJumpToPlan(pausedPlanIdx)}
+									data-tooltip-id='vibe-tooltip'
+									data-tooltip-place='top'
+									data-tooltip-content='Показать карточку плана'
+								>
+									↑
+								</button>
+							)}
+						</div>
+					)}
 				</div>
 				{/* Status indicator FIRST so the accept/reject-all buttons stay pinned to the
 				    right edge and never shift horizontally when the status label width changes
@@ -5345,6 +5507,16 @@ export const SidebarChat = () => {
 	const keybindingString = accessor.get('IKeybindingService').lookupKeybinding(VIBEIDE_CTRL_L_ACTION_ID)?.getLabel();
 
 	const threadId = currentThread.id;
+	// Live subagent activity (VA.6): running curated roles for this thread, rendered as a transient
+	// spinner. Gated by the same toggle as the finish notices — one switch governs subagent-in-chat.
+	const subagentActivity = useSubagentActivity(threadId);
+	const showSubagentActivity = subagentActivity.length > 0
+		&& configurationService.getValue<boolean>('vibeide.subagent.chatNotices') !== false;
+	// Durable-handoff: stopped roles awaiting a manual resume decision. Surfaced as an in-chat
+	// «Продолжить роль» affordance (same place as the chat's own «Продолжить»), not a status-bar chip.
+	const openHandoffCount = useSubagentHandoffCount();
+	const threadStreamRunning = useChatThreadsStreamState(threadId)?.isRunning;
+	const showResumeRole = openHandoffCount > 0 && (threadStreamRunning === undefined || threadStreamRunning === 'idle');
 	const currCheckpointIdx = chatThreadsState.allThreads[threadId]?.state?.currCheckpointIdx ?? undefined;  // if not exist, treat like checkpoint is last message (infinity)
 	// Notes the user queued mid-run (via onInject). Shown as a pinned "queued" strip above the input until
 	// the agent drains them into a real message on its next hop (then pendingInjections clears → strip gone).
@@ -5513,6 +5685,60 @@ export const SidebarChat = () => {
 			});
 		}
 
+		// Live subagent activity — curated roles currently working under this thread. Transient
+		// (never a persisted message), so it can appear mid-turn without breaking the streaming
+		// last-message invariant. Renders below the streaming content, above the escape hint.
+		if (showSubagentActivity) {
+			items.push({
+				key: 'subagent-activity',
+				render: () => <ProseWrapper>
+					<div className="flex items-start gap-2 loading-state-transition" role="status" aria-live="polite" aria-atomic="true">
+						<div className="flex flex-col gap-1 flex-1 min-w-0">
+						{subagentActivity.map(role => <SubagentActivityRow key={role.id} role={role} />)}
+						</div>
+						<button
+							type="button"
+							title={chatS.subagentSettingsTitle}
+							aria-label={chatS.subagentSettingsTitle}
+							onClick={() => { commandService.executeCommand('workbench.action.openSettings', 'vibeide.subagent'); }}
+							className="flex-shrink-0 inline-flex items-center gap-1 text-xs text-vibe-fg-2 hover:text-vibe-fg-1 opacity-90 hover:opacity-100 transition-colors leading-none px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500/40 rounded border border-vibe-border-2 hover:border-vibe-border-1 hover:bg-vibe-bg-2"
+						>
+							<span className="text-sm">⚙️</span> Настроить
+						</button>
+					</div>
+				</ProseWrapper>
+			});
+		}
+
+		// Durable-handoff resume: one-click «Продолжить роль» for stopped roles awaiting a manual
+		// decision. Same visual language and location as the chat's own «Продолжить» affordance;
+		// opens the existing role picker (vibeide.subagent.resumeHandoff).
+		if (showResumeRole) {
+			items.push({
+				key: 'resume-role',
+				render: () => <div className="mt-1.5 px-2 flex items-center gap-2">
+					<button
+						type="button"
+						title={chatS.resumeRoleTitle}
+						aria-label={chatS.resumeRoleLabel(openHandoffCount)}
+						onClick={() => { commandService.executeCommand('vibeide.subagent.resumeHandoff'); }}
+						className="px-3 py-1.5 text-xs rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 hover:bg-blue-500/20 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+					>
+						⏸️ {chatS.resumeRoleLabel(openHandoffCount)}
+					</button>
+					<button
+						type="button"
+						title={chatS.subagentSettingsTitle}
+						aria-label={chatS.subagentSettingsTitle}
+						onClick={() => { commandService.executeCommand('workbench.action.openSettings', 'vibeide.subagent'); }}
+						className="flex-shrink-0 inline-flex items-center gap-1 text-xs text-vibe-fg-2 hover:text-vibe-fg-1 opacity-90 hover:opacity-100 transition-colors leading-none px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500/40 rounded border border-vibe-border-2 hover:border-vibe-border-1 hover:bg-vibe-bg-2"
+					>
+						<span className="text-sm">⚙️</span> Настроить
+					</button>
+				</div>
+			});
+		}
+
 		// Escape hint when streaming.
 		if ((isRunning === 'LLM' || isRunning === 'preparing') && (displayContentSoFar || reasoningSoFar)) {
 			items.push({
@@ -5617,6 +5843,10 @@ export const SidebarChat = () => {
 		chatThreadsService,
 		commandService,
 		currentThread.id,
+		showSubagentActivity,
+		subagentActivity,
+		showResumeRole,
+		openHandoffCount,
 	]);
 
 	const messagesHTML = (
@@ -6180,7 +6410,9 @@ export const SidebarChat = () => {
 	</>;
 
 
-	const isLandingPage = previousMessages.length === 0;
+	// A role launched in a fresh (empty) thread must still show its live indicator / «Продолжить роль»
+	// affordance — those live in the message list, which the landing page would otherwise replace.
+	const isLandingPage = previousMessages.length === 0 && !showSubagentActivity && !showResumeRole;
 
 	const initiallySuggestedPromptsHTML =					<div className='flex flex-col gap-2 w-full text-nowrap text-vibe-fg-3 select-none'>
 		{[
@@ -6204,7 +6436,7 @@ export const SidebarChat = () => {
 
 	const threadPageInput = <div key={'input' + chatThreadsState.currentThreadId}>
 		<div className='px-4'>
-			<CommandBarInChat />
+			<CommandBarInChat onJumpToPlan={(messageIdx) => { virtuosoRef.current?.scrollToIndex({ index: messageIdx, behavior: 'smooth', align: 'start' }); }} />
 		</div>
 		<div className='px-2 pb-2'>
 			{inputChatArea}

@@ -100,6 +100,17 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 			maximum: 100,
 			description: localize('vibeide.agent.reprobeAfterSuccesses', 'Через сколько успешных XML-tool-call`ов модель, переключённую в XML-fallback, повторно пробуют вернуть на native function-calling (одноразовый probe). Меньше = быстрее восстановление, больше = меньше «дёрганья». Дефолт 5, диапазон 1–100.'),
 		},
+		'vibeide.plans.toolDriftPause': {
+			type: 'string',
+			enum: ['always', 'manual-only', 'never'],
+			default: 'manual-only',
+			enumDescriptions: [
+				localize('vibeide.plans.toolDriftPause.always', 'Паузить план при любом межклассовом расхождении инструмента с запланированными для шага.'),
+				localize('vibeide.plans.toolDriftPause.manualOnly', 'Паузить только когда автопилот ВЫКЛЮЧЕН; под автопилотом — продолжать с инфо-уведомлением (иначе каждый шаг требует ручного «Возобновить»).'),
+				localize('vibeide.plans.toolDriftPause.never', 'Никогда не паузить — только записывать расхождение в журнал активности.'),
+			],
+			description: localize('vibeide.plans.toolDriftPause', 'Когда паузить персистентный план, если агент вызывает инструмент вне списка `tools` текущего шага. Синонимы одного класса (edit_file ↔ rewrite_file, run_terminal_command ↔ run_command) расхождением НЕ считаются. Дефолт `manual-only`.'),
+		},
 		'vibeide.agent.autoContinueMaxNudges': {
 			type: 'number',
 			default: 2,

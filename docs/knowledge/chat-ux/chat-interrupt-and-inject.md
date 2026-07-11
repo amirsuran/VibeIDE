@@ -44,3 +44,18 @@
 </vibe_complete>
 ```
 Только для текстового кейса (не question/empty). `let corrective` + `xmlCompleteHint` в `chatThreadService` (~6654). Не трогаем «авто-вызов за модель» — форк осознанно этого не делает. Совет «усилить system-prompt текстом» (от самой модели) — поверхностный: контракт уже в описании `vibe_complete`; реальный пробел был именно XML-форма для слабых моделей.
+
+---
+
+## [архитектура/правило] Живой UI-статус в треде — транзиентом, НЕ персистентным сообщением (инвариант «последнего сообщения»)
+
+**Контекст:** нужен живой индикатор «субагент/роль сейчас работает» прямо в треде чата, между стартом и финишем (VA.6, killer-запрос). Первая идея — «сообщение-плейсхолдер, обновляемое на статусах». Аудит `wf_365c8028-33b` флагнул риск `addAssistantNotice` во время активного стрима (2026-07-11).
+
+**Суть:** вставлять сообщение в `thread.messages` во время активного хода — **опасно**. Стрим-путь и одобрения тулов полагаются на то, что `messages[messages.length-1]` — это конкретное сообщение хода:
+- `_swapOutLatestStreamingToolWithResult` (chatThreadService.ts) заменяет **последнее** сообщение результатом тула;
+- `approveLatestToolRequest` / `rejectLatestToolRequest` читают `messages[length-1]` как `tool_request`.
+Любой notice, вставленный в окно между `tool_request` и его результатом/одобрением, сдвигает хвост → эти пути молча делают no-op (`return false` / `return`) → turn ломается (одобрение «проваливается», результат тула теряется). Стриминговый ответ, наоборот, живёт в `streamState.llmInfo` (не в `messages`) и коммитится `_addMessageToThread` (append) только в конце — поэтому «живой текст» безопасен, а вот вставки в `messages` — нет.
+
+**Применение (два правила):**
+1. **Живое состояние → транзиентный рендер, а не сообщение.** Индикатор ролей сделан хуком `useSubagentActivity(threadId)` (`react/src/util/services.tsx`, подписка на `onSubagentStatusChanged` → `getByParentThread`) и элементом `subagent-activity` в массиве `chatItems` (`SidebarChat.tsx`, рядом с loading-indicator/stall-banner). Ничего не пишется в `thread.messages` → инвариант неприкосновенен. Это же место — куда класть любой будущий live-баннер (Virtuoso `followOutput` сам пинит низ).
+2. **Персистентный notice — только при простое хода.** Если display-only сообщение всё же нужно (итог роли, отчёт маршрута), постить его **только когда `streamState[threadId].isRunning === undefined`**; иначе буферизовать и флашить на `onDidChangeStreamState` при переходе в idle (`VibeSubagentChatNoticeContribution._post`/`_maybeFlush`). START-notice убран вовсе — его роль выполняет живой индикатор, а в опасное окно теперь попадает только отложенный терминальный итог.

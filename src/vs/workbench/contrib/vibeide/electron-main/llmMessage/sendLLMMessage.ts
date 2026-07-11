@@ -9,6 +9,7 @@ import { SendLLMMessageParams, OnText, OnFinalMessage, OnError } from '../../com
 import { IMetricsService } from '../../common/metricsService.js';
 import { displayInfoOfProviderName, FeatureName, providerNames } from '../../common/vibeideSettingsTypes.js';
 import { setExternalProviders, ExternalProviderDescriptor, VibeideStaticModelInfo } from '../../common/modelCapabilities.js';
+import { traceSendEvent } from '../../common/llmSendTrace.js';
 import { sendLLMMessageToProviderImplementation, dynamicProviderImplementation } from './sendLLMMessage.impl.js';
 
 /**
@@ -57,6 +58,7 @@ export const sendLLMMessage = async ({
 
 	// Sync dynamic providers into this process's caps registry before any getModelCapabilities call.
 	syncExternalProvidersFromSettings(settingsOfProvider);
+	traceSendEvent({ kind: 'providers-sync', providerName, modelName });
 
 	// only captures number of messages and message "shape", no actual code, instructions, prompts, etc
 	const captureLLMEvent = (eventId: string, extras?: object) => {

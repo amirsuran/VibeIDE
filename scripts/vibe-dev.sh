@@ -92,11 +92,20 @@ if [[ "${VIBE_SKIP_REACT:-}" != '1' ]]; then
 fi
 
 if [[ "${VIBE_SKIP_NLS:-}" != '1' ]]; then
-	echo '[vibe-dev] NLS: vibe-nls-extract.ts + clear dev clp cache (stale nls.messages in clp blocks RU) ...'
-	if ! npx tsx scripts/vibe-nls-extract.ts; then
-		echo '[vibe-dev] WARNING: NLS extraction failed — non-English locales (RU etc.) may show errors'
-	elif ! VSCODE_DEV=1 node "$REPO_ROOT/scripts/vibe-dev-clear-nls-clp.mjs"; then
-		echo '[vibe-dev] WARNING: could not clear clp cache'
+	# Run the extractor ONLY when the compile didn't produce NLS metadata. Regenerating it
+	# unconditionally from CURRENT src against a STALE out/ shifts the baked localize() indices
+	# (src edited after the last compile → off-by-N), and every RU string after the drift point
+	# shows a WRONG translation (observed: save-dialog rendering a raw «{0}» placeholder).
+	# gulp compile emits consistent out/nls.{keys,messages}.json itself (build/lib/nls.ts).
+	if [[ -f "$REPO_ROOT/out/nls.messages.json" ]]; then
+		echo '[vibe-dev] NLS: out/nls.messages.json present (emitted by compile) — skipping extract to avoid index drift'
+	else
+		echo '[vibe-dev] NLS: vibe-nls-extract.ts + clear dev clp cache (stale nls.messages in clp blocks RU) ...'
+		if ! npx tsx scripts/vibe-nls-extract.ts; then
+			echo '[vibe-dev] WARNING: NLS extraction failed — non-English locales (RU etc.) may show errors'
+		elif ! VSCODE_DEV=1 node "$REPO_ROOT/scripts/vibe-dev-clear-nls-clp.mjs"; then
+			echo '[vibe-dev] WARNING: could not clear clp cache'
+		fi
 	fi
 else
 	echo '[vibe-dev] VIBE_SKIP_NLS=1 — skipping NLS extract and clp clear'

@@ -9,6 +9,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAccessor } from '../util/services.js';
 import { VIBE_MODAL_MIN_AUTO_DISMISS_MS, VibeModalButton, VibeModalQueueEntry } from '../../../../common/vibeModalTypes.js';
 import { ChatMarkdownRender } from '../markdown/ChatMarkdownRender.js';
+import { AgentRoleModels } from '../vibe-settings-tsx/AgentRoleModels.js';
 
 /** Lower bound for the post-pause `remaining` clamp — avoids zero/negative
  *  timer values after rapid hover-in/out cycles. */
@@ -66,6 +67,9 @@ export const VibeModalSimple: React.FC<{ entry: VibeModalQueueEntry }> = ({ entr
 	const [inputValue, setInputValue] = useState(options.input?.initialValue ?? '');
 	const [validationError, setValidationError] = useState<string | null>(null);
 	const [checked, setChecked] = useState(options.checkbox?.initialChecked ?? false);
+	// Numeric override fields (below the main input) — initialised from each field's default.
+	const [fieldValues, setFieldValues] = useState<Record<string, number>>(() =>
+		Object.fromEntries((options.numberFields ?? []).map(f => [f.id, f.default])));
 	const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
 	const firstFocusableRef = useRef<HTMLButtonElement | null>(null);
 	const modalRef = useRef<HTMLDivElement | null>(null);
@@ -128,11 +132,11 @@ export const VibeModalSimple: React.FC<{ entry: VibeModalQueueEntry }> = ({ entr
 			if (!btn || btn.disabled) {return;}
 			if (btn.role === 'primary' && validationError) {return;}
 			e.preventDefault();
-			modalService.resolveHead(btn.id, options.input ? inputValue : undefined);
+			modalService.resolveHead(btn.id, options.input ? inputValue : undefined, options.numberFields ? fieldValues : undefined);
 		};
 		window.addEventListener('keydown', onKey);
 		return () => window.removeEventListener('keydown', onKey);
-	}, [options.dismissible, options.loading, options.buttons, options.input, validationError, inputValue, modalService]);
+	}, [options.dismissible, options.loading, options.buttons, options.input, options.numberFields, validationError, inputValue, fieldValues, modalService]);
 
 	// autoDismissAfterMs — timer that fires dismiss after the given duration.
 	// Paused while loading (no auto-close during async work). Also paused on
@@ -189,8 +193,8 @@ export const VibeModalSimple: React.FC<{ entry: VibeModalQueueEntry }> = ({ entr
 		if (btn.disabled) {return;}
 		if (options.loading) {return;}
 		if (btn.role === 'primary' && validationError) {return;}
-		modalService.resolveHead(btn.id, options.input ? inputValue : undefined);
-	}, [modalService, options.input, options.loading, inputValue, validationError]);
+		modalService.resolveHead(btn.id, options.input ? inputValue : undefined, options.numberFields ? fieldValues : undefined);
+	}, [modalService, options.input, options.numberFields, options.loading, inputValue, fieldValues, validationError]);
 
 	const onBackdropClick = useCallback(() => {
 		if (options.dismissible === false) {return;}
@@ -206,9 +210,9 @@ export const VibeModalSimple: React.FC<{ entry: VibeModalQueueEntry }> = ({ entr
 		const commit = !multiline ? e.key === 'Enter' && !e.shiftKey : (e.key === 'Enter' && (e.ctrlKey || e.metaKey));
 		if (commit && primaryButton && !validationError) {
 			e.preventDefault();
-			modalService.resolveHead(primaryButton.id, inputValue);
+			modalService.resolveHead(primaryButton.id, inputValue, options.numberFields ? fieldValues : undefined);
 		}
-	}, [options.input, primaryButton, validationError, modalService, inputValue]);
+	}, [options.input, options.numberFields, primaryButton, validationError, modalService, inputValue, fieldValues]);
 
 	// Focus trap: cycle Tab within modal. Implementation captures focusable
 	// elements at render time; for v1 that's input + buttons.
@@ -257,6 +261,18 @@ export const VibeModalSimple: React.FC<{ entry: VibeModalQueueEntry }> = ({ entr
 				aria-busy={options.loading ? true : undefined}
 				onKeyDown={onTrapKeyDown}
 			>
+				{/* Shared top-right close «×» — the standard way to close any dismissible modal (mirrors ESC).
+				    Hidden for non-dismissible modals, where ESC/backdrop are also inert. */}
+				{options.dismissible !== false && (
+					<button
+						type="button"
+						className="@@vibeide-modal-close @@codicon @@codicon-close"
+						aria-label="Закрыть"
+						title="Закрыть (Esc)"
+						disabled={options.loading}
+						onClick={() => { void modalService.dismissHeadWithVeto(); }}
+					/>
+				)}
 				<div className="@@vibeide-modal-header">
 					{options.icon && (
 						<span className={`@@vibeide-modal-icon @@codicon @@codicon-${options.icon}`} aria-hidden="true" />
@@ -269,6 +285,12 @@ export const VibeModalSimple: React.FC<{ entry: VibeModalQueueEntry }> = ({ entr
 						{options.bodyMarkdown
 							? <ChatMarkdownRender string={options.body} chatMessageLocation={undefined} />
 							: options.body}
+					</div>
+				)}
+
+				{options.contentKey && (
+					<div className="@@vibeide-modal-content">
+						{options.contentKey === 'agentRoleModels' && <AgentRoleModels />}
 					</div>
 				)}
 
@@ -302,6 +324,33 @@ export const VibeModalSimple: React.FC<{ entry: VibeModalQueueEntry }> = ({ entr
 					</div>
 				)}
 
+				{options.numberFields && options.numberFields.length > 0 && (
+					<div className="@@vibeide-modal-numberfields">
+						{options.numberFields.map(f => (
+							<label key={f.id} className="@@vibeide-modal-numberfield">
+								<span className="@@vibeide-modal-numberfield-label">{f.label}</span>
+								<span className="@@vibeide-modal-numberfield-control">
+									<input
+										type="number"
+										className="@@vibeide-modal-input"
+										value={fieldValues[f.id] ?? f.default}
+										min={f.min}
+										max={f.max}
+										disabled={options.loading}
+										onChange={e => {
+											const raw = Number(e.target.value);
+											const clamped = Number.isFinite(raw)
+												? Math.max(f.min ?? -Infinity, Math.min(f.max ?? Infinity, Math.floor(raw)))
+												: f.default;
+											setFieldValues(prev => ({ ...prev, [f.id]: clamped }));
+										}}
+									/>
+								</span>
+							</label>
+						))}
+					</div>
+				)}
+
 				{options.checkbox && (
 					<label className="@@vibeide-modal-checkbox">
 						<input
@@ -323,6 +372,16 @@ export const VibeModalSimple: React.FC<{ entry: VibeModalQueueEntry }> = ({ entr
 				)}
 
 				<div className="@@vibeide-modal-buttons">
+					{options.footerLeftButton && (
+						<button
+							type="button"
+							className={`@@vibeide-modal-button @@role-${options.footerLeftButton.role ?? 'secondary'} @@vibeide-modal-footer-left`}
+							disabled={!!options.footerLeftButton.disabled || !!options.loading}
+							onClick={() => onButtonClick(options.footerLeftButton!)}
+						>
+							{renderButtonLabel(options.footerLeftButton.label, options.footerLeftButton.hotkey)}
+						</button>
+					)}
 					{options.buttons.map(btn => {
 						const role = btn.role ?? 'secondary';
 						const disabled = !!btn.disabled

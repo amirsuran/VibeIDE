@@ -66,9 +66,11 @@ src/vs/workbench/contrib/vibeide/browser/react/src2/**
 # or references/ is part of the source tree contract.
 references/*
 !references/logo-final.png
-# CLAUDE.md / AGENTS.md and the AI-tool config dirs are TRACKED so a fresh clone can continue
-# work without external state. Secrets inside .vibe/ are protected by .vibe/.gitignore
-# (.env, snapshots/, *-locks, commands.trust.json); local-only agent files by the *.local.* rules above.
+# CLAUDE.md / AGENTS.md stay TRACKED so a fresh clone can continue work without external state.
+# .vibe/ is local-only and NOT tracked: this repo is developed only via Claude Code (.claude/ +
+# CLAUDE.md), so the workspace agent scaffolding (rules/prompts/skills seeded from .vibe-defaults/)
+# is redundant here. The shipped defaults live in .vibe-defaults/ (that IS tracked).
+/.vibe/
 .config/
 # `docs/` is now tracked (2026-05-23 — became the project knowledge base).
 # Only exclude editor-specific noise inside:

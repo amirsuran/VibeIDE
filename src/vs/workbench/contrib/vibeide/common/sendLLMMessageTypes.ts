@@ -230,6 +230,13 @@ export type ServiceSendLLMMessageParams = {
 	onAbort: OnAbort;
 	/** Per-turn: request `tool_choice: 'required'` for this send (agent-loop corrective nudge). */
 	forceToolUse?: boolean;
+	/**
+	 * Renderer-side only (never forwarded over IPC): when true, this send is NOT folded into the
+	 * session token budget — neither the pre-send `checkBudget()` gate nor `recordUsage()`. Used by
+	 * subagents, which have their OWN quota (`vibeide.subagent.maxTokens`) and per-role accounting;
+	 * the session budget tracks the main agent only.
+	 */
+	excludeFromSessionBudget?: boolean;
 } & SendLLMType;
 
 /**

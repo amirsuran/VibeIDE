@@ -102,6 +102,11 @@ export type VibeideSettingsState = {
 	 *  Persisted; applied by the dynamic-providers service to gate the chat picker. */
 	readonly dynamicModelHidden?: Record<string, Record<string, boolean>>;
 
+	/** Per-role model mapping for Vibe Agents subagents (VA.2 «модель на роль»), keyed by SubagentType.
+	 *  Absent key / null = inherit the Chat model. Deliberately NOT part of `FeatureName` — roles are
+	 *  an open set, features a closed union. Consumed by `vibeSubagentRunnerService`. */
+	readonly modelSelectionOfRole?: Readonly<Record<string, ModelSelection | null>>;
+
 	readonly _modelOptions: ModelOption[]; // computed based on the two above items
 };
 
@@ -125,6 +130,8 @@ export interface IVibeideSettingsService {
 
 	setSettingOfProvider: SetSettingOfProviderFn;
 	setModelSelectionOfFeature: SetModelSelectionOfFeatureFn;
+	/** VA.2 «модель на роль»: set/replace a role's model; `null` clears the mapping (inherit Chat). */
+	setModelSelectionOfRole(roleType: string, selection: ModelSelection | null): Promise<void>;
 	setOptionsOfModelSelection: SetOptionsOfModelSelection;
 	setGlobalSetting: SetGlobalSettingFn;
 	// setMCPServerStates: (newStates: MCPServerStates) => Promise<void>;
@@ -464,6 +471,7 @@ const defaultState = () => {
 		mcpUserStateOfName: {},
 		dynamicProviderApiKeys: {},
 		dynamicModelHidden: {},
+		modelSelectionOfRole: {},
 	};
 	return d;
 };
@@ -761,6 +769,19 @@ class VoidSettingsService extends Disposable implements IVibeideSettingsService 
 
 	};
 
+
+	setModelSelectionOfRole = async (roleType: string, selection: ModelSelection | null): Promise<void> => {
+		const next: Record<string, ModelSelection | null> = { ...(this.state.modelSelectionOfRole ?? {}) };
+		if (selection === null) {
+			delete next[roleType]; // absent = inherit the Chat model
+		} else {
+			next[roleType] = selection;
+		}
+		const newState: VibeideSettingsState = { ...this.state, modelSelectionOfRole: next };
+		this.state = _validatedModelState(newState);
+		await this._storeState();
+		this._onDidChangeState.fire();
+	};
 
 	private _onUpdate_syncApplyToChat() {
 		// if sync is turned on, sync (call this whenever Chat model or !!sync changes)

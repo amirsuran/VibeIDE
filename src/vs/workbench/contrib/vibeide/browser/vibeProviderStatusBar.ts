@@ -115,24 +115,35 @@ export class VibeProviderStatusBarContribution extends Disposable implements IWo
 		const healthStatus = this._providerStatusService.getAllStatuses().get(providerName);
 		const healthText = this._healthLabel(healthStatus?.health || 'unknown');
 
+		// Phase 3 (provider diagnostics): a DEGRADED provider needs treatment, not a dashboard —
+		// clicking the warning opens «Проверка провайдеров» (layered checks + reset-clients).
+		// A healthy provider keeps the transparency view as before.
+		const isUnhealthy = !this._providerStatusService.isHealthy(providerName);
 		return {
 			name: localize('vibeProviderStatus', 'Статус провайдера VibeIDE'),
 			text: displayName,
-			tooltip: localize('vibeProviderStatusTooltip', 'Провайдер: {0} — Статус: {1}. Нажмите для проверки.', providerName, healthText),
-			command: 'vibeide.transparency.show',
+			tooltip: isUnhealthy
+				? localize('vibeProviderStatusTooltipSick', 'Провайдер: {0} — Статус: {1}. Нажмите, чтобы открыть «Проверку провайдеров».', providerName, healthText)
+				: localize('vibeProviderStatusTooltip', 'Провайдер: {0} — Статус: {1}. Нажмите для проверки.', providerName, healthText),
+			command: isUnhealthy ? 'vibeide.commands.checkProviders' : 'vibeide.transparency.show',
 			ariaLabel: localize('vibeProviderStatusAria', 'Провайдер: {0} {1}', providerName, healthText),
 		};
 	}
 
 	private _getCostEntryProps(): IStatusbarEntry {
-		const pricing = this._costForecastService.getPricing('gpt-4o-mini');
+		// Audit C (Void legacy): pricing was hardcoded to 'gpt-4o-mini' regardless of the
+		// model actually selected — price the CURRENT Chat model instead.
+		const chatModelName = this._settingsService.state.modelSelectionOfFeature?.['Chat']?.modelName;
+		const pricing = chatModelName ? this._costForecastService.getPricing(chatModelName) : undefined;
 		const text = pricing
 			? `$(symbol-currency) in ${pricing.inputPer1kTokens.toFixed(3)}/1k`
 			: '$(symbol-currency)';
 		return {
 			name: localize('vibeTokenCost', 'Стоимость токенов VibeIDE'),
 			text,
-			tooltip: localize('vibeTokenCostTooltip', 'Прогноз стоимости токенов. Запустите задачу, чтобы увидеть оценку.'),
+			tooltip: pricing && chatModelName
+				? localize('vibeTokenCostTooltipModel', 'Прогноз стоимости токенов для {0}.', chatModelName)
+				: localize('vibeTokenCostTooltip', 'Прогноз стоимости токенов. Запустите задачу, чтобы увидеть оценку.'),
 			command: 'vibeide.tokenBudget.status',
 			ariaLabel: localize('vibeTokenCostAria', 'Прогноз стоимости токенов'),
 		};

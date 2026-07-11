@@ -136,6 +136,11 @@ import '../common/codeReviewService.js';
 import './codeReviewEditorContribution.js';
 import './codeReviewCommands.js';
 
+// model-quirks auto-feed: durable-quirk suggestion on repeated cross-session auto-downgrades
+import './vibeQuirkAutoFeedService.js';
+// headless subagent tool-loop runner (Phase 3b) — real executor behind vibeSubagentService
+import './vibeSubagentRunnerService.js';
+
 // notification sounds on agent stop / completion / awaiting-user
 import './vibeNotifySoundService.js';
 import './vibeNotifySoundCommands.js';
@@ -682,6 +687,9 @@ import './vibeSubagentCommands.js';
 // VibeIDE: Subagent preset registry — typed presets + delegation heuristic
 import '../common/vibeSubagentRegistryService.js';
 
+// VibeIDE: Durable handoff store — persists stopped subagents' partial work for auto/manual resume
+import '../common/vibeSubagentHandoffStore.js';
+
 // VibeIDE: Roadmap Agent mode — orchestrates subagents from roadmap/plan source
 import './vibeRoadmapAgentContribution.js';
 
@@ -690,6 +698,12 @@ import '../common/vibeSubagentOrchestratorService.js';
 
 // VibeIDE: Subagent status bar — active subagent count + click → list picker
 import './vibeSubagentStatusBarContribution.js';
+
+// VibeIDE: «Субпин» — indicator + command for stopped subagents awaiting manual resume (durable handoff)
+import './vibeSubagentHandoffContribution.js';
+
+// VibeIDE: Live subagent start/finish notices in the chat thread (gated by vibeide.subagent.chatNotices)
+import './vibeSubagentChatNoticeContribution.js';
 
 // VibeIDE: Background job service — descriptor, tool policy, budget enforcement (§ J.2)
 import '../common/vibeBackgroundJobService.js';

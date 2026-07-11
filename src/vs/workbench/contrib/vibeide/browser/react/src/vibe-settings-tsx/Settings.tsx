@@ -15,6 +15,7 @@ import { useAccessor, useIsDark, useIsOptedOut, useMCPServiceState, useRefreshMo
 import { X, RefreshCw, Loader2, Check, Asterisk, Plus, ChevronRight, ChevronDown, ImageOff, Image, Play } from 'lucide-react';
 import { joinPath } from '../../../../../../../base/common/resources.js';
 import { ModelDropdown } from './ModelDropdown.js';
+import { AgentRoleModels } from './AgentRoleModels.js';
 import { VibeWorkspaceFormsPanel } from './VibeWorkspaceForms.js';
 import { ChatMarkdownRender } from '../markdown/ChatMarkdownRender.js';
 import { WarningBox } from './WarningBox.js';
@@ -2056,6 +2057,14 @@ const FeatureOptionsSettingsBody = () => {
 				</div>
 			</FeatureOptionsSectionCard>
 
+			{/* Vibe Agents — модель на роль (VA.2): relocated up here (after Tools). */}
+			<ErrorBoundary>
+				<FeatureOptionsSectionCard wide>
+					<h4 className={`text-base`}>Роли агентов — модель на роль</h4>
+					<AgentRoleModels />
+				</FeatureOptionsSectionCard>
+			</ErrorBoundary>
+
 			{/* YOLO Mode Section */}
 			<ErrorBoundary>
 				<FeatureOptionsSectionCard>
@@ -2189,6 +2198,7 @@ const FeatureOptionsSettingsBody = () => {
 
 				</FeatureOptionsSectionCard>
 			</ErrorBoundary>
+
 		</div>
 	);
 };
@@ -2670,6 +2680,10 @@ const ToolNormalizeCountersPanel = () => {
 	const notificationService = accessor.get('INotificationService');
 
 	const [counters, setCounters] = useState<Readonly<Record<NormalizeCounterKey, number>> | null>(null);
+	// Phase 3 drill-down: the same layer counters broken down per `${provider}:${model}` —
+	// answers "WHICH model is being carried by the normalization layers" without an A/B reset run.
+	const [countersByModel, setCountersByModel] = useState<Readonly<Record<string, Readonly<Record<NormalizeCounterKey, number>>>> | null>(null);
+	const [expandedModel, setExpandedModel] = useState<string | null>(null);
 
 	const layerLabel: Record<NormalizeCounterKey, string> = {
 		fullPath: safetyS.normalizeLayerFullPath,
@@ -2687,6 +2701,7 @@ const ToolNormalizeCountersPanel = () => {
 	const refresh = useCallback(async () => {
 		try {
 			setCounters(await llmMessageService.getNormalizeCounters());
+			setCountersByModel(await llmMessageService.getNormalizeCountersByModel());
 		} catch (e) {
 			notificationService.notify({ severity: Severity.Error, message: `${safetyS.normalizeLoadError}: ${e instanceof Error ? e.message : String(e)}` });
 		}
@@ -2738,6 +2753,43 @@ const ToolNormalizeCountersPanel = () => {
 						))}
 					</tbody>
 				</table>
+			)}
+			{/* Drill-down: per-(provider×model) breakdown of the same counters. Only models
+			    with at least one hit are listed; click a row to expand its layer table. */}
+			{countersByModel && Object.keys(countersByModel).length > 0 && (
+				<div className='mt-4'>
+					<h4 className='text-vibe-fg-3 mb-2'>По моделям — кто «тащит» слои:</h4>
+					{Object.entries(countersByModel)
+						.map(([modelKey, perLayer]) => ({ modelKey, perLayer, total: Object.values(perLayer).reduce((a, b) => a + b, 0) }))
+						.filter(e => e.total > 0)
+						.sort((a, b) => b.total - a.total)
+						.map(({ modelKey, perLayer, total }) => (
+							<div key={modelKey} className='border-t border-vibe-border-3'>
+								<button
+									type='button'
+									className='w-full flex justify-between items-center py-1 text-sm text-vibe-fg-2 hover:brightness-125 cursor-pointer'
+									onClick={() => setExpandedModel(prev => prev === modelKey ? null : modelKey)}
+								>
+									<span>{expandedModel === modelKey ? '▾' : '▸'} {modelKey}</span>
+									<span className='text-vibe-fg-3'>{total}</span>
+								</button>
+								{expandedModel === modelKey && (
+									<table className='w-full text-xs border-collapse mb-2'>
+										<tbody>
+											{(Object.keys(layerLabel) as NormalizeCounterKey[])
+												.filter(key => (perLayer[key] ?? 0) > 0)
+												.map(key => (
+													<tr key={key}>
+														<td className='py-0.5 pr-4 pl-4 text-vibe-fg-3'>{layerLabel[key]}</td>
+														<td className='py-0.5 text-vibe-fg-1'>{perLayer[key]}</td>
+													</tr>
+												))}
+										</tbody>
+									</table>
+								)}
+							</div>
+						))}
+				</div>
 			)}
 		</div>
 	);

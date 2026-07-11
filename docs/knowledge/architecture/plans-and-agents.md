@@ -170,3 +170,18 @@
 - `vibe-agent-run.js` — headless unattended agent runner (--list/--create-job/--status/--cancel/run); job descriptor `.vibe/jobs/<id>.json`
 
 **Применение:** golden eval — перед bump модели; agent-run — ночной job без открытого IDE.
+
+---
+
+## [архитектура] Phase 3b: headless-раннер ролей-субагентов (2026-07-06)
+
+**Контекст:** до 3b `_runSubagent` был MVP-заглушкой (50мс setTimeout) — роли Vibe Agents «исполнялись» симуляцией, LLM не вызывался. Реализован настоящий изолированный tool-loop.
+
+**Суть:**
+- **Слои:** контракт `common/vibeSubagentRunner.ts` (`IVibeSubagentRunner`; в common, чтобы `vibeSubagentService` мог DI-ить без нарушения слоёв) → реализация `browser/vibeSubagentRunnerService.ts` → pure-решения в `common/subagentLoopPolicy.ts` (тестируемы). Реестр пресетов DI-ится в раннер, НЕ в сервис (у реестра value-импорт типа из сервиса — избегаем цикла).
+- **Изоляция по I.0 = транскрипт + бюджет, НЕ процесс:** петля живёт в renderer на собственном in-memory `ChatMessage[]`; `vibeSubagentIsolationRuntime` (воркеры) для LLM-цикла осознанно не используется — петле нужны renderer-сервисы (LLM IPC, тулы, конвертер), тащить их в воркер = второй IPC-слой.
+- **Инструменты — двойной гейт:** prompt-side через ChatMode (read-only роли → `gather`: approval-тулы отсутствуют в промпте by-design; full-роли → `agent`) + runtime-side whitelist роли на каждом вызове (запрещённый тул = корректирующий `invalid_params` в контекст, до 5 отказов). Approval-тулы full-ролей — явный `IDialogService.confirm` (раннер обходит approval-поток chatThreadService, поэтому гейтит сам; авто-одобрение — отдельная фича, секция J).
+- **Завершение:** `vibe_complete` или проза без tool-call = success; лимиты (шаги/дедлайн/токен-оценка/отказы) = failed + truncated. `tokensUsed` — оценка chars/4 (провайдерский usage — будущее уточнение). Дедлайн прерывает и in-flight LLM-запрос через `llm.abort(requestId)`.
+- **ГОЧА, вскрытая раннером:** whitelist-таблицы ролей несли несуществующие имена тулов (`list_dir`/`write_file`/`semantic_search`/`run_terminal_command`) — заглушка не проверяла; исправлены на реальные builtin-ids (`ls_dir`/`rewrite_file`+`create_file_or_folder`/`search_for_files`/`run_command`). Урок: имена в whitelist'ах сверять с `builtinToolDefs`.
+
+**Применение:** «модель на роль» разблокирована — `SubagentRunRequest.modelSelection` готово, осталось `modelSelectionOfRole` в settings-state + UI. Следующие фазы: worktree для implement-step, inline-карточки прогресса, unattended-режим (J). Live-smoke: маршрут ролей на реальной задаче через «Показать маршрут ролей»/оркестратор.

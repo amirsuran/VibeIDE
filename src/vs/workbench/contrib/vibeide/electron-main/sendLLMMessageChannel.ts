@@ -15,7 +15,8 @@ import { sendLLMMessage } from './llmMessage/sendLLMMessage.js';
 import { IMetricsService } from '../common/metricsService.js';
 import { sendLLMMessageToProviderImplementation, clearProviderClientCaches } from './llmMessage/sendLLMMessage.impl.js';
 import { getDispatcherDiagnostics } from './llmMessage/systemCAFetch.js';
-import { getNormalizeCounters, resetNormalizeCounters } from '../common/xmlToolNormalize.js';
+import { getNormalizeCounters, getNormalizeCountersByModel, resetNormalizeCounters } from '../common/xmlToolNormalize.js';
+import { traceSendEvent, getSendTrace, clearSendTrace } from '../common/llmSendTrace.js';
 
 // NODE IMPLEMENTATION - calls actual sendLLMMessage() and returns listeners to it
 
@@ -100,6 +101,19 @@ export class LLMMessageChannel implements IServerChannel {
 				// A/B checks start from a clean slate.
 				resetNormalizeCounters();
 			}
+			else if (command === 'getNormalizeCountersByModel') {
+				// Diagnostic: same layer counters broken down per (provider×model) — evidence
+				// base for quirk auto-suggestions and the per-model drill-down.
+				return getNormalizeCountersByModel() as T;
+			}
+			else if (command === 'getSendTrace') {
+				// Diagnostic: send-path ring buffer (providers-sync / cache hit-miss / dispatcher /
+				// first-chunk / errors) for the «Проверка провайдеров» modal and its MD export.
+				return getSendTrace() as T;
+			}
+			else if (command === 'clearSendTrace') {
+				clearSendTrace();
+			}
 			else {
 				throw new Error(`VibeIDE sendLLM: command "${command}" not recognized.`);
 			}
@@ -113,30 +127,46 @@ export class LLMMessageChannel implements IServerChannel {
 	// the only place sendLLMMessage is actually called
 	private _callSendLLMMessage(params: MainSendLLMMessageParams) {
 		const { requestId } = params;
+		const providerName = params.modelSelection?.providerName;
+		const modelName = params.modelSelection?.modelName;
+		traceSendEvent({ kind: 'ipc-send', requestId, providerName, modelName });
 
 		if (!Object.hasOwn(this._infoOfRunningRequest, requestId)) { this._infoOfRunningRequest[requestId] = { waitForSend: undefined, abortRef: { current: null } }; }
 
+		let sawFirstChunk = false;
 		const mainThreadParams: SendLLMMessageParams = {
 			...params,
 			onText: (p) => {
+				if (!sawFirstChunk) {
+					sawFirstChunk = true;
+					traceSendEvent({ kind: 'first-chunk', requestId, providerName, modelName });
+				}
 				this.llmMessageEmitters.onText.fire({ requestId, ...p });
 			},
 			onFinalMessage: (p) => {
+				traceSendEvent({ kind: 'final', requestId, providerName, modelName, detail: `текст ${p.fullText.length} симв.` });
 				this.llmMessageEmitters.onFinalMessage.fire({ requestId, ...p });
 			},
 			onError: (p) => {
+				traceSendEvent({ kind: 'error', requestId, providerName, modelName, detail: p.message });
 				vibeLog.info('sendLLMMessageChannel', 'sendLLM: firing err');
 				this.llmMessageEmitters.onError.fire({ requestId, ...p });
 			},
 			abortRef: this._infoOfRunningRequest[requestId].abortRef,
 		};
 		const p = sendLLMMessage(mainThreadParams, this.metricsService);
+		// sendLLMMessage installs abortRef.current synchronously (before its first await),
+		// so this observation point reflects whether the provider impl armed its aborter.
+		if (this._infoOfRunningRequest[requestId].abortRef.current !== null) {
+			traceSendEvent({ kind: 'aborter-set', requestId, providerName, modelName });
+		}
 		this._infoOfRunningRequest[requestId].waitForSend = p;
 	}
 
 	private async _callAbort(params: MainLLMMessageAbortParams) {
 		const { requestId } = params;
 		if (!Object.hasOwn(this._infoOfRunningRequest, requestId)) { return; }
+		traceSendEvent({ kind: 'abort', requestId });
 		const { waitForSend, abortRef } = this._infoOfRunningRequest[requestId];
 		await waitForSend; // wait for the send to finish so we know abortRef was set
 		abortRef?.current?.();

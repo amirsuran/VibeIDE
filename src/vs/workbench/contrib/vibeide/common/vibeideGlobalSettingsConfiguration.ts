@@ -195,6 +195,12 @@ export class VibeideGlobalSettingsConfigurationContribution extends Disposable i
 					description: localize('vibeide.vibeServer.https.desc', 'Раздавать статический сервер по HTTPS с самоподписанным сертификатом (для secure-context: service workers, geolocation). Браузер покажет предупреждение о недоверенном сертификате.'),
 					scope: ConfigurationScope.RESOURCE,
 				},
+				'vibeide.vibeServer.cookieCompat': {
+					type: 'boolean',
+					default: true,
+					description: localize('vibeide.vibeServer.cookieCompat.desc', 'Чинить cookie-авторизацию во встроенном превью: пока вкладка превью показывает localhost-сайт, его Set-Cookie дополняются атрибутами SameSite=None; Secure — иначе браузер отбрасывает куки в cross-site iframe и логин на превью молча не работает. Действует только на loopback-адреса и только при открытом превью.'),
+					scope: ConfigurationScope.RESOURCE,
+				},
 				'vibeide.vibeServer.devScript': {
 					type: 'string',
 					default: '',
@@ -259,6 +265,19 @@ export class VibeideGlobalSettingsConfigurationContribution extends Disposable i
 					minimum: 0,
 					maximum: 168,
 					description: localize('vibeide.modelQuirks.refreshIntervalHours', 'Как часто (в часах) проверять обновления каталога через CDN. `0` — отключить периодический рефреш (только при старте IDE и по команде `VibeIDE: Refresh model quirks catalog`). Дефолт 24 часа. Изменение требует перезапуска IDE.'),
+					scope: ConfigurationScope.APPLICATION,
+				},
+				'vibeide.modelQuirks.autoSuggest': {
+					type: 'boolean',
+					default: true,
+					description: localize('vibeide.modelQuirks.autoSuggest', 'Предлагать закрепить XML-режим тулов для модели, которая раз за разом (в разных сессиях) уезжает в авто-даунгрейд из-за сломанных native tool-call. Предложение показывается один раз на модель; сбор статистики продолжается и при выключенной настройке.'),
+					scope: ConfigurationScope.APPLICATION,
+				},
+				'vibeide.modelQuirks.autoSuggestSessions': {
+					type: 'integer',
+					default: 2,
+					minimum: 1,
+					description: localize('vibeide.modelQuirks.autoSuggestSessions', 'После скольких РАЗНЫХ сессий с авто-даунгрейдом модели предлагать закрепить XML-режим насовсем. Дефолт 2: одна сессия может быть случайностью, повтор — уже паттерн.'),
 					scope: ConfigurationScope.APPLICATION,
 				},
 			},

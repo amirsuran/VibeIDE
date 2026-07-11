@@ -97,13 +97,26 @@ registerAction2(class extends Action2 {
 			return;
 		}
 
-		await quickInput.pick(
+		// Audit F: the picker used to be a read-only list. Now picking a LIVE subagent cancels
+		// it — dispose really stops the runner loop since audit A (hop-boundary check + in-flight
+		// LLM abort), so this is the missing UI for «остановить роль».
+		const picked = await quickInput.pick(
 			allEntries.map(e => ({
 				label: localize('vibeide.subagent.listItemLabel', '{0} — {1}', String(e.type), String(e.status)),
 				description: e.handoff.goal.slice(0, 80),
 				detail: localize('vibeide.subagent.listItemDetail', 'id: {0} | parent: {1}', String(e.id), String(e.parentThreadId)),
+				entryId: e.id,
+				entryLive: e.status === 'running' || e.status === 'pending',
 			})),
-			{ title: localize('vibeide.subagent.listTitle', 'Активные субагенты') }
+			{
+				title: localize('vibeide.subagent.listTitle', 'Активные субагенты'),
+				placeHolder: localize('vibeide.subagent.listPlaceholder', 'Выберите работающего субагента, чтобы отменить его'),
+			}
 		);
+		if (picked?.entryLive) {
+			subagentSvc.disposeSubagent(picked.entryId);
+			const notifications = accessor.get(INotificationService);
+			notifications.notify({ severity: Severity.Info, message: localize('vibeide.subagent.cancelled', 'Субагент {0} отменён.', picked.label) });
+		}
 	}
 });

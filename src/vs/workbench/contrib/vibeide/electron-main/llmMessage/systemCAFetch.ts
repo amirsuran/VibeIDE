@@ -5,6 +5,7 @@
 
 
 import { vibeLog } from '../../common/vibeLog.js';
+import { traceSendEvent } from '../../common/llmSendTrace.js';
 import * as tls from 'tls';
 import { Agent, setGlobalDispatcher } from 'undici';
 
@@ -83,6 +84,7 @@ export const ensureSystemCADispatcher = (): Agent => {
 			vibeLog.warn('systemCAFetch', 'setGlobalDispatcher failed:', (e as Error).message);
 		}
 	}
+	traceSendEvent({ kind: 'dispatcher-create', detail: `пул #${_dispatcherId}` });
 	vibeLog.info('systemCAFetch', `[dispatcher] created shared undici pool #${_dispatcherId}`);
 	return _dispatcher;
 };
@@ -105,6 +107,7 @@ export const resetSystemCADispatcher = (): Agent => {
 	} catch (e) {
 		vibeLog.warn('systemCAFetch', 'setGlobalDispatcher (reset) failed:', (e as Error).message);
 	}
+	traceSendEvent({ kind: 'dispatcher-reset', detail: `пул → #${_dispatcherId}` });
 	vibeLog.warn('systemCAFetch', `[dispatcher] reset shared undici pool → #${_dispatcherId} (old pool destroyed)`);
 	// Tear down the old pool AFTER swapping so in-flight requests on it fail fast
 	// instead of pinning sockets. Fire-and-forget — destroy() rejects in-flight requests.

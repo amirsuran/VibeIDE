@@ -1434,7 +1434,7 @@ export interface IConvertToLLMMessageService {
 	/** Build a composition breakdown of the prompt for the selected model (powers the Context Report command). Read-only — sends nothing. */
 	buildContextBreakdown(modelSelection: ModelSelection | null): Promise<ContextBreakdown>;
 	prepareLLMSimpleMessages: (opts: { simpleMessages: SimpleLLMMessage[]; systemMessage: string; modelSelection: ModelSelection | null; featureName: FeatureName }) => { messages: LLMChatMessage[]; separateSystemMessage: string | undefined };
-	prepareLLMChatMessages: (opts: { chatMessages: ChatMessage[]; chatMode: ChatMode; modelSelection: ModelSelection | null; repoIndexerPromise?: Promise<{ results: string[]; metrics: QueryMetrics } | null> }) => Promise<{ messages: LLMChatMessage[]; separateSystemMessage: string | undefined }>;
+	prepareLLMChatMessages: (opts: { chatMessages: ChatMessage[]; chatMode: ChatMode; modelSelection: ModelSelection | null; repoIndexerPromise?: Promise<{ results: string[]; metrics: QueryMetrics } | null>; skipContextGuardUpdate?: boolean }) => Promise<{ messages: LLMChatMessage[]; separateSystemMessage: string | undefined }>;
 	prepareFIMMessage(opts: { messages: LLMFIMMessage; modelSelection: ModelSelection | null; featureName: FeatureName; languageId?: string }): { prefix: string; suffix: string; stopTokens: string[] };
 	startRepoIndexerQuery: (chatMessages: ChatMessage[], chatMode: ChatMode) => Promise<{ results: string[]; metrics: QueryMetrics } | null>;
 	/** Feed back a provider-reported prompt token count so the token-budget estimator can self-calibrate per (provider×model). No-op until a prompt has been built for that model this session. */
@@ -1877,8 +1877,14 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 		};
 	};
 
-	prepareLLMChatMessages: IConvertToLLMMessageService['prepareLLMChatMessages'] = async ({ chatMessages, chatMode, modelSelection, repoIndexerPromise }) => {
+	prepareLLMChatMessages: IConvertToLLMMessageService['prepareLLMChatMessages'] = async ({ chatMessages, chatMode, modelSelection, repoIndexerPromise, skipContextGuardUpdate }) => {
 		if (modelSelection === null) { return { messages: [], separateSystemMessage: undefined }; }
+
+		// Subagents run against the SAME context-guard singleton as the main thread. Writing this
+		// role's context size into it would clobber the parent thread's «Контекст/Окно» meter with
+		// the subagent's prompt. A subagent is bounded by its own token quota and reports its own
+		// usage — so it must NOT mutate the shared guard. `ctxGuard` is null-guarded at every write.
+		const ctxGuard = skipContextGuardUpdate ? undefined : this.contextGuardService;
 
 		const { overridesOfModel } = this.vibeideSettingsService.state;
 
@@ -2270,7 +2276,7 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 
 		// Clear any stale budget-fill stats from a previous build; the truncation branch below
 		// repopulates them when it fires. Keeps the UI transparency indicator accurate.
-		try { this.contextGuardService.setTruncationStats(undefined, undefined); } catch { }
+		try { ctxGuard?.setTruncationStats(undefined, undefined); } catch { }
 
 		// NOTE: ContextGuard status updates intentionally moved to AFTER both
 		// truncation passes. Previously we called updateUsage(beforeTokens, …)
@@ -2346,11 +2352,11 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 				systemMessage = (systemMessage || '') + summary;
 				llmMessages = keep;
 				// Surface budget-fill transparency to the UI: N kept full / M summarized.
-				try { this.contextGuardService.setTruncationStats(keep.length, head.length); } catch { }
+				try { ctxGuard?.setTruncationStats(keep.length, head.length); } catch { }
 			}
 			const afterTokens = approximateTotalTokens(llmMessages, systemMessage, aiInstructions);
 			// Update status bar to reflect post-truncation size; suppress popup (user sees % in status bar)
-			try { this.contextGuardService.updateUsage(Math.round(afterTokens * calibrationFactor), contextWindow); } catch { }
+			try { ctxGuard?.updateUsage(Math.round(afterTokens * calibrationFactor), contextWindow); } catch { }
 			vibeLog.debug('convertToLLMMessage', `Context smart truncation (budget-fill): ~${beforeTokens} → ~${afterTokens} tokens (kept ${llmMessages.length} msgs full, ${head.length} summarized)`); recordChatTrace('context:truncated', { before: beforeTokens, after: afterTokens });
 		}
 
@@ -2453,8 +2459,8 @@ class ConvertToLLMMessageService extends Disposable implements IConvertToLLMMess
 		}
 
 		// Reflect the final number on the status bar.
-		try { this.contextGuardService.setCalibrationFactor(calibrationEnabled ? calibrationFactor : undefined); } catch { }
-		try { this.contextGuardService.updateUsage(Math.round(currentTokens * calibrationFactor), contextWindow); } catch { }
+		try { ctxGuard?.setCalibrationFactor(calibrationEnabled ? calibrationFactor : undefined); } catch { }
+		try { ctxGuard?.updateUsage(Math.round(currentTokens * calibrationFactor), contextWindow); } catch { }
 
 		// Pair this turn's RAW estimate of the sent payload with the provider's reported
 		// promptTokens (arrives later via recordActualPromptTokens) to self-calibrate the budget.
