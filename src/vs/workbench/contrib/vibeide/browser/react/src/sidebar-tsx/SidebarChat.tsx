@@ -28,7 +28,7 @@ import { ChatMode, displayInfoOfProviderName, FeatureName, isFeatureNameDisabled
 import { ICommandService } from '../../../../../../../platform/commands/common/commands.js';
 import { WarningBox } from '../vibe-settings-tsx/WarningBox.js';
 import { getModelCapabilities, getIsReasoningEnabledState, getReservedOutputTokenSpace } from '../../../../common/modelCapabilities.js';
-import { AlertTriangle, File, Ban, Check, ChevronRight, ChevronDown, Dot, FileIcon, Pencil, Undo, Undo2, X, Flag, Copy as CopyIcon, Info, CirclePlus, Ellipsis, CircleEllipsis, Folder, ALargeSmall, TypeOutline, Text, Image as ImageIcon, FileText, LoaderCircle, Maximize2, Maximize, Pin, FileDown, RotateCcw, StepForward } from 'lucide-react';
+import { AlertTriangle, File, Ban, Check, ChevronRight, ChevronDown, Dot, FileIcon, Pencil, Undo, Undo2, X, Flag, Copy as CopyIcon, Info, CirclePlus, Ellipsis, CircleEllipsis, Folder, ALargeSmall, TypeOutline, Text, Paperclip, Waypoints, LoaderCircle, Maximize2, Maximize, Pin, FileDown, RotateCcw, StepForward } from 'lucide-react';
 import { ChatMessage, CheckpointEntry, StagingSelectionItem, ToolMessage, PlanMessage, ReviewMessage, PlanStep, StepStatus, PlanApprovalState, ChatImageAttachment, ChatPDFAttachment, normalizePendingInjections } from '../../../../common/chatThreadServiceTypes.js';
 import { formatChatTimestamp, chatTimestampToISO, CHAT_TIMESTAMP_STREAMING_PLACEHOLDER } from '../../../../common/chatTimestampFormatter.js';
 import { BuiltinToolCallParams, BuiltinToolName, ToolName, LintErrorItem, ToolApprovalType, toolApprovalTypes } from '../../../../common/toolsServiceTypes.js';
@@ -999,6 +999,44 @@ interface VibeideChatAreaProps {
 const CONTINUE_TEXT_KEY = 'vibeide.chat.continueButtonText';
 const CONTINUE_TEXT_DEFAULT = 'продолжи';
 
+/**
+ * Launch the role-route («Выполнить маршрут ролей») from the composer. Opens a proper modal with a
+ * «Промпт для субагента» field instead of funneling the user into the thin command-palette quick-input.
+ * On confirm it runs the existing command with the prompt as an argument.
+ */
+const ChatRunRouteButton = () => {
+	const accessor = useAccessor();
+	const openRouteModal = useCallback(async () => {
+		const modal = accessor.get('IVibeModalService');
+		const commandService = accessor.get('ICommandService');
+		const { buttonId, inputValue } = await modal.showModal({
+			title: 'Выполнить маршрут ролей',
+			body: 'Команда ролей (планировщик → разработчики → ревьюер → QA → security) выполнит задачу под автопилотом. Опишите её так же, как поставили бы отдельному агенту — security подключится сам на чувствительных темах.',
+			input: { label: 'Промпт для субагента', placeholder: 'например: добавить и проверить страницу входа через OAuth', multiline: true },
+			buttons: [
+				{ id: 'run', label: 'Запустить', role: 'primary' },
+				{ id: 'cancel', label: 'Отмена', role: 'secondary' },
+			],
+			size: 'medium',
+		});
+		if (buttonId === 'run' && inputValue?.trim()) {
+			commandService.executeCommand('vibeide.vibeAgents.executeRoute', inputValue.trim());
+		}
+	}, [accessor]);
+
+	return (
+		<button
+			type="button"
+			onClick={openRouteModal}
+			className="flex-shrink-0 p-1.5 rounded-xl hover:bg-vibe-bg-2-alt text-vibe-fg-4 hover:text-vibe-fg-2 transition-colors"
+			aria-label={chatS.runRouteAria}
+			title={chatS.runRouteTitle}
+		>
+			<Waypoints size={16} />
+		</button>
+	);
+};
+
 const ChatContinueButton = ({ onSend }: { onSend: (text: string) => void }) => {
 	const accessor = useAccessor();
 	const configurationService = accessor.get('IConfigurationService');
@@ -1109,8 +1147,7 @@ export const VibeChatArea: React.FC<VibeideChatAreaProps> = ({
 	onContinue,
 }) => {
 	const [isDragOver, setIsDragOver] = React.useState(false);
-	const imageInputRef = React.useRef<HTMLInputElement>(null);
-	const pdfInputRef = React.useRef<HTMLInputElement>(null);
+	const attachInputRef = React.useRef<HTMLInputElement>(null);
 	const containerRef = React.useRef<HTMLDivElement>(null);
 
 	// Paste of files (images / PDFs) is handled directly on the textarea via onPaste prop in VibeInputBox2 —
@@ -1165,32 +1202,16 @@ export const VibeChatArea: React.FC<VibeideChatAreaProps> = ({
 		}
 	};
 
-	const handleImageUploadClick = () => {
-		imageInputRef.current?.click();
-	};
-
-	const handlePDFUploadClick = () => {
-		pdfInputRef.current?.click();
-	};
-
-	const handleImageInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-		const files = Array.from(e.target.files || []).filter(file =>
-			file.type.startsWith('image/')
-		);
-		if (files.length > 0 && onImageDrop) {
-			onImageDrop(files);
-		}
-		e.target.value = ''; // Reset input
-	};
-
-	const handlePDFInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-		const files = Array.from(e.target.files || []).filter(file =>
-			file.type === 'application/pdf'
-		);
-		if (files.length > 0 && onPDFDrop) {
-			onPDFDrop(files);
-		}
-		e.target.value = ''; // Reset input
+	// Unified «скрепка»: one picker for both images and PDFs — routed to the right handler by type.
+	// There's no meaningful difference to the user between «attach image» and «attach PDF».
+	const handleAttachUploadClick = () => { attachInputRef.current?.click(); };
+	const handleAttachInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+		const all = Array.from(e.target.files || []);
+		const images = all.filter(f => f.type.startsWith('image/'));
+		const pdfs = all.filter(f => f.type === 'application/pdf');
+		if (images.length > 0 && onImageDrop) { onImageDrop(images); }
+		if (pdfs.length > 0 && onPDFDrop) { onPDFDrop(pdfs); }
+		e.target.value = '';
 	};
 
 	return (
@@ -1226,22 +1247,14 @@ export const VibeChatArea: React.FC<VibeideChatAreaProps> = ({
 			onDragLeave={handleDragLeave}
 			onDrop={handleDrop}
 		>
-			{/* Hidden file inputs - separate for images and PDFs */}
+			{/* Hidden file input — one «скрепка» picker for both images and PDFs */}
 			<input
-				ref={imageInputRef}
+				ref={attachInputRef}
 				type="file"
-				accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
+				accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml,application/pdf"
 				multiple
 				className="hidden"
-				onChange={handleImageInputChange}
-			/>
-			<input
-				ref={pdfInputRef}
-				type="file"
-				accept="application/pdf"
-				multiple
-				className="hidden"
-				onChange={handlePDFInputChange}
+				onChange={handleAttachInputChange}
 			/>
 
 			{/* Image attachments section */}
@@ -1268,27 +1281,19 @@ export const VibeChatArea: React.FC<VibeideChatAreaProps> = ({
 
 				{/* Right-side icon bar - Cursor style */}
 				<div className="flex items-center gap-1 flex-shrink-0 pb-0.5">
-					{/* Image upload button */}
+					{/* Attach button — one «скрепка» for images and PDFs */}
 					<button
 						type="button"
-						onClick={handleImageUploadClick}
+						onClick={handleAttachUploadClick}
 						className="flex-shrink-0 p-1.5 rounded-xl hover:bg-vibe-bg-2-alt text-vibe-fg-4 hover:text-vibe-fg-2 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-						aria-label={chatS.uploadImagesAria}
-						title={chatS.uploadImagesTitle}
+						aria-label={chatS.attachAria}
+						title={chatS.attachTitle}
 					>
-						<ImageIcon size={16} />
+						<Paperclip size={16} />
 					</button>
 
-					{/* PDF upload button */}
-					<button
-						type="button"
-						onClick={handlePDFUploadClick}
-						className="flex-shrink-0 p-1.5 rounded-xl hover:bg-vibe-bg-2-alt text-vibe-fg-4 hover:text-vibe-fg-2 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-						aria-label={chatS.uploadPdfsAria}
-						title={chatS.uploadPdfsTitle}
-					>
-						<FileText size={16} />
-					</button>
+					{/* Run role-route button — opens a modal to launch «Выполнить маршрут ролей» */}
+					<ChatRunRouteButton />
 
 					{/* Quick-continue button — left of the send arrow, hidden while streaming */}
 					{!isStreaming && onContinue && <ChatContinueButton onSend={onContinue} />}

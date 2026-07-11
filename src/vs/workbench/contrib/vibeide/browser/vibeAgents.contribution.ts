@@ -70,17 +70,21 @@ registerAction2(
 		// Audit H: `executeRoute` existed since VA.3 but had NO user-facing entry — roles could
 		// be planned, never launched. Progress is visible on the subagent status-bar counter;
 		// a running role can be cancelled from its picker (audit F).
-		async run(accessor: ServicesAccessor): Promise<void> {
+		async run(accessor: ServicesAccessor, taskArg?: string): Promise<void> {
 			const quickInput = accessor.get(IQuickInputService);
 			const orchestrator = accessor.get(IVibeSubagentOrchestratorService);
 			const notice = accessor.get(INotificationService);
 			const chatThreadService = accessor.get(IChatThreadService);
 			const settings = accessor.get(IVibeideSettingsService);
 
-			const task = await quickInput.input({
-				title: localize('vibeAgents.executeRoute.title', "Опишите задачу — команда ролей выполнит её"),
-				placeHolder: localize('vibeAgents.executeRoute.placeholder', "например: добавить страницу входа через OAuth"),
-			});
+			// Prompt is passed directly by the in-chat «маршрут ролей» modal; the command-palette entry
+			// falls back to the quick-input. Either way we end up with a non-empty task string.
+			const task = (typeof taskArg === 'string' && taskArg.trim())
+				? taskArg
+				: await quickInput.input({
+					title: localize('vibeAgents.executeRoute.title', "Опишите задачу — команда ролей выполнит её"),
+					placeHolder: localize('vibeAgents.executeRoute.placeholder', "например: добавить страницу входа через OAuth"),
+				});
 			if (!task?.trim()) {
 				return;
 			}
