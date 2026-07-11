@@ -34,6 +34,7 @@
 | [doc-structure.md](architecture/doc-structure.md) | Структура документации проекта |
 | [two-patches-folders.md](architecture/two-patches-folders.md) | `patches-node-modules/` vs `patches-vscode-source/` |
 | [model-quirks.md](architecture/model-quirks.md) | Catalog-driven per-model quirks (temperature/topP/topK/reasoning/tool-format) — `resources/model-quirks.json` + CDN refresh |
+| [model-pricing.md](architecture/model-pricing.md) | Прайс моделей: `getModelCapabilities().cost` (USD/1M), `{0,0}`=«неизвестно»≠$0; **ловушка**: каталожный cost per-token → `modelRouter.costPerM` врёт в 1e6 раз |
 | [xml-tool-normalization.md](architecture/xml-tool-normalization.md) | XML tool-call pipeline (Layer 1 normalize / Layer 2 parser / Layer 3 safety net), DSML/self-closing/malformed-close coverage |
 | [xml-tool-format-matrix.md](architecture/xml-tool-format-matrix.md) | Living matrix: vendor × provider × format × coverage layer × test fixture |
 | [context-report.md](architecture/context-report.md) | Команда `vibeide.context.status` (аналог `/context`): `buildContextBreakdown` считает состав промпта по живым геттерам, шкала из context-guard, история — остаток; рендер в untitled-md |
