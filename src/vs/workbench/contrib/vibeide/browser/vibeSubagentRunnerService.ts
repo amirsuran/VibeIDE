@@ -104,8 +104,18 @@ class VibeSubagentRunnerService extends Disposable implements IVibeSubagentRunne
 			const stop = decideStop({ stepsDone, tokensUsedEst, deniedActions, nowMs: Date.now(), cancelled: req.cancellationToken?.isCancellationRequested === true }, limits);
 			if (stop) {
 				const reason = stopReasonToRussian(stop);
-				this._activityLog.logError(`Subagent ${req.subagentId}: остановлен — ${reason}`);
-				return this._outcome(req, 'failed', `Роль «${preset.displayName}» не успела завершить задачу: ${reason}. Последний вывод: ${lastText}`, artifacts, tokensUsedEst, true, reason, touchedPaths);
+				const modelLabel = `${modelSelection.providerName}/${modelSelection.modelName}`;
+				// token-budget is VibeIDE's OWN per-subagent cap, not the provider's quota — say so
+				// and show the numbers, so «исчерпана квота» isn't misread as a provider limit.
+				const budgetNote = stop === 'token-budget'
+					? ` (лимит VibeIDE на субагента, не квота провайдера: ~${tokensUsedEst}/${limits.maxTokensEst} токенов)`
+					: '';
+				this._activityLog.logError(`Subagent ${req.subagentId}: остановлен — ${reason} (${modelLabel})`);
+				// Soft degradation: NOT a hard failure. Keep the partial result (lastText + artifacts +
+				// touched paths) and return status 'stopped' so the route/report shows partial work that
+				// can be resumed, instead of discarding it as «failed».
+				const summary = `Роль «${preset.displayName}» остановлена: ${reason}${budgetNote}. Модель ${modelLabel}. Частичный результат сохранён — работу можно продолжить. Последний вывод: ${lastText}`;
+				return this._outcome(req, 'stopped', summary, artifacts, tokensUsedEst, true, reason, touchedPaths);
 			}
 			stepsDone++;
 
@@ -259,7 +269,7 @@ class VibeSubagentRunnerService extends Disposable implements IVibeSubagentRunne
 		} as ChatMessage;
 	}
 
-	private _outcome(req: SubagentRunRequest, status: 'success' | 'failed', summary: string, artifacts: string[], tokensUsedEst: number, truncated: boolean, stopReason: string, touchedPaths: string[]): SubagentRunOutcome {
+	private _outcome(req: SubagentRunRequest, status: 'success' | 'failed' | 'stopped', summary: string, artifacts: string[], tokensUsedEst: number, truncated: boolean, stopReason: string, touchedPaths: string[]): SubagentRunOutcome {
 		return {
 			status,
 			summary: truncateSummary(summary, MAX_SUMMARY_CHARS),

@@ -37,7 +37,7 @@ export type SubagentType =
 	| 'explore' | 'implement-step' | 'recover-or-skip'
 	// Vibe Agents — curated role pack (VA). Read-only roles get a read-only tool whitelist.
 	| 'orchestrator' | 'planner' | 'designer' | 'frontend-dev' | 'backend-dev' | 'code-reviewer' | 'qa' | 'security';
-export type SubagentStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped' | 'disposed';
+export type SubagentStatus = 'pending' | 'running' | 'completed' | 'failed' | 'stopped' | 'skipped' | 'disposed';
 
 /** What the parent sends to spawn a subagent */
 export interface SubagentHandoff {
@@ -70,7 +70,7 @@ export interface SubagentHandoff {
 /** Compact result returned to the parent — bounded by MAX_RESULT_CHARS */
 export interface SubagentResult {
 	subagentId: string;
-	status: 'success' | 'failed' | 'skipped';
+	status: 'success' | 'failed' | 'stopped' | 'skipped';
 	/** Brief summary (≤500 chars) */
 	summary: string;
 	/** Changed file paths (if any) */
@@ -349,7 +349,7 @@ class VibeSubagentService extends Disposable implements IVibeSubagentService {
 			artifacts: outcome.artifacts,
 			tokensUsed: outcome.tokensUsedEst,
 			truncated: outcome.truncated || undefined,
-			...(outcome.status === 'failed' ? { reason: outcome.stopReason } : {}),
+			...(outcome.status !== 'success' ? { reason: outcome.stopReason } : {}),
 			...(outcome.exploreReport ? { exploreReport: outcome.exploreReport } : {}),
 		};
 
@@ -364,7 +364,7 @@ class VibeSubagentService extends Disposable implements IVibeSubagentService {
 			this._ctsById.delete(entry.id);
 		}
 		entry.result = result;
-		entry.status = result.status === 'success' ? 'completed' : (result.status === 'skipped' ? 'skipped' : 'failed');
+		entry.status = result.status === 'success' ? 'completed' : (result.status === 'skipped' ? 'skipped' : (result.status === 'stopped' ? 'stopped' : 'failed'));
 		this._onStatusChanged.fire(entry);
 		this._audit.append({ ts: Date.now(), action: 'subagent_completed', ok: result.status === 'success', meta: { subagentId: entry.id, status: result.status, tokensUsed: result.tokensUsed } });
 

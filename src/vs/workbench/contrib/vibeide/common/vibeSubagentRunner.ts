@@ -41,7 +41,7 @@ export interface SubagentRunRequest {
 }
 
 export interface SubagentRunOutcome {
-	readonly status: 'success' | 'failed';
+	readonly status: 'success' | 'failed' | 'stopped';
 	/** Compact summary (≤500 chars — the handoff contract). */
 	readonly summary: string;
 	/** File paths touched by write-tools during the run. */

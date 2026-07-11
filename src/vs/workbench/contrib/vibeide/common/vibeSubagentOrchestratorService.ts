@@ -170,7 +170,10 @@ class VibeSubagentOrchestratorService extends Disposable implements IVibeSubagen
 				// Record failed results too (so the user sees the reason), then stop the route below;
 				// only successful summaries flow to the next stage as context.
 				results.push(r);
-				if (r.status === 'failed') {
+				// 'stopped' (partial by limit) also halts forward progress — the next stage must not
+				// build on incomplete upstream work — but its partial summary stays in `results` for the
+				// report and for a future resume/handoff (durable-handoff workstream).
+				if (r.status !== 'success') {
 					failed = true;
 				} else if (r.summary) {
 					summaries.push(r.summary);
