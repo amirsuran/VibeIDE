@@ -189,23 +189,32 @@ class VibeSubagentRunnerService extends Disposable implements IVibeSubagentRunne
 				continue;
 			}
 
-			// Approval gate: the runner bypasses the chat-thread approval flow, so
-			// approval-requiring tools (writes/terminal) get an explicit user confirm here.
-			if (Object.hasOwn(approvalTypeOfBuiltinToolName, toolName)) {
-				const { confirmed } = await this._dialogService.confirm({
-					message: localize('vibeide.subagentRunner.approve', "Субагент-роль «{0}» запрашивает инструмент «{1}»", preset.displayName, toolName),
-					detail: localize('vibeide.subagentRunner.approveDetail', "Параметры: {0}", truncateSummary(JSON.stringify(toolCall.rawParams), 300)),
-					primaryButton: localize('vibeide.subagentRunner.approveBtn', "Разрешить"),
-				});
-				if (!confirmed) {
-					deniedActions++;
-					history.push({
-						role: 'tool', type: 'rejected', result: null,
-						name: toolName as ToolName, params: params as never,
-						content: 'Пользователь отклонил вызов инструмента. Предложи другой путь или заверши задачу.',
-						id: toolCall.id || generateUuid(), rawParams: toolCall.rawParams, mcpServerName: undefined,
-					} as ChatMessage);
-					continue;
+			// Approval gate: the runner bypasses the chat-thread approval flow, so approval-requiring
+			// tools (writes/terminal) get an explicit user confirm here — UNLESS the parent's own
+			// auto-approve gates already opt in. We mirror chatThreadService exactly (constraints are
+			// INHERITED from the parent, never weakened AND never strengthened): autopilot approves
+			// everything; otherwise the per-type `autoApprove` opt-in applies. So under autopilot a
+			// role runs tools without asking, same as the main agent.
+			const approvalType = approvalTypeOfBuiltinToolName[toolName];
+			if (approvalType) {
+				const gs = this._settings.state.globalSettings;
+				const autoApproved = gs.chatAgentAutopilot === true || gs.autoApprove[approvalType] === true;
+				if (!autoApproved) {
+					const { confirmed } = await this._dialogService.confirm({
+						message: localize('vibeide.subagentRunner.approve', "Субагент-роль «{0}» запрашивает инструмент «{1}»", preset.displayName, toolName),
+						detail: localize('vibeide.subagentRunner.approveDetail', "Параметры: {0}", truncateSummary(JSON.stringify(toolCall.rawParams), 300)),
+						primaryButton: localize('vibeide.subagentRunner.approveBtn', "Разрешить"),
+					});
+					if (!confirmed) {
+						deniedActions++;
+						history.push({
+							role: 'tool', type: 'rejected', result: null,
+							name: toolName as ToolName, params: params as never,
+							content: 'Пользователь отклонил вызов инструмента. Предложи другой путь или заверши задачу.',
+							id: toolCall.id || generateUuid(), rawParams: toolCall.rawParams, mcpServerName: undefined,
+						} as ChatMessage);
+						continue;
+					}
 				}
 			}
 
