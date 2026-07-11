@@ -5,6 +5,7 @@
 
 import { approvalTypeOfBuiltinToolName } from './prompt/tools/index.js';
 import type { ExploreSubagentReport } from './vibeSubagentService.js';
+import type { LLMTokenUsage } from './sendLLMMessageTypes.js';
 
 /**
  * Pure decision logic for the headless subagent tool-loop (Phase 3b).
@@ -18,6 +19,22 @@ export const SUBAGENT_MAX_DENIED_ACTIONS = 5;
 /** Rough chars→tokens estimate (≈4 chars/token) — used for the subagent quota, flagged as estimate. */
 export function estimateTokensFromChars(chars: number): number {
 	return Math.ceil(Math.max(0, chars) / 4);
+}
+
+/**
+ * Real per-hop token cost for the subagent quota, from the provider's reported usage:
+ * uncached input (prompt − prompt-cache hits) + output. Prompt-cached re-sent history is
+ * excluded, so later hops are charged only their genuine delta. Falls back to the char
+ * estimate when usage is absent (e.g. an early abort/timeout yields no usage). This avoids
+ * the chars/4-of-`JSON.stringify(messages)` proxy, which overcounts input ~2-3× (JSON
+ * key/escape overhead) and exhausted a role's quota on the very first hop.
+ */
+export function hopTokenCost(usage: LLMTokenUsage | undefined, fallbackChars: number): number {
+	if (usage && (usage.promptTokens !== undefined || usage.completionTokens !== undefined)) {
+		const uncachedInput = Math.max(0, (usage.promptTokens ?? 0) - (usage.cachedInputTokens ?? 0));
+		return uncachedInput + (usage.completionTokens ?? 0);
+	}
+	return estimateTokensFromChars(fallbackChars);
 }
 
 export interface SubagentLoopLimits {

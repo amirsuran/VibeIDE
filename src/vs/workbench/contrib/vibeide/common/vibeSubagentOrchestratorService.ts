@@ -156,13 +156,23 @@ class VibeSubagentOrchestratorService extends Disposable implements IVibeSubagen
 			const stageResults = await Promise.all(stage.map(role => this._runRole(role, parentThreadId, taskText, priorSummary)));
 			let failed = false;
 			const summaries: string[] = [];
-			for (const r of stageResults) {
-				if (!r || r.status === 'failed') {
-					failed = true;
-					continue;
-				}
+			for (let i = 0; i < stageResults.length; i++) {
+				// A spawn/run exception yields `undefined` (no SubagentResult) — synthesize a failed
+				// result so the route report always names the role and its failure instead of showing
+				// an empty report.
+				const r: SubagentResult = stageResults[i] ?? {
+					subagentId: stage[i],
+					status: 'failed',
+					summary: '',
+					reason: localize('subagent.spawnFailed', "Спавн или запуск роли не удался"),
+					tokensUsed: 0,
+				};
+				// Record failed results too (so the user sees the reason), then stop the route below;
+				// only successful summaries flow to the next stage as context.
 				results.push(r);
-				if (r.summary) {
+				if (r.status === 'failed') {
+					failed = true;
+				} else if (r.summary) {
 					summaries.push(r.summary);
 				}
 			}

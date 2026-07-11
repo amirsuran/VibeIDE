@@ -6,7 +6,7 @@
 
 import * as assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { decideStop, estimateTokensFromChars, truncateSummary, chatModeForAllowedTools, collectPathsFromRawParams, buildExploreReport, buildSubagentTaskMessage } from '../../common/subagentLoopPolicy.js';
+import { decideStop, estimateTokensFromChars, hopTokenCost, truncateSummary, chatModeForAllowedTools, collectPathsFromRawParams, buildExploreReport, buildSubagentTaskMessage } from '../../common/subagentLoopPolicy.js';
 
 const LIMITS = { maxSteps: 5, maxTokensEst: 1000, deadlineAtMs: 10_000, maxDeniedActions: 3 };
 const OK_STATE = { stepsDone: 1, tokensUsedEst: 100, deniedActions: 0, nowMs: 5000, cancelled: false };
@@ -62,6 +62,22 @@ suite('subagentLoopPolicy — headless tool-loop decisions (Phase 3b)', () => {
 				[0.35, 'retry'],
 				[true, true, true, true],
 			],
+		);
+	});
+
+	test('hopTokenCost: real usage charges uncached input + output; excludes cache hits; falls back to char estimate', () => {
+		assert.deepStrictEqual(
+			[
+				// usage present: (promptTokens - cachedInputTokens) + completionTokens
+				hopTokenCost({ promptTokens: 7480, completionTokens: 110, cachedInputTokens: 128 }, 99999),
+				// no cache field → full prompt + completion
+				hopTokenCost({ promptTokens: 1000, completionTokens: 50 }, 99999),
+				// cache hit never drives the charge below zero
+				hopTokenCost({ promptTokens: 100, completionTokens: 0, cachedInputTokens: 500 }, 99999),
+				// usage absent → char estimate fallback (chars/4)
+				hopTokenCost(undefined, 40),
+			],
+			[7462, 1050, 0, 10],
 		);
 	});
 });

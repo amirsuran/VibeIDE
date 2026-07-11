@@ -10,7 +10,7 @@ import { generateUuid } from '../../../../base/common/uuid.js';
 import { registerSingleton, InstantiationType } from '../../../../platform/instantiation/common/extensions.js';
 import { IDialogService } from '../../../../platform/dialogs/common/dialogs.js';
 import { ILLMMessageService } from '../common/sendLLMMessageService.js';
-import { RawToolCallObj, LLMChatMessage } from '../common/sendLLMMessageTypes.js';
+import { RawToolCallObj, LLMChatMessage, LLMTokenUsage } from '../common/sendLLMMessageTypes.js';
 import { ModelSelection } from '../common/vibeideSettingsTypes.js';
 import { IVibeideSettingsService } from '../common/vibeideSettingsService.js';
 import { ChatMessage } from '../common/chatThreadServiceTypes.js';
@@ -19,7 +19,7 @@ import { approvalTypeOfBuiltinToolName } from '../common/prompt/tools/index.js';
 import { truncateHeadTail } from '../common/toolHardening.js';
 import { IVibeSubagentRunner, SubagentRunRequest, SubagentRunOutcome } from '../common/vibeSubagentRunner.js';
 import { IVibeSubagentRegistryService } from '../common/vibeSubagentRegistryService.js';
-import { decideStop, estimateTokensFromChars, truncateSummary, chatModeForAllowedTools, collectPathsFromRawParams, buildExploreReport, buildSubagentTaskMessage, stopReasonToRussian, SUBAGENT_MAX_DENIED_ACTIONS } from '../common/subagentLoopPolicy.js';
+import { decideStop, hopTokenCost, truncateSummary, chatModeForAllowedTools, collectPathsFromRawParams, buildExploreReport, buildSubagentTaskMessage, stopReasonToRussian, SUBAGENT_MAX_DENIED_ACTIONS } from '../common/subagentLoopPolicy.js';
 import { IConvertToLLMMessageService } from './convertToLLMMessageService.js';
 import { IToolsService } from './toolsService.js';
 import { IVibeAgentActivityLogService } from './vibeAgentActivityLogService.js';
@@ -36,7 +36,7 @@ const SUBAGENT_TOOL_RESULT_MAX_CHARS = 16_000;
 const WRITE_TOOL_NAMES = new Set(['edit_file', 'rewrite_file', 'create_file_or_folder']);
 
 type HopOutcome =
-	| { kind: 'final'; fullText: string; toolCall: RawToolCallObj | undefined }
+	| { kind: 'final'; fullText: string; toolCall: RawToolCallObj | undefined; usage: LLMTokenUsage | undefined }
 	| { kind: 'error'; message: string };
 
 /**
@@ -114,17 +114,18 @@ class VibeSubagentRunnerService extends Disposable implements IVibeSubagentRunne
 				chatMode,
 				modelSelection,
 			});
-			// Audit E: charge the full re-sent input of THIS hop against the quota (history
-			// grows every hop, so later hops cost more — exactly what the estimate must reflect).
-			tokensUsedEst += estimateTokensFromChars(JSON.stringify(messages).length + (separateSystemMessage?.length ?? 0));
-
 			const hop = await this._sendOnce({ req, messages, separateSystemMessage, chatMode, modelSelection, deadlineAtMs });
 			if (hop.kind === 'error') {
 				this._activityLog.logError(`Subagent ${req.subagentId}: ошибка LLM — ${hop.message}`);
 				return this._outcome(req, 'failed', `Роль «${preset.displayName}»: ошибка запроса к модели — ${hop.message}`, artifacts, tokensUsedEst, false, 'llm-error', touchedPaths);
 			}
 
-			tokensUsedEst += estimateTokensFromChars(hop.fullText.length);
+			// Charge this hop by the provider's real usage (uncached input + output); the char
+			// count of the re-sent messages is only a fallback when usage is absent. Prompt-cached
+			// history is excluded, so a role is not billed again for context it already paid for —
+			// this is what keeps later hops from exhausting the quota. Tool results are not charged
+			// here: they enter the next hop's prompt tokens and are counted there.
+			tokensUsedEst += hopTokenCost(hop.usage, JSON.stringify(messages).length + (separateSystemMessage?.length ?? 0) + hop.fullText.length);
 			lastText = hop.fullText || lastText;
 			const toolCall = hop.toolCall;
 
@@ -185,7 +186,8 @@ class VibeSubagentRunnerService extends Disposable implements IVibeSubagentRunne
 				const paths = collectPathsFromRawParams(toolCall.rawParams);
 				touchedPaths.push(...paths);
 				if (WRITE_TOOL_NAMES.has(toolName)) { artifacts.push(...paths); }
-				tokensUsedEst += estimateTokensFromChars(content.length);
+				// Not charged here — this result is re-sent as input on the next hop and counted
+				// via that hop's prompt tokens (avoids double-counting with hopTokenCost).
 				history.push({
 					role: 'tool', type: 'success', result: result as never,
 					name: toolName as ToolName, params: params as never,
@@ -232,7 +234,7 @@ class VibeSubagentRunnerService extends Disposable implements IVibeSubagentRunne
 				modelSelectionOptions: undefined,
 				overridesOfModel: this._settings.state.overridesOfModel,
 				onText: () => { },
-				onFinalMessage: p => finish({ kind: 'final', fullText: p.fullText, toolCall: p.toolCall }),
+				onFinalMessage: p => finish({ kind: 'final', fullText: p.fullText, toolCall: p.toolCall, usage: p.usage }),
 				onError: e => finish({ kind: 'error', message: e.message || String(e) }),
 				onAbort: () => finish({ kind: 'error', message: 'запрос прерван (отмена или лимит времени субагента)' }),
 				logging: { loggingName: `Subagent/${opts.req.type}` },
