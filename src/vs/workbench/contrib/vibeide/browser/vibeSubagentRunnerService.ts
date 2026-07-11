@@ -29,6 +29,12 @@ import { IVibeAgentActivityLogService } from './vibeAgentActivityLogService.js';
  *  mirrors vibeTokenBudgetService's AUTOPILOT_RESET_COOLDOWN_MS. */
 const SUBAGENT_AUTOPILOT_RESET_COOLDOWN_MS = 1_000;
 
+/** Consecutive per-hop LLM errors (provider/network/timeout blips) tolerated before the role hard-fails.
+ *  A transient error must not kill an otherwise-healthy run — the main agent retries too. Under Autopilot
+ *  the budget is larger (unattended completion). Counter resets on any successful hop. */
+const SUBAGENT_MAX_LLM_RETRIES = 4;
+const SUBAGENT_MAX_LLM_RETRIES_AUTOPILOT = 12;
+
 /** The compact-handoff contract: no result field exceeds this. */
 const MAX_SUMMARY_CHARS = 500;
 /**
@@ -98,6 +104,7 @@ class VibeSubagentRunnerService extends Disposable implements IVibeSubagentRunne
 
 		let stepsDone = 0;
 		let deniedActions = 0;
+		let consecutiveLlmErrors = 0;
 		// Counted per hop below: the dominant cost of an agent loop is INPUT — the whole
 		// history is re-sent on every hop (audit E: output-only counting made the quota fictional).
 		let tokensUsedEst = 0;
@@ -173,9 +180,24 @@ class VibeSubagentRunnerService extends Disposable implements IVibeSubagentRunne
 					const summary = `Роль «${preset.displayName}» остановлена: ${reason}. Частичный результат сохранён. Последний вывод: ${lastText}`;
 					return this._outcome(req, 'stopped', summary, artifacts, tokensUsedEst, true, reason, touchedPaths, { stopCode: 'deadline', model: modelSelection, promptTokens: promptTokensUsed, completionTokens: completionTokensUsed });
 				}
+				// Transient LLM error (provider 5xx, rate-limit, network, timeout): retry the hop with a
+				// short backoff instead of hard-failing — a blip must not kill a healthy run. Autopilot
+				// gets a larger budget (unattended). The failed hop does NOT consume a step. Give up only
+				// after too many CONSECUTIVE errors (reset on any success below).
+				consecutiveLlmErrors++;
+				const llmRetryBudget = autopilot ? SUBAGENT_MAX_LLM_RETRIES_AUTOPILOT : SUBAGENT_MAX_LLM_RETRIES;
+				if (consecutiveLlmErrors <= llmRetryBudget && req.cancellationToken?.isCancellationRequested !== true) {
+					this._activityLog.logStarted(`Subagent ${req.subagentId}: ошибка запроса «${hop.message}» — повтор ${consecutiveLlmErrors}/${llmRetryBudget}`);
+					stepsDone = Math.max(0, stepsDone - 1);
+					await new Promise(resolve => setTimeout(resolve, Math.min(8_000, 1_500 * consecutiveLlmErrors)));
+					continue;
+				}
 				this._activityLog.logError(`Subagent ${req.subagentId}: ошибка LLM — ${hop.message}`);
-				return this._outcome(req, 'failed', `Роль «${preset.displayName}»: ошибка запроса к модели — ${hop.message}`, artifacts, tokensUsedEst, false, 'llm-error', touchedPaths, { model: modelSelection, promptTokens: promptTokensUsed, completionTokens: completionTokensUsed });
+				const shortMsg = hop.message.length > 140 ? `${hop.message.slice(0, 140)}…` : hop.message;
+				return this._outcome(req, 'failed', `Роль «${preset.displayName}»: ошибка запроса к модели — ${hop.message}`, artifacts, tokensUsedEst, false, `ошибка модели: ${shortMsg}`, touchedPaths, { model: modelSelection, promptTokens: promptTokensUsed, completionTokens: completionTokensUsed });
 			}
+
+			consecutiveLlmErrors = 0; // healthy hop — clear the transient-error streak
 
 			// Charge this hop by the provider's real usage (uncached input + output); the char
 			// count of the re-sent messages is only a fallback when usage is absent. Prompt-cached
