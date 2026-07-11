@@ -6355,7 +6355,9 @@ export const SidebarChat = () => {
 	</>;
 
 
-	const isLandingPage = previousMessages.length === 0;
+	// A role launched in a fresh (empty) thread must still show its live indicator / «Продолжить роль»
+	// affordance — those live in the message list, which the landing page would otherwise replace.
+	const isLandingPage = previousMessages.length === 0 && !showSubagentActivity && !showResumeRole;
 
 	const initiallySuggestedPromptsHTML =					<div className='flex flex-col gap-2 w-full text-nowrap text-vibe-fg-3 select-none'>
 		{[
