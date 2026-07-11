@@ -35,6 +35,7 @@ import { localize } from '../../../../nls.js';
 import { IAuditLogService } from './auditLogService.js';
 import { SubagentResult, SubagentType, IVibeSubagentService } from './vibeSubagentService.js';
 import { IVibeSubagentRegistryService } from './vibeSubagentRegistryService.js';
+import { IVibeSubagentHandoffStore, SubagentHandoffTicket, buildResumeGoal } from './vibeSubagentHandoffStore.js';
 import { buildRoute, VibeAgentRoute } from './vibeAgentRoutes.js';
 
 // ── Configuration ─────────────────────────────────────────────────────────────
@@ -120,6 +121,12 @@ export interface IVibeSubagentOrchestratorService {
 	 * role's summary forward as context. Stops the chain on the first failure.
 	 */
 	executeRoute(params: { parentThreadId: string; taskText: string }): Promise<SubagentResult[]>;
+
+	/** Manually resume a subagent stopped by a limit, from its durable handoff ticket. */
+	resume(ticketId: string): Promise<SubagentResult | undefined>;
+
+	/** Open handoff tickets awaiting a human decision — drives the «субпин» indicator/picker. */
+	listOpenHandoffs(): readonly SubagentHandoffTicket[];
 }
 
 // ── Implementation ─────────────────────────────────────────────────────────────
@@ -135,6 +142,7 @@ class VibeSubagentOrchestratorService extends Disposable implements IVibeSubagen
 		@IAuditLogService private readonly _audit: IAuditLogService,
 		@IVibeSubagentService private readonly _subagentSvc: IVibeSubagentService,
 		@IVibeSubagentRegistryService private readonly _registry: IVibeSubagentRegistryService,
+		@IVibeSubagentHandoffStore private readonly _handoffStore: IVibeSubagentHandoffStore,
 	) {
 		super();
 	}
@@ -189,10 +197,8 @@ class VibeSubagentOrchestratorService extends Disposable implements IVibeSubagen
 	}
 
 	/** Spawns and awaits a single role; resolves to undefined on spawn/run error. */
-	private async _runRole(role: SubagentType, parentThreadId: string, taskText: string, priorSummary: string): Promise<SubagentResult | undefined> {
+	private async _spawnRole(role: SubagentType, parentThreadId: string, goal: string): Promise<SubagentResult | undefined> {
 		const preset = this._registry.getPreset(role);
-		const goal = `Роль: ${preset.displayName}. Задача: ${taskText}`
-			+ (priorSummary ? `\n\nКонтекст от предыдущего этапа:\n${priorSummary}` : '');
 		try {
 			const subagentId = await this._subagentSvc.spawn({
 				parentThreadId,
@@ -206,6 +212,76 @@ class VibeSubagentOrchestratorService extends Disposable implements IVibeSubagen
 			this._log.error(`[SubagentOrchestrator] role ${role} failed: ${err}`);
 			return undefined;
 		}
+	}
+
+	private async _runRole(role: SubagentType, parentThreadId: string, taskText: string, priorSummary: string): Promise<SubagentResult | undefined> {
+		const preset = this._registry.getPreset(role);
+		const maxResumes = this._config.getValue<number>('vibeide.subagent.maxResumes') ?? 2;
+		const contextPreamble = priorSummary ? `\n\nКонтекст от предыдущего этапа:\n${priorSummary}` : '';
+		let partial = '';
+		let ticket: SubagentHandoffTicket | undefined;
+		let attempt = 0; // spawns completed (1 = initial, then one per auto-resume)
+
+		while (true) {
+			const goal = buildResumeGoal(taskText, preset.displayName, partial) + contextPreamble;
+			const result = await this._spawnRole(role, parentThreadId, goal);
+			attempt++;
+
+			if (!result || result.status !== 'stopped') {
+				// Finished (success / hard-fail): close any ticket we opened along the way.
+				if (ticket) {
+					this._handoffStore.update(ticket.id, { status: result?.status === 'success' ? 'done' : 'abandoned', partialSummary: result?.summary || partial });
+				}
+				return result;
+			}
+
+			// Stopped by a limit: persist the partial work so nothing is lost (survives restart).
+			partial = result.summary || partial;
+			const progress = { partialSummary: partial, artifacts: result.artifacts ?? [], stopReason: result.reason ?? 'stopped', tokensUsed: result.tokensUsed };
+			if (ticket) {
+				this._handoffStore.update(ticket.id, { ...progress, resumeCount: attempt });
+			} else {
+				ticket = this._handoffStore.create({ parentThreadId, role, taskText, ...progress });
+			}
+
+			if (attempt > maxResumes) {
+				// Auto-resumes exhausted → hand the decision to the human (ticket stays 'open').
+				this._handoffStore.update(ticket.id, { status: 'open' });
+				this._log.warn(`[SubagentOrchestrator] role ${role} stopped after ${attempt} spawn(s) — ticket ${ticket.id} left open for manual resume`);
+				return result;
+			}
+			this._handoffStore.update(ticket.id, { status: 'resumed' });
+			this._log.info(`[SubagentOrchestrator] role ${role} stopped — auto-resume ${attempt}/${maxResumes} (ticket ${ticket.id})`);
+		}
+	}
+
+	async resume(ticketId: string): Promise<SubagentResult | undefined> {
+		const t = this._handoffStore.get(ticketId);
+		if (!t || t.status === 'done') { return undefined; }
+		const preset = this._registry.getPreset(t.role);
+		this._handoffStore.update(ticketId, { status: 'resumed' });
+		const goal = buildResumeGoal(t.taskText, preset.displayName, t.partialSummary);
+		const result = await this._spawnRole(t.role, t.parentThreadId, goal);
+		if (result?.status === 'success') {
+			this._handoffStore.update(ticketId, { status: 'done', partialSummary: result.summary });
+		} else if (result?.status === 'stopped') {
+			// Stopped again → keep open with the accumulated partial for another pickup.
+			this._handoffStore.update(ticketId, {
+				status: 'open',
+				partialSummary: result.summary || t.partialSummary,
+				artifacts: result.artifacts ?? t.artifacts,
+				stopReason: result.reason ?? t.stopReason,
+				tokensUsed: result.tokensUsed,
+				resumeCount: t.resumeCount + 1,
+			});
+		} else {
+			this._handoffStore.update(ticketId, { status: 'open', resumeCount: t.resumeCount + 1 });
+		}
+		return result;
+	}
+
+	listOpenHandoffs(): readonly SubagentHandoffTicket[] {
+		return this._handoffStore.listOpen();
 	}
 
 	async handleCompletion(params: {
