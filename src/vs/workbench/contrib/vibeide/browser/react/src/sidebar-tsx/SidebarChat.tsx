@@ -1011,8 +1011,9 @@ const ChatRunRouteButton = () => {
 		const commandService = accessor.get('ICommandService');
 		const { buttonId, inputValue } = await modal.showModal({
 			title: 'Выполнить маршрут ролей',
-			body: 'Команда ролей (планировщик → разработчики → ревьюер → QA → security) выполнит задачу под автопилотом. Опишите её так же, как поставили бы отдельному агенту — security подключится сам на чувствительных темах.',
-			input: { label: 'Промпт для субагента', placeholder: 'например: добавить и проверить страницу входа через OAuth', multiline: true },
+			body: '**Промпт для субагента.** Команда ролей (планировщик → разработчики → ревьюер → QA → security) выполнит задачу под автопилотом. Опишите её так же, как поставили бы отдельному агенту — security подключится сам на чувствительных темах.',
+			bodyMarkdown: true,
+			input: { placeholder: 'Что должна сделать команда ролей? Напр.: добавить и проверить страницу входа через OAuth', multiline: true, validator: v => v.trim() ? null : 'Опишите задачу' },
 			buttons: [
 				{ id: 'run', label: 'Запустить', role: 'primary' },
 				{ id: 'cancel', label: 'Отмена', role: 'secondary' },
