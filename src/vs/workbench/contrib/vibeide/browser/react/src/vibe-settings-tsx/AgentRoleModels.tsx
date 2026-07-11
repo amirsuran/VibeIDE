@@ -24,17 +24,46 @@ export const AgentRoleModels = () => {
 				(планировщик, ревьюер, security) выгодно сажать на лёгкую модель: дешевле и быстрее, а
 				писать код им всё равно запрещено.
 			</div>
-			<div className='my-2 flex flex-col gap-y-1'>
+			{/* Inline styles (not Tailwind utilities) for the layout: this card is a shared
+			    cross-bundle component (Settings page + in-chat modal), and the modal bundle's
+			    Tailwind CSS does not generate every layout/border utility — only text size/color
+			    classes are reliably present. Inline styles render identically in any bundle. */}
+			<div
+				style={{
+					display: 'grid',
+					gridTemplateColumns: 'max-content minmax(0, 1fr)',
+					alignItems: 'center',
+					columnGap: '12px',
+					rowGap: '6px',
+					margin: '8px 0',
+				}}
+			>
 				{VIBE_AGENT_ROLE_PRESETS.map(preset => {
 					const current = settingsState.modelSelectionOfRole?.[preset.type] ?? null;
 					const currentKey = current ? `${current.providerName}:::${current.modelName}` : '';
 					const isReadOnly = !preset.allowedTools.some(t => t === 'edit_file' || t === 'rewrite_file' || t === 'run_command');
 					return (
-						<div key={preset.type} className='flex items-center gap-x-2'>
-							<span className='text-xs text-vibe-fg-2 w-32'>{preset.displayName}</span>
-							{isReadOnly && <span className='text-[10px] text-vibe-fg-3 border border-vibe-border-2 rounded px-1'>только чтение</span>}
+						<React.Fragment key={preset.type}>
+							<div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+								<span className='text-xs text-vibe-fg-2'>{preset.displayName}</span>
+								{isReadOnly && (
+									<span
+										className='text-vibe-fg-3'
+										style={{
+											fontSize: '10px',
+											whiteSpace: 'nowrap',
+											border: '1px solid var(--vscode-input-border, var(--vscode-widget-border, transparent))',
+											borderRadius: '4px',
+											padding: '0 4px',
+										}}
+									>
+										только чтение
+									</span>
+								)}
+							</div>
 							<select
-								className='text-xs text-vibe-fg-3 bg-vibe-bg-1 border border-vibe-border-1 rounded p-0.5 px-1 max-w-64'
+								className='@@vibe-themed-select text-xs'
+								style={{ width: '100%', padding: '4px 8px', cursor: 'pointer' }}
 								value={currentKey}
 								onChange={(e) => {
 									const v = e.target.value;
@@ -50,7 +79,7 @@ export const AgentRoleModels = () => {
 									</option>
 								))}
 							</select>
-						</div>
+						</React.Fragment>
 					);
 				})}
 			</div>
