@@ -58,6 +58,11 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 			maximum: 10,
 			description: localize('vibeide.subagent.maxResumes', 'Сколько раз субагента, остановленного по лимиту (токены/шаги/время), автоматически продолжать с сохранённым прогрессом, прежде чем оставить решение человеку. 0 — не продолжать автоматически. По умолчанию 2.'),
 		},
+		'vibeide.subagent.chatNotices': {
+			type: 'boolean',
+			default: true,
+			description: localize('vibeide.subagent.chatNotices', 'Показывать в чате компактные уведомления о старте и завершении субагентов команды ролей (Vibe Agents). Внутренние субагенты (поиск/шаги плана) не показываются. По умолчанию включено.'),
+		},
 	},
 });
 

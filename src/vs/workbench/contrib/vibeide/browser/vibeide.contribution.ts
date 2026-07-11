@@ -702,6 +702,9 @@ import './vibeSubagentStatusBarContribution.js';
 // VibeIDE: «Субпин» — indicator + command for stopped subagents awaiting manual resume (durable handoff)
 import './vibeSubagentHandoffContribution.js';
 
+// VibeIDE: Live subagent start/finish notices in the chat thread (gated by vibeide.subagent.chatNotices)
+import './vibeSubagentChatNoticeContribution.js';
+
 // VibeIDE: Background job service — descriptor, tool policy, budget enforcement (§ J.2)
 import '../common/vibeBackgroundJobService.js';
 
