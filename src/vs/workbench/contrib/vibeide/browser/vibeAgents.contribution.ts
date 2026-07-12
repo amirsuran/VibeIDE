@@ -21,6 +21,7 @@ import { IVibeSubagentRegistryService } from '../common/vibeSubagentRegistryServ
 import { IVibeideSettingsService } from '../common/vibeideSettingsService.js';
 import { subagentCostUsd, formatUsd } from '../common/subagentCostEstimate.js';
 import { IChatThreadService } from './chatThreadService.js';
+import type { ChatImageAttachment } from '../common/chatThreadServiceTypes.js';
 
 registerAction2(
 	class VibeAgentsPlanRoute extends Action2 {
@@ -70,7 +71,7 @@ registerAction2(
 		// Audit H: `executeRoute` existed since VA.3 but had NO user-facing entry — roles could
 		// be planned, never launched. Progress is visible on the subagent status-bar counter;
 		// a running role can be cancelled from its picker (audit F).
-		async run(accessor: ServicesAccessor, arg?: string | { prompt?: string; overrides?: Record<string, number> }): Promise<void> {
+		async run(accessor: ServicesAccessor, arg?: string | { prompt?: string; overrides?: Record<string, number>; images?: readonly ChatImageAttachment[] }): Promise<void> {
 			const quickInput = accessor.get(IQuickInputService);
 			const orchestrator = accessor.get(IVibeSubagentOrchestratorService);
 			const notice = accessor.get(INotificationService);
@@ -80,6 +81,7 @@ registerAction2(
 			// Prompt + per-run limit overrides come from the in-chat «маршрут ролей» modal (object arg);
 			// the command-palette entry passes a bare string or nothing (→ quick-input fallback).
 			const argPrompt = typeof arg === 'string' ? arg : arg?.prompt;
+			const images = (typeof arg === 'object' && arg?.images && arg.images.length) ? arg.images : undefined;
 			const fv = (typeof arg === 'object' && arg?.overrides) ? arg.overrides : undefined;
 			const limitOverrides = fv ? {
 				...(fv.maxSteps ? { maxSteps: fv.maxSteps } : {}),
@@ -98,7 +100,7 @@ registerAction2(
 				return;
 			}
 
-			const route = orchestrator.planRoute(task.trim());
+			const route = orchestrator.planRoute(task.trim(), { hasImages: !!images });
 			const stages = route.stages.map(stage => (stage.length > 1 ? `[${stage.join(' ∥ ')}]` : stage[0])).join(' → ');
 			notice.info(localize('vibeAgents.executeRoute.started', "Команда ролей запущена: {0}. Прогресс — в статус-баре субагентов; отмена — клик по нему.", stages));
 
@@ -111,6 +113,7 @@ registerAction2(
 					parentThreadId: threadId,
 					taskText: task.trim(),
 					...(limitOverrides && Object.keys(limitOverrides).length ? { overrides: limitOverrides } : {}),
+					...(images ? { images } : {}),
 				});
 				const ok = results.filter(r => r.status === 'success').length;
 				const overrides = settings.state.overridesOfModel;

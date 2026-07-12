@@ -34,6 +34,7 @@ import { IConfigurationRegistry, Extensions as ConfigurationExtensions } from '.
 import { localize } from '../../../../nls.js';
 import { IAuditLogService } from './auditLogService.js';
 import { SubagentResult, SubagentType, IVibeSubagentService } from './vibeSubagentService.js';
+import type { ChatImageAttachment } from './chatThreadServiceTypes.js';
 import { IVibeSubagentRegistryService } from './vibeSubagentRegistryService.js';
 import { IVibeSubagentHandoffStore, SubagentHandoffTicket, buildResumeGoal, escalateResumeQuota } from './vibeSubagentHandoffStore.js';
 import { DEFAULT_SUBAGENT_TOKEN_QUOTA } from './subagentIsolationPolicy.js';
@@ -143,14 +144,16 @@ export interface IVibeSubagentOrchestratorService {
 	/** Get all completion records for a plan */
 	getCompletionHistory(planId: string): StepCompletionRecord[];
 
-	/** Classify a task into an ordered role workflow (Vibe Agents — VA.3/VA.4). Pure, no spawn. */
-	planRoute(taskText: string): VibeAgentRoute;
+	/** Classify a task into an ordered role workflow (Vibe Agents — VA.3/VA.4). Pure, no spawn.
+	 *  `hasImages` promotes a leading vision stage (звено 1) so the preview matches execution. */
+	planRoute(taskText: string, opts?: { hasImages?: boolean }): VibeAgentRoute;
 
 	/**
 	 * Run the role workflow for a task: spawn each role in sequence, handing the previous
-	 * role's summary forward as context. Stops the chain on the first failure.
+	 * role's summary forward as context. Stops the chain on the first failure. Attached `images`
+	 * are handed ONLY to the route's vision sink role (звено 1/2) — downstream roles get its text.
 	 */
-	executeRoute(params: { parentThreadId: string; taskText: string; overrides?: SubagentLimitOverrides }): Promise<SubagentResult[]>;
+	executeRoute(params: { parentThreadId: string; taskText: string; overrides?: SubagentLimitOverrides; images?: readonly ChatImageAttachment[] }): Promise<SubagentResult[]>;
 
 	/** Manually resume a subagent stopped by a limit, from its durable handoff ticket. */
 	resume(ticketId: string): Promise<SubagentResult | undefined>;
@@ -177,21 +180,24 @@ class VibeSubagentOrchestratorService extends Disposable implements IVibeSubagen
 		super();
 	}
 
-	planRoute(taskText: string): VibeAgentRoute {
-		return buildRoute(taskText);
+	planRoute(taskText: string, opts?: { hasImages?: boolean }): VibeAgentRoute {
+		return buildRoute(taskText, opts);
 	}
 
-	async executeRoute(params: { parentThreadId: string; taskText: string; overrides?: SubagentLimitOverrides }): Promise<SubagentResult[]> {
-		const { parentThreadId, taskText, overrides } = params;
-		const route = buildRoute(taskText);
+	async executeRoute(params: { parentThreadId: string; taskText: string; overrides?: SubagentLimitOverrides; images?: readonly ChatImageAttachment[] }): Promise<SubagentResult[]> {
+		const { parentThreadId, taskText, overrides, images } = params;
+		const hasImages = !!(images && images.length);
+		const route = buildRoute(taskText, { hasImages });
 		this._log.info(`[SubagentOrchestrator] route ${route.kind}: ${route.roles.join(' → ')}${route.securityAdded ? ' (+security)' : ''}`);
 		this._audit.append({ ts: Date.now(), action: 'agent_route_started', ok: true, meta: { kind: route.kind, roles: route.roles, securityAdded: route.securityAdded } });
 
 		const results: SubagentResult[] = [];
 		let priorSummary = '';
 		for (const stage of route.stages) {
-			// Roles within a stage are independent → run them in parallel.
-			const stageResults = await Promise.all(stage.map(role => this._runRole(role, parentThreadId, taskText, priorSummary, overrides)));
+			// Roles within a stage are independent → run them in parallel. The attached image goes
+			// ONLY to the route's vision sink role (звено 1/2); everyone else works off its text handoff.
+			const stageResults = await Promise.all(stage.map(role =>
+				this._runRole(role, parentThreadId, taskText, priorSummary, overrides, role === route.imageSink ? images : undefined)));
 			let failed = false;
 			const summaries: string[] = [];
 			for (let i = 0; i < stageResults.length; i++) {
@@ -227,7 +233,7 @@ class VibeSubagentOrchestratorService extends Disposable implements IVibeSubagen
 	}
 
 	/** Spawns and awaits a single role; resolves to undefined on spawn/run error. */
-	private async _spawnRole(role: SubagentType, parentThreadId: string, goal: string, maxTokens?: number, overrides?: SubagentLimitOverrides): Promise<SubagentResult | undefined> {
+	private async _spawnRole(role: SubagentType, parentThreadId: string, goal: string, maxTokens?: number, overrides?: SubagentLimitOverrides, images?: readonly ChatImageAttachment[]): Promise<SubagentResult | undefined> {
 		const preset = this._registry.getPreset(role);
 		try {
 			// Limit precedence: per-run override (modal) → global config → per-role default. Under autopilot
@@ -243,6 +249,7 @@ class VibeSubagentOrchestratorService extends Disposable implements IVibeSubagen
 				maxSteps,
 				maxWallClockMs,
 				...(maxTokens ? { maxTokens } : {}),
+				...(images && images.length ? { images } : {}),
 			});
 			return await this._subagentSvc.awaitResult(subagentId);
 		} catch (err) {
@@ -262,7 +269,7 @@ class VibeSubagentOrchestratorService extends Disposable implements IVibeSubagen
 		return escalateResumeQuota(typeof base === 'number' && base > 0 ? base : DEFAULT_SUBAGENT_TOKEN_QUOTA, resumeIndex, factor);
 	}
 
-	private async _runRole(role: SubagentType, parentThreadId: string, taskText: string, priorSummary: string, overrides?: SubagentLimitOverrides): Promise<SubagentResult | undefined> {
+	private async _runRole(role: SubagentType, parentThreadId: string, taskText: string, priorSummary: string, overrides?: SubagentLimitOverrides, images?: readonly ChatImageAttachment[]): Promise<SubagentResult | undefined> {
 		const preset = this._registry.getPreset(role);
 		const maxResumes = overrides?.maxResumes ?? this._config.getValue<number>('vibeide.subagent.maxResumes') ?? 2;
 		let partial = '';
@@ -274,7 +281,9 @@ class VibeSubagentOrchestratorService extends Disposable implements IVibeSubagen
 			// Each resume gets an escalated budget: the same quota that just ran out would stall again
 			// sooner (the «already done» preamble grows). attempt=0 → the per-run override (or config default).
 			const maxTokens = attempt === 0 ? overrides?.maxTokens : this._resumeQuota(attempt);
-			const result = await this._spawnRole(role, parentThreadId, goal, maxTokens, overrides);
+			// Images ride only the initial spawn; durable-handoff tickets don't persist image blobs, so
+			// a resumed vision role works from its own prior text summary, not the raw image again.
+			const result = await this._spawnRole(role, parentThreadId, goal, maxTokens, overrides, attempt === 0 ? images : undefined);
 			attempt++;
 
 			if (!result || result.status !== 'stopped') {
