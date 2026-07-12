@@ -70,6 +70,18 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 			default: true,
 			description: localize('vibeide.subagent.chatNotices', 'Показывать в чате компактные уведомления о старте и завершении субагентов команды ролей (Vibe Agents). Внутренние субагенты (поиск/шаги плана) не показываются. По умолчанию включено.'),
 		},
+		'vibeide.subagent.autoScout': {
+			type: 'boolean',
+			default: true,
+			description: localize('vibeide.subagent.autoScout', 'На запросах-продолжениях («продолжи», «дальше», «доделай») перед основным ходом запускать read-only разведчика: он смотрит последние правки и незакрытый план и предлагает в чате список зацепок с гипотезой задачи, а вы подтверждаете «оно/не оно». По умолчанию включено. (Разведку можно форсировать на любом запросе тумблером у поля ввода.)'),
+		},
+		'vibeide.subagent.scoutAutoProceedConfidence': {
+			type: 'number',
+			default: 0.85,
+			minimum: 0,
+			maximum: 1,
+			description: localize('vibeide.subagent.scoutAutoProceedConfidence', 'Порог уверенности разведчика (0–1), при котором гейт «оно/не оно» пропускается и основной ход стартует сразу (плашка разведки всё равно показывается). 1 — всегда спрашивать подтверждение; 0 — никогда не спрашивать. По умолчанию 0.85.'),
+		},
 	},
 });
 

@@ -29,7 +29,7 @@ import { ICommandService } from '../../../../../../../platform/commands/common/c
 import { WarningBox } from '../vibe-settings-tsx/WarningBox.js';
 import { getModelCapabilities, getIsReasoningEnabledState, getReservedOutputTokenSpace } from '../../../../common/modelCapabilities.js';
 import { AlertTriangle, File, Ban, Check, ChevronRight, ChevronDown, Dot, FileIcon, Pencil, Undo, Undo2, X, Flag, Copy as CopyIcon, Info, CirclePlus, Ellipsis, CircleEllipsis, Folder, ALargeSmall, TypeOutline, Text, Paperclip, Waypoints, LoaderCircle, Maximize2, Maximize, Pin, FileDown, RotateCcw, StepForward } from 'lucide-react';
-import { ChatMessage, CheckpointEntry, StagingSelectionItem, ToolMessage, PlanMessage, ReviewMessage, PlanStep, StepStatus, PlanApprovalState, ChatImageAttachment, ChatPDFAttachment, normalizePendingInjections } from '../../../../common/chatThreadServiceTypes.js';
+import { ChatMessage, CheckpointEntry, StagingSelectionItem, ToolMessage, PlanMessage, ReviewMessage, ScoutMessage, PlanStep, StepStatus, PlanApprovalState, ChatImageAttachment, ChatPDFAttachment, normalizePendingInjections } from '../../../../common/chatThreadServiceTypes.js';
 import { formatChatTimestamp, chatTimestampToISO, CHAT_TIMESTAMP_STREAMING_PLACEHOLDER } from '../../../../common/chatTimestampFormatter.js';
 import { BuiltinToolCallParams, BuiltinToolName, ToolName, LintErrorItem, ToolApprovalType, toolApprovalTypes } from '../../../../common/toolsServiceTypes.js';
 import { approvalTypeOfBuiltinToolName } from '../../../../common/prompt/tools/index.js';
@@ -4454,6 +4454,45 @@ const ChatBubble = React.memo((props: ChatBubbleProps) => {
 		prev._scrollToBottom === next._scrollToBottom;
 });
 
+// Auto-scout gate (Vibe Agents): read-only scout ran on a continuation request; the user confirms
+// its guess ('Продолжить'), asks to refine ('Уточнить' → next message is re-scouted), or dismisses.
+const ScoutComponent = ({ message, threadId, messageIdx }: { message: ScoutMessage; threadId: string; messageIdx: number }) => {
+	const accessor = useAccessor();
+	const chatThreadService = accessor.get('IChatThreadService');
+	const pending = message.state === 'pending';
+	const act = (action: 'proceed' | 'refine' | 'cancel') => chatThreadService.scoutAction({ threadId, messageIdx, action });
+	return (
+		<div className='my-2'>
+			<div className='border rounded-lg p-3 bg-blue-500/10 border-blue-500/30'>
+				<div className='flex items-center gap-2 mb-2'>
+					<span>🔎</span>
+					<h3 className='font-semibold text-sm text-blue-300'>Разведка контекста</h3>
+					{message.state === 'proceeded' && <span className='text-xs text-vibe-fg-3'>— принято, продолжаю</span>}
+					{message.state === 'cancelled' && <span className='text-xs text-vibe-fg-3'>— отменено</span>}
+					{message.state === 'refining' && <span className='text-xs text-vibe-fg-3'>— уточните запрос</span>}
+				</div>
+				{message.hypothesis && <p className='text-vibe-fg-2 text-sm mb-2'><span className='text-vibe-fg-3'>Гипотеза:</span> {message.hypothesis}</p>}
+				{message.leads.length > 0 && (
+					<div className='space-y-1 mb-2'>
+						{message.leads.map((l, i) => (
+							<div key={i} className='text-xs text-vibe-fg-3 truncate' title={l.note ? `${l.path} — ${l.note}` : l.path}>
+								<span className='text-vibe-fg-2'>{l.path}</span>{l.note ? ` — ${l.note}` : ''}
+							</div>
+						))}
+					</div>
+				)}
+				{pending && (
+					<div className='flex items-center gap-2 mt-2'>
+						<button onClick={() => act('proceed')} className='px-3 py-1 rounded bg-blue-600 text-white text-xs hover:bg-blue-500'>Продолжить</button>
+						<button onClick={() => act('refine')} className='px-3 py-1 rounded border border-vibe-border-1 text-vibe-fg-2 text-xs hover:bg-white/5'>Уточнить</button>
+						<button onClick={() => act('cancel')} className='px-3 py-1 rounded border border-vibe-border-1 text-vibe-fg-3 text-xs hover:bg-white/5'>Отмена</button>
+					</div>
+				)}
+			</div>
+		</div>
+	);
+};
+
 const _ChatBubble = React.memo(({ threadId, chatMessage, currCheckpointIdx, isCommitted, messageIdx, chatIsRunning, _scrollToBottom }: ChatBubbleProps) => {
 	const role = chatMessage.role;
 
@@ -4535,6 +4574,14 @@ const _ChatBubble = React.memo(({ threadId, chatMessage, currCheckpointIdx, isCo
 		return <ReviewComponent
 			message={chatMessage}
 			isCheckpointGhost={isCheckpointGhost}
+		/>;
+	}
+
+	else if (role === 'scout') {
+		return <ScoutComponent
+			message={chatMessage}
+			threadId={threadId}
+			messageIdx={messageIdx}
 		/>;
 	}
 
