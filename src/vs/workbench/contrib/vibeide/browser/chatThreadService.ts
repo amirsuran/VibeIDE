@@ -25,7 +25,7 @@ import { ModelHealthTracker, HEALTH_FAILURE_THRESHOLD, HEALTH_WINDOW_MS, classif
 import { translateProviderError } from '../common/providerErrorTranslator.js';
 import { generateUuid } from '../../../../base/common/uuid.js';
 import { autoModelFallbackProviderOrder, ChatMode, FeatureName, ModelSelection, ModelSelectionOptions, ProviderName } from '../common/vibeideSettingsTypes.js';
-import { isVisionByNameHeuristic } from '../common/modelVisionHeuristics.js';
+import { isModelVisionCapable } from '../common/modelVisionHeuristics.js';
 import { detectVisionDropResponse } from '../common/visionDropDetector.js';
 import { IVibeideSettingsService } from '../common/vibeideSettingsService.js';
 import { BuiltinToolCallParams, BuiltinToolResultType, TerminalResolveReason, ToolCallParams, ToolName, ToolResult } from '../common/toolsServiceTypes.js';
@@ -1510,50 +1510,9 @@ class ChatThreadService extends Disposable implements IChatThreadService {
 	 * like OpenRouter where modality info is per-model) → provider heuristics → name-based fallback.
 	 */
 	private _isModelVisionCapable(modelSelection: ModelSelection, capabilities: { supportsVision?: boolean } | undefined): boolean {
-		// Authoritative when set: catalog-derived flag (OpenRouter, openAICompatible, etc.).
-		// Distinguish explicit false from undefined — undefined falls through to heuristics.
-		if (capabilities && typeof capabilities.supportsVision === 'boolean') {
-			return capabilities.supportsVision;
-		}
-
-		const name = modelSelection.modelName.toLowerCase();
-		const provider = modelSelection.providerName.toLowerCase();
-
-		// Known vision-capable models
-		if (provider === 'gemini') { return true; } // all Gemini models support vision
-		if (provider === 'anthropic') {
-			return name.includes('3.5') || name.includes('3.7') || name.includes('4') || name.includes('opus') || name.includes('sonnet');
-		}
-		if (provider === 'openai') {
-			// GPT-5 series (all variants support vision)
-			if (name.includes('gpt-5') || name.includes('gpt-5.1')) { return true; }
-			// GPT-4.1 series
-			if (name.includes('4.1')) { return true; }
-			// GPT-4o series
-			if (name.includes('4o')) { return true; }
-			// o-series reasoning models (o1, o3, o4-mini support vision)
-			if (name.startsWith('o1') || name.startsWith('o3') || name.startsWith('o4')) { return true; }
-			// Legacy GPT-4 models
-			if (name.includes('gpt-4')) { return true; }
-		}
-		if (provider === 'mistral') {
-			// Pixtral models support vision
-			if (name.includes('pixtral')) { return true; }
-		}
-		if (provider === 'ollama' || provider === 'vllm') {
-			return name.includes('llava') || name.includes('bakllava') || name.includes('vision');
-		}
-		// Aggregators / OpenAI-compatible — without a catalog flag, fall back to the shared
-		// substring whitelist (single source of truth in common/modelVisionHeuristics.ts).
-		// Conservative: only well-known vision markers — anything else stays false to avoid
-		// sending images into a text-only model and getting hallucinated descriptions.
-		// `minimax` is the native (OpenAI-compatible) endpoint serving both text-only (M2) and
-		// multimodal (M3) models, so vision is per-model just like an aggregator.
-		if (provider === 'openrouter' || provider === 'opencode' || provider === 'opencodezen' || provider === 'openaicompatible' || provider === 'litellm' || provider === 'pollinations' || provider === 'minimax') {
-			if (isVisionByNameHeuristic(modelSelection.modelName)) { return true; }
-		}
-
-		return false;
+		// Single source of truth (common/modelVisionHeuristics.ts) — shared with the subagent runner's
+		// vision-role fallback so the image-attach gate and the fallback can never disagree.
+		return isModelVisionCapable(modelSelection, capabilities);
 	}
 
 	/**

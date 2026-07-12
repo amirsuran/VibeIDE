@@ -39,3 +39,50 @@ export function isVisionByNameHeuristic(modelName: string): boolean {
 	const lower = modelName.toLowerCase();
 	return VISION_NAME_SUBSTRINGS.some(s => lower.includes(s));
 }
+
+/**
+ * Authoritative vision-capability decision for a concrete model selection.
+ * Order: catalog-driven `supportsVision` (when set) → per-provider knowledge → the shared
+ * name-substring heuristic above. Single source of truth reused by chatThreadService (image-attach
+ * gate) and vibeSubagentRunnerService (vision-role model fallback, звено 3) so the two never drift.
+ *
+ * @param capabilities Model capabilities from `getModelCapabilities` — only `supportsVision` is read.
+ *   An explicit boolean is authoritative; `undefined` falls through to heuristics.
+ */
+export function isModelVisionCapable(
+	modelSelection: { readonly providerName: string; readonly modelName: string },
+	capabilities?: { readonly supportsVision?: boolean },
+): boolean {
+	// Authoritative when set: catalog-derived flag (OpenRouter, openAICompatible, etc.).
+	if (capabilities && typeof capabilities.supportsVision === 'boolean') {
+		return capabilities.supportsVision;
+	}
+
+	const name = modelSelection.modelName.toLowerCase();
+	const provider = modelSelection.providerName.toLowerCase();
+
+	if (provider === 'gemini') { return true; } // all Gemini models support vision
+	if (provider === 'anthropic') {
+		return name.includes('3.5') || name.includes('3.7') || name.includes('4') || name.includes('opus') || name.includes('sonnet');
+	}
+	if (provider === 'openai') {
+		if (name.includes('gpt-5') || name.includes('gpt-5.1')) { return true; }
+		if (name.includes('4.1')) { return true; }
+		if (name.includes('4o')) { return true; }
+		if (name.startsWith('o1') || name.startsWith('o3') || name.startsWith('o4')) { return true; }
+		if (name.includes('gpt-4')) { return true; }
+	}
+	if (provider === 'mistral') {
+		if (name.includes('pixtral')) { return true; }
+	}
+	if (provider === 'ollama' || provider === 'vllm') {
+		return name.includes('llava') || name.includes('bakllava') || name.includes('vision');
+	}
+	// Aggregators / OpenAI-compatible without a catalog flag → shared substring whitelist.
+	// `minimax` serves both text-only (M2) and multimodal (M3) models → vision is per-model.
+	if (provider === 'openrouter' || provider === 'opencode' || provider === 'opencodezen' || provider === 'openaicompatible' || provider === 'litellm' || provider === 'pollinations' || provider === 'minimax') {
+		if (isVisionByNameHeuristic(modelSelection.modelName)) { return true; }
+	}
+
+	return false;
+}
