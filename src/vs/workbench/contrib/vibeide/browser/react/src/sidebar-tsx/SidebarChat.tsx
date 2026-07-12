@@ -1106,6 +1106,7 @@ const ChatRunRouteButton = () => {
 			data-tooltip-id='vibe-tooltip'
 			data-tooltip-content={chatS.runRouteTitle}
 			data-tooltip-place='top'
+			data-tooltip-delay-show={1000}
 		>
 			<Waypoints size={16} />
 		</button>
@@ -1135,6 +1136,7 @@ const ChatScoutToggleButton = () => {
 			data-tooltip-id='vibe-tooltip'
 			data-tooltip-content={armed ? 'Разведка следующего запроса включена — нажмите, чтобы выключить' : 'Сначала разведать: перед ответом собрать зацепки по последним правкам и плану (read-only)'}
 			data-tooltip-place='top'
+			data-tooltip-delay-show={1000}
 		>
 			<Footprints size={16} />
 		</button>
