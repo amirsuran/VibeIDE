@@ -36,6 +36,7 @@ import './media/vibeModal.css';
 
 // Builtin Vibe Neon — title-bar glow toggle registration + default theme chrome CSS (extensions/vibeide-neon)
 import './vibeNeonGlowTitleBar.js';
+import './vibeSimplifiedControlsToggle.js';
 import './vibeNeonThemeContribution.js';
 
 // Native workspace bookmarks (Vibe Projects)
