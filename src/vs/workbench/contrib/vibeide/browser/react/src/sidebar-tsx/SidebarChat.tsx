@@ -1103,7 +1103,9 @@ const ChatRunRouteButton = () => {
 			onClick={openRouteModal}
 			className="flex-shrink-0 p-1.5 rounded-xl hover:bg-vibe-bg-2-alt text-vibe-fg-4 hover:text-vibe-fg-2 transition-colors"
 			aria-label={chatS.runRouteAria}
-			title={chatS.runRouteTitle}
+			data-tooltip-id='vibe-tooltip'
+			data-tooltip-content={chatS.runRouteTitle}
+			data-tooltip-place='top'
 		>
 			<Waypoints size={16} />
 		</button>
@@ -1130,7 +1132,9 @@ const ChatScoutToggleButton = () => {
 			onClick={() => chatThreadService.toggleScoutArmed(threadId)}
 			className={`flex-shrink-0 p-1.5 rounded-xl transition-colors ${armed ? 'bg-blue-500/20 text-blue-300' : 'hover:bg-vibe-bg-2-alt text-vibe-fg-4 hover:text-vibe-fg-2'}`}
 			aria-label='Сначала разведать следующий запрос'
-			title={armed ? 'Разведка следующего запроса включена — нажмите, чтобы выключить' : 'Сначала разведать: перед ответом собрать зацепки по последним правкам и плану (read-only)'}
+			data-tooltip-id='vibe-tooltip'
+			data-tooltip-content={armed ? 'Разведка следующего запроса включена — нажмите, чтобы выключить' : 'Сначала разведать: перед ответом собрать зацепки по последним правкам и плану (read-only)'}
+			data-tooltip-place='top'
 		>
 			<Footprints size={16} />
 		</button>
