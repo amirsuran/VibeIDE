@@ -9,9 +9,12 @@ import { Disposable } from '../../../../base/common/lifecycle.js';
 import { generateUuid } from '../../../../base/common/uuid.js';
 import { registerSingleton, InstantiationType } from '../../../../platform/instantiation/common/extensions.js';
 import { IDialogService } from '../../../../platform/dialogs/common/dialogs.js';
+import { INotificationService } from '../../../../platform/notification/common/notification.js';
 import { ILLMMessageService } from '../common/sendLLMMessageService.js';
 import { RawToolCallObj, LLMChatMessage, LLMTokenUsage } from '../common/sendLLMMessageTypes.js';
 import { ModelSelection } from '../common/vibeideSettingsTypes.js';
+import { getModelCapabilities } from '../common/modelCapabilities.js';
+import { isModelVisionCapable } from '../common/modelVisionHeuristics.js';
 import { IVibeideSettingsService } from '../common/vibeideSettingsService.js';
 import { ChatMessage } from '../common/chatThreadServiceTypes.js';
 import { BuiltinToolName, ToolName } from '../common/toolsServiceTypes.js';
@@ -69,6 +72,7 @@ class VibeSubagentRunnerService extends Disposable implements IVibeSubagentRunne
 		@IToolsService private readonly _tools: IToolsService,
 		@IVibeideSettingsService private readonly _settings: IVibeideSettingsService,
 		@IDialogService private readonly _dialogService: IDialogService,
+		@INotificationService private readonly _notification: INotificationService,
 		@IVibeAgentActivityLogService private readonly _activityLog: IVibeAgentActivityLogService,
 		@IVibeSubagentRegistryService private readonly _registry: IVibeSubagentRegistryService,
 	) {
@@ -80,11 +84,40 @@ class VibeSubagentRunnerService extends Disposable implements IVibeSubagentRunne
 		// Model priority (VA.2 «модель на роль»): explicit request → per-role mapping from
 		// settings → the session's Chat model. Read-only roles are the cost-routing case:
 		// a light model plans/reviews fine while the Chat model does the heavy lifting.
-		const modelSelection = req.modelSelection
+		let modelSelection = req.modelSelection
 			?? this._settings.state.modelSelectionOfRole?.[req.type]
 			?? this._settings.state.modelSelectionOfFeature?.['Chat'];
 		if (!modelSelection || modelSelection.providerName === 'auto') {
 			return this._outcome(req, 'failed', 'Не выбрана модель для субагента (настройте модель чата).', [], 0, false, 'нет модели', []);
+		}
+
+		// Vision routing model resolution. `sees` = can this selection accept image input; `firstVision`
+		// = the first enabled vision-capable model. Shared by звено 4 (default) and звено 3 (guarantee)
+		// so the two never drift; the decision itself lives in common/modelVisionHeuristics.ts.
+		const overridesOfModel = this._settings.state.overridesOfModel;
+		const sees = (sel: ModelSelection) => sel.providerName !== 'auto'
+			&& isModelVisionCapable(sel, getModelCapabilities(sel.providerName, sel.modelName, overridesOfModel));
+		const firstVision = (): ModelSelection | undefined => this._settings.state._modelOptions.find(o => sees(o.selection))?.selection;
+
+		// Звено 4: the vision-sink role (designer) defaults to a vision-capable model when the user
+		// left its per-role model unset and the chat fallback can't see — so it is vision-ready by
+		// default, before any image arrives. An explicit per-role pick is always respected.
+		const explicitRoleModel = req.modelSelection ?? this._settings.state.modelSelectionOfRole?.[req.type];
+		if (!explicitRoleModel && preset.receivesImages && !sees(modelSelection)) {
+			const v = firstVision();
+			if (v) { modelSelection = v; }
+		}
+
+		// Звено 3: an actually-attached image MUST reach a vision model — overrides even an explicit
+		// pick, since silently feeding an image to a blind model yields hallucinated descriptions.
+		if (req.images && req.images.length && !sees(modelSelection)) {
+			const v = firstVision();
+			if (v) {
+				this._notification.info(localize('subagent.visionFallback', "Роль «{0}»: приложено изображение, но модель {1} его не видит — для этого прогона взята vision-модель {2}.", preset.displayName, modelSelection.modelName, v.modelName));
+				modelSelection = v;
+			} else {
+				this._notification.warn(localize('subagent.visionNone', "Роль «{0}» получила изображение, но ни одна включённая модель не поддерживает vision — картинка будет проигнорирована. Настройте vision-модель.", preset.displayName));
+			}
 		}
 
 		const chatMode = chatModeForAllowedTools(req.allowedTools);
@@ -99,6 +132,9 @@ class VibeSubagentRunnerService extends Disposable implements IVibeSubagentRunne
 			content: taskMessage,
 			displayContent: taskMessage,
 			selections: null,
+			// Vision routing (звено 2): images ride the first user message. prepareLLMChatMessages
+			// base64-encodes them into image parts exactly as for the main thread — no new plumbing.
+			...(req.images && req.images.length ? { images: [...req.images] } : {}),
 			state: { stagingSelections: [], isBeingEdited: false },
 		}];
 

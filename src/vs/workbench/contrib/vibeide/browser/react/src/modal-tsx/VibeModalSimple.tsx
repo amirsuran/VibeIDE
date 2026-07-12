@@ -10,6 +10,8 @@ import { useAccessor } from '../util/services.js';
 import { VIBE_MODAL_MIN_AUTO_DISMISS_MS, VibeModalButton, VibeModalQueueEntry } from '../../../../common/vibeModalTypes.js';
 import { ChatMarkdownRender } from '../markdown/ChatMarkdownRender.js';
 import { AgentRoleModels } from '../vibe-settings-tsx/AgentRoleModels.js';
+import { useImageAttachments } from '../util/useImageAttachments.js';
+import { usePDFAttachments } from '../util/usePDFAttachments.js';
 
 /** Lower bound for the post-pause `remaining` clamp — avoids zero/negative
  *  timer values after rapid hover-in/out cycles. */
@@ -73,6 +75,23 @@ export const VibeModalSimple: React.FC<{ entry: VibeModalQueueEntry }> = ({ entr
 	const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
 	const firstFocusableRef = useRef<HTMLButtonElement | null>(null);
 	const modalRef = useRef<HTMLDivElement | null>(null);
+	const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+	// File attachments (only when options.imageInput) — reuses the chat composer's converters so
+	// drag-drop / paste / file-pick produce the same `ChatImageAttachment` / `ChatPDFAttachment`
+	// shapes used everywhere. Images ride the message as image parts; PDFs contribute extracted text.
+	// NOTE: attachments live in this modal instance; they do NOT survive a «Роли» sub-modal round-trip
+	// (a fresh VibeModalSimple mounts). The primary attach→run flow is unaffected.
+	const imageInput = !!options.imageInput && !!options.input;
+	const { attachments: images, addImages, removeImage } = useImageAttachments();
+	const { attachments: pdfs, addPDFs, removePDF } = usePDFAttachments();
+	const addAttachmentFiles = useCallback((fileList: FileList | null | undefined) => {
+		const files = Array.from(fileList ?? []);
+		const imgs = files.filter(f => f.type.startsWith('image/'));
+		const docs = files.filter(f => f.type === 'application/pdf');
+		if (imgs.length) { void addImages(imgs); }
+		if (docs.length) { void addPDFs(docs); }
+	}, [addImages, addPDFs]);
 
 	// Validate input value on every change. Primary button auto-disables while
 	// validator returns a non-null error string.
@@ -132,7 +151,7 @@ export const VibeModalSimple: React.FC<{ entry: VibeModalQueueEntry }> = ({ entr
 			if (!btn || btn.disabled) {return;}
 			if (btn.role === 'primary' && validationError) {return;}
 			e.preventDefault();
-			modalService.resolveHead(btn.id, options.input ? inputValue : undefined, options.numberFields ? fieldValues : undefined);
+			modalService.resolveHead(btn.id, options.input ? inputValue : undefined, options.numberFields ? fieldValues : undefined, imageInput ? images : undefined, imageInput ? pdfs : undefined);
 		};
 		window.addEventListener('keydown', onKey);
 		return () => window.removeEventListener('keydown', onKey);
@@ -193,7 +212,7 @@ export const VibeModalSimple: React.FC<{ entry: VibeModalQueueEntry }> = ({ entr
 		if (btn.disabled) {return;}
 		if (options.loading) {return;}
 		if (btn.role === 'primary' && validationError) {return;}
-		modalService.resolveHead(btn.id, options.input ? inputValue : undefined, options.numberFields ? fieldValues : undefined);
+		modalService.resolveHead(btn.id, options.input ? inputValue : undefined, options.numberFields ? fieldValues : undefined, imageInput ? images : undefined, imageInput ? pdfs : undefined);
 	}, [modalService, options.input, options.numberFields, options.loading, inputValue, fieldValues, validationError]);
 
 	const onBackdropClick = useCallback(() => {
@@ -210,7 +229,7 @@ export const VibeModalSimple: React.FC<{ entry: VibeModalQueueEntry }> = ({ entr
 		const commit = !multiline ? e.key === 'Enter' && !e.shiftKey : (e.key === 'Enter' && (e.ctrlKey || e.metaKey));
 		if (commit && primaryButton && !validationError) {
 			e.preventDefault();
-			modalService.resolveHead(primaryButton.id, inputValue, options.numberFields ? fieldValues : undefined);
+			modalService.resolveHead(primaryButton.id, inputValue, options.numberFields ? fieldValues : undefined, imageInput ? images : undefined, imageInput ? pdfs : undefined);
 		}
 	}, [options.input, options.numberFields, primaryButton, validationError, modalService, inputValue, fieldValues]);
 
@@ -304,6 +323,9 @@ export const VibeModalSimple: React.FC<{ entry: VibeModalQueueEntry }> = ({ entr
 								value={inputValue}
 								onChange={e => setInputValue(e.target.value)}
 								onKeyDown={onInputKeyDown}
+								onPaste={imageInput ? (e => { const files = Array.from(e.clipboardData?.files ?? []).filter(f => f.type.startsWith('image/') || f.type === 'application/pdf'); if (files.length) { e.preventDefault(); addAttachmentFiles(e.clipboardData.files); } }) : undefined}
+								onDrop={imageInput ? (e => { if (e.dataTransfer?.files?.length) { e.preventDefault(); addAttachmentFiles(e.dataTransfer.files); } }) : undefined}
+								onDragOver={imageInput ? (e => e.preventDefault()) : undefined}
 								aria-invalid={!!validationError}
 							/>
 						) : (
@@ -315,8 +337,49 @@ export const VibeModalSimple: React.FC<{ entry: VibeModalQueueEntry }> = ({ entr
 								value={inputValue}
 								onChange={e => setInputValue(e.target.value)}
 								onKeyDown={onInputKeyDown}
+								onPaste={imageInput ? (e => { const files = Array.from(e.clipboardData?.files ?? []).filter(f => f.type.startsWith('image/') || f.type === 'application/pdf'); if (files.length) { e.preventDefault(); addAttachmentFiles(e.clipboardData.files); } }) : undefined}
 								aria-invalid={!!validationError}
 							/>
+						)}
+						{imageInput && (
+							<div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '6px', marginTop: '6px' }}>
+								<button
+									type="button"
+									title="Прикрепить картинку или PDF (или перетащите / вставьте в поле)"
+									onClick={() => fileInputRef.current?.click()}
+									style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '11px', cursor: 'pointer', padding: '2px 8px', borderRadius: '6px', border: '1px solid var(--vscode-input-border, var(--vscode-widget-border, transparent))', background: 'var(--vscode-input-background)', color: 'var(--vscode-input-foreground)' }}
+								>
+									📎 Прикрепить
+								</button>
+								<input
+									ref={fileInputRef}
+									type="file"
+									accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml,application/pdf"
+									multiple
+									style={{ display: 'none' }}
+									onChange={e => { addAttachmentFiles(e.target.files); e.target.value = ''; }}
+								/>
+								{images.map(img => (
+									<span
+										key={img.id}
+										title={img.filename}
+										style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '11px', maxWidth: '160px', padding: '2px 6px', borderRadius: '6px', border: '1px solid var(--vscode-input-border, var(--vscode-widget-border, transparent))', color: 'var(--vscode-input-foreground)', opacity: img.uploadStatus === 'failed' ? 0.6 : 1 }}
+									>
+										<span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>🖼 {img.filename}</span>
+										<button type="button" title="Убрать" onClick={() => removeImage(img.id)} style={{ cursor: 'pointer', border: 'none', background: 'transparent', color: 'inherit', padding: 0, lineHeight: 1 }}>✕</button>
+									</span>
+								))}
+								{pdfs.map(pdf => (
+									<span
+										key={pdf.id}
+										title={pdf.filename}
+										style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '11px', maxWidth: '180px', padding: '2px 6px', borderRadius: '6px', border: '1px solid var(--vscode-input-border, var(--vscode-widget-border, transparent))', color: 'var(--vscode-input-foreground)', opacity: pdf.uploadStatus === 'failed' ? 0.6 : 1 }}
+									>
+										<span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>📄 {pdf.filename}{pdf.uploadStatus === 'processing' ? ' …' : ''}</span>
+										<button type="button" title="Убрать" onClick={() => removePDF(pdf.id)} style={{ cursor: 'pointer', border: 'none', background: 'transparent', color: 'inherit', padding: 0, lineHeight: 1 }}>✕</button>
+									</span>
+								))}
+							</div>
 						)}
 						<div className="@@vibeide-modal-validation" role="alert">
 							{validationError ?? ''}

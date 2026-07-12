@@ -116,6 +116,27 @@ export type ReviewMessage = {
 	lastCheckpointIdx?: number | null; // index of last checkpoint
 };
 
+/** One lead surfaced by the read-only scout: a file plus a short note on what looks unfinished there. */
+export type ScoutLead = { path: string; note: string };
+
+/**
+ * Read-only scout result surfaced IN-THREAD with a confirmation gate (Vibe Agents auto-scout). The
+ * scout ran BEFORE the main turn on a continuation request ("продолжи"); the user confirms the guess
+ * (`proceed` → re-send the request with scout context), asks to refine (`refine` → the next message
+ * is scouted again), or dismisses (`cancel`). When the scout's confidence cleared
+ * `vibeide.subagent.scoutAutoProceedConfidence`, it is created already `proceeded` (non-interactive —
+ * the main turn started immediately) so the user still sees what was found.
+ */
+export type ScoutMessage = {
+	role: 'scout';
+	originalRequest: string; // the continuation request the scout ran for (re-sent on 'proceed')
+	leads: ScoutLead[];
+	hypothesis: string;
+	contextForTurn: string; // scout findings blob prepended to the main turn on 'proceed'/auto-proceed
+	state: 'pending' | 'proceeded' | 'refining' | 'cancelled';
+	createdAt?: number;
+};
+
 // Image attachment type for chat messages
 export type ChatImageAttachment = {
 	id: string; // unique identifier for this image
@@ -204,7 +225,8 @@ export type ChatMessage =
 	| DecorativeCanceledTool
 	| CheckpointEntry
 	| PlanMessage
-	| ReviewMessage;
+	| ReviewMessage
+	| ScoutMessage;
 
 
 // one of the square items that indicates a selection in a chat bubble

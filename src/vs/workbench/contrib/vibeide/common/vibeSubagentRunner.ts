@@ -8,6 +8,7 @@ import type { CancellationToken } from '../../../../base/common/cancellation.js'
 import type { ModelSelection, ProviderName } from './vibeideSettingsTypes.js';
 import type { SubagentType, ExploreSubagentReport } from './vibeSubagentService.js';
 import type { SubagentStopReason } from './subagentLoopPolicy.js';
+import type { ChatImageAttachment } from './chatThreadServiceTypes.js';
 
 /**
  * Headless subagent runner contract (Phase 3b). Declared in `common` so
@@ -25,6 +26,8 @@ export interface SubagentRunRequest {
 	readonly goal: string;
 	readonly acceptanceCriteria?: string;
 	readonly contextItems?: readonly string[];
+	/** Image attachments for the subagent's first user message (VA vision routing, звено 2). */
+	readonly images?: readonly ChatImageAttachment[];
 	/** Runtime-enforced tool whitelist (constraints inheritance — never weakened). */
 	readonly allowedTools: readonly string[];
 	readonly maxSteps: number;

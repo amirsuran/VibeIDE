@@ -52,6 +52,12 @@ export interface SubagentPreset {
 	defaultMaxWallClockMs: number;
 	/** Default token ceiling */
 	defaultMaxTokens: number;
+	/**
+	 * True for the role that analyzes attached images (the vision sink — see `buildRoute`). Such a
+	 * role defaults to a vision-capable model when the user hasn't picked one (звено 4), so it is
+	 * vision-ready even before an image arrives; the hard image-time guarantee is звено 3.
+	 */
+	receivesImages?: boolean;
 }
 
 export interface RoadmapAgentQueueItem {
@@ -177,11 +183,12 @@ export const VIBE_AGENT_ROLE_PRESETS: SubagentPreset[] = [
 	{
 		type: 'designer',
 		displayName: 'Дизайнер',
-		systemAppendix: 'Ты дизайнер UI. Отвечаешь за компоненты, дизайн-систему, стили. Меняй только UI-слой; бизнес-логику и бэкенд не трогай.',
+		systemAppendix: 'Ты дизайнер UI. Отвечаешь за компоненты, дизайн-систему, стили. Меняй только UI-слой; бизнес-логику и бэкенд не трогай. Если к задаче приложена картинка (скриншот, макет, ошибка) — разбери её и передай текстовый вывод остальным ролям.',
 		allowedTools: ROLE_FULL_TOOLS,
 		defaultMaxSteps: 30,
 		defaultMaxWallClockMs: 120_000,
 		defaultMaxTokens: 30_000,
+		receivesImages: true,
 	},
 	{
 		type: 'frontend-dev',

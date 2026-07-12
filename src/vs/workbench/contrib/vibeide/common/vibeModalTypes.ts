@@ -14,6 +14,8 @@
  * comment block for the full token map.
  */
 
+import type { ChatImageAttachment, ChatPDFAttachment } from './chatThreadServiceTypes.js';
+
 /**
  * Semantic role of a modal button. Drives styling AND keyboard semantics:
  *  - `primary` — focused first; activated by Enter when input not focused.
@@ -89,6 +91,13 @@ export interface VibeModalOptions<TButtonId extends string = string> {
 	/** Optional left-aligned footer button (e.g. «Роли») — resolves the modal with its id like any button. */
 	readonly footerLeftButton?: VibeModalButton<TButtonId>;
 	readonly input?: VibeModalInputSpec;
+	/**
+	 * When true, the input accepts file attachments (paperclip button + drag-drop + paste): images
+	 * (→ `VibeModalResult.images`, sent as image parts) and PDFs (→ `VibeModalResult.pdfs`, whose
+	 * extracted text the caller inlines into the prompt). Reuses the chat composer's mechanics
+	 * (`useImageAttachments` / `usePDFAttachments`). Requires `input` to be set.
+	 */
+	readonly imageInput?: boolean;
 	/** Optional numeric fields rendered below `input` — collected into `VibeModalResult.fieldValues`. */
 	readonly numberFields?: ReadonlyArray<VibeModalNumberField>;
 	/**
@@ -237,6 +246,10 @@ export interface VibeModalResult<TButtonId extends string = string> {
 	readonly checked?: boolean;
 	/** Values of `options.numberFields` at close time, keyed by field id; undefined if none. */
 	readonly fieldValues?: Record<string, number>;
+	/** Image attachments staged at close time, when `options.imageInput` was set; undefined otherwise. */
+	readonly images?: readonly ChatImageAttachment[];
+	/** PDF attachments staged at close time (with extracted text), when `options.imageInput` was set. */
+	readonly pdfs?: readonly ChatPDFAttachment[];
 }
 
 /** Sentinel used in `buttonId` when the modal was dismissed (ESC/backdrop). */

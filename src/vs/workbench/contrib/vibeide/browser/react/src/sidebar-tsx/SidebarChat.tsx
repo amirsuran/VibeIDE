@@ -28,8 +28,8 @@ import { ChatMode, displayInfoOfProviderName, FeatureName, isFeatureNameDisabled
 import { ICommandService } from '../../../../../../../platform/commands/common/commands.js';
 import { WarningBox } from '../vibe-settings-tsx/WarningBox.js';
 import { getModelCapabilities, getIsReasoningEnabledState, getReservedOutputTokenSpace } from '../../../../common/modelCapabilities.js';
-import { AlertTriangle, File, Ban, Check, ChevronRight, ChevronDown, Dot, FileIcon, Pencil, Undo, Undo2, X, Flag, Copy as CopyIcon, Info, CirclePlus, Ellipsis, CircleEllipsis, Folder, ALargeSmall, TypeOutline, Text, Paperclip, Waypoints, LoaderCircle, Maximize2, Maximize, Pin, FileDown, RotateCcw, StepForward } from 'lucide-react';
-import { ChatMessage, CheckpointEntry, StagingSelectionItem, ToolMessage, PlanMessage, ReviewMessage, PlanStep, StepStatus, PlanApprovalState, ChatImageAttachment, ChatPDFAttachment, normalizePendingInjections } from '../../../../common/chatThreadServiceTypes.js';
+import { AlertTriangle, File, Ban, Check, ChevronRight, ChevronDown, Dot, FileIcon, Pencil, Undo, Undo2, X, Flag, Copy as CopyIcon, Info, CirclePlus, Ellipsis, CircleEllipsis, Folder, ALargeSmall, TypeOutline, Text, Paperclip, Waypoints, LoaderCircle, Maximize2, Maximize, Pin, FileDown, RotateCcw, StepForward, Footprints } from 'lucide-react';
+import { ChatMessage, CheckpointEntry, StagingSelectionItem, ToolMessage, PlanMessage, ReviewMessage, ScoutMessage, PlanStep, StepStatus, PlanApprovalState, ChatImageAttachment, ChatPDFAttachment, normalizePendingInjections } from '../../../../common/chatThreadServiceTypes.js';
 import { formatChatTimestamp, chatTimestampToISO, CHAT_TIMESTAMP_STREAMING_PLACEHOLDER } from '../../../../common/chatTimestampFormatter.js';
 import { BuiltinToolCallParams, BuiltinToolName, ToolName, LintErrorItem, ToolApprovalType, toolApprovalTypes } from '../../../../common/toolsServiceTypes.js';
 import { approvalTypeOfBuiltinToolName } from '../../../../common/prompt/tools/index.js';
@@ -564,6 +564,22 @@ const ChatAgentAutopilotToggle = ({ className }: { className?: string }) => {
 const PROJECT_RULES_RESOLVE_LINKS_KEY = 'vibeide.projectRules.resolveLinks';
 const PROJECT_RULES_RESOLVE_LINKS_RECURSIVE_KEY = 'vibeide.projectRules.resolveLinksRecursive';
 
+// Mirrors CONFIG_SIMPLIFIED_CONTROLS in vibeSimplifiedControlsToggle.ts (Command Center icon toggle).
+const CHAT_SIMPLIFIED_CONTROLS_KEY = 'vibeide.chat.simplifiedControls';
+/** Reactive read of the «simplified vs full» chat-controls toggle — hides all input knobs but mode + model. */
+function useSimplifiedControls(): boolean {
+	const accessor = useAccessor();
+	const configurationService = accessor.get('IConfigurationService');
+	const read = useCallback(() => configurationService.getValue<boolean>(CHAT_SIMPLIFIED_CONTROLS_KEY) === true, [configurationService]);
+	const [v, setV] = useState<boolean>(read);
+	useEffect(() => {
+		setV(read());
+		const d = configurationService.onDidChangeConfiguration(e => { if (e.affectsConfiguration(CHAT_SIMPLIFIED_CONTROLS_KEY)) { setV(read()); } });
+		return () => d.dispose();
+	}, [configurationService, read]);
+	return v;
+}
+
 /** Toolbar mirror of `vibeide.projectRules.resolveLinksRecursive` — recursive following of links in
  *  project rules. Pure duplicate of the setting (config is the source of truth). Hidden when link
  *  resolution itself (`resolveLinks`) is off, since recursion is then moot. */
@@ -1029,11 +1045,12 @@ const ChatRunRouteButton = () => {
 		let timeSec = num('vibeide.subagent.maxWallClockSec', 300);
 		let resumes = num('vibeide.subagent.maxResumes', 2);
 		while (true) {
-			const { buttonId, inputValue, fieldValues } = await modal.showModal({
+			const { buttonId, inputValue, fieldValues, images, pdfs } = await modal.showModal({
 				title: 'Выполнить маршрут ролей',
-				body: '**Промпт для субагента.** Команда ролей (планировщик → разработчики → ревьюер → QA → security) выполнит задачу под автопилотом. Лимиты ниже — на этот прогон (под автопилотом всё равно авто-продлеваются; правьте базу).',
+				body: '**Промпт для субагента.** Команда ролей (планировщик → разработчики → ревьюер → QA → security) выполнит задачу под автопилотом. Приложите картинку (скриншот/макет/ошибку) — её разберёт роль с vision-моделью. Лимиты ниже — на этот прогон (под автопилотом всё равно авто-продлеваются; правьте базу).',
 				bodyMarkdown: true,
-				input: { placeholder: 'Что должна сделать команда ролей? Напр.: добавить и проверить страницу входа через OAuth', multiline: true, initialValue: promptInit, validator: v => v.trim() ? null : 'Опишите задачу' },
+				input: { placeholder: 'Что должна сделать команда ролей? Напр.: разбери ошибку на скриншоте и почини', multiline: true, initialValue: promptInit, validator: v => v.trim() ? null : 'Опишите задачу' },
+				imageInput: true,
 				numberFields: [
 					{ id: 'maxSteps', label: 'Шаги', default: steps, min: 5, max: 500 },
 					{ id: 'maxTokens', label: 'Токены', default: tokens, min: 10000, max: 100000000 },
@@ -1065,7 +1082,13 @@ const ChatRunRouteButton = () => {
 				continue;
 			}
 			if (buttonId === 'run' && inputValue?.trim()) {
-				commandService.executeCommand('vibeide.vibeAgents.executeRoute', { prompt: inputValue.trim(), overrides: fieldValues });
+				// PDFs contribute their extracted text to the prompt (as the main composer does); images
+				// ride the binary `images` path (delivered to the vision-sink role by the orchestrator).
+				const docText = (pdfs ?? [])
+					.map(p => p.extractedText?.trim() ? `\n\n[Документ: ${p.filename}]\n${p.extractedText.trim()}` : '')
+					.join('');
+				const prompt = inputValue.trim() + docText;
+				commandService.executeCommand('vibeide.vibeAgents.executeRoute', { prompt, overrides: fieldValues, ...(images && images.length ? { images } : {}) });
 			}
 			break;
 		}
@@ -1080,9 +1103,42 @@ const ChatRunRouteButton = () => {
 			onClick={openRouteModal}
 			className="flex-shrink-0 p-1.5 rounded-xl hover:bg-vibe-bg-2-alt text-vibe-fg-4 hover:text-vibe-fg-2 transition-colors"
 			aria-label={chatS.runRouteAria}
-			title={chatS.runRouteTitle}
+			data-tooltip-id='vibe-tooltip'
+			data-tooltip-content={chatS.runRouteTitle}
+			data-tooltip-place='top'
+			data-tooltip-delay-show={1000}
 		>
 			<Waypoints size={16} />
+		</button>
+	);
+};
+
+// Manual scout override (C): arms the read-only scout for the NEXT message on this thread, even when
+// it isn't a continuation request. The arm flag lives in the service (auto-consumed once the turn
+// scouts); this button subscribes to onDidChangeScoutArmed so its state stays in sync.
+const ChatScoutToggleButton = () => {
+	const accessor = useAccessor();
+	const chatThreadService = accessor.get('IChatThreadService');
+	const threadId = chatThreadService.state.currentThreadId;
+	const [armed, setArmed] = useState<boolean>(() => !!threadId && chatThreadService.isScoutArmed(threadId));
+	useEffect(() => {
+		setArmed(!!threadId && chatThreadService.isScoutArmed(threadId));
+		const d = chatThreadService.onDidChangeScoutArmed(tid => { if (tid === threadId) { setArmed(chatThreadService.isScoutArmed(threadId)); } });
+		return () => d.dispose();
+	}, [chatThreadService, threadId]);
+	if (!threadId) { return null; }
+	return (
+		<button
+			type="button"
+			onClick={() => chatThreadService.toggleScoutArmed(threadId)}
+			className={`flex-shrink-0 p-1.5 rounded-xl transition-colors ${armed ? 'bg-blue-500/20 text-blue-300' : 'hover:bg-vibe-bg-2-alt text-vibe-fg-4 hover:text-vibe-fg-2'}`}
+			aria-label='Сначала разведать следующий запрос'
+			data-tooltip-id='vibe-tooltip'
+			data-tooltip-content={armed ? 'Разведка следующего запроса включена — нажмите, чтобы выключить' : 'Сначала разведать: перед ответом собрать зацепки по последним правкам и плану (read-only)'}
+			data-tooltip-place='top'
+			data-tooltip-delay-show={1000}
+		>
+			<Footprints size={16} />
 		</button>
 	);
 };
@@ -1199,6 +1255,8 @@ export const VibeChatArea: React.FC<VibeideChatAreaProps> = ({
 	const [isDragOver, setIsDragOver] = React.useState(false);
 	const attachInputRef = React.useRef<HTMLInputElement>(null);
 	const containerRef = React.useRef<HTMLDivElement>(null);
+	// Simplified view (Command Center toggle): keep only mode + model, hide every other input knob.
+	const simplified = useSimplifiedControls();
 
 	// Paste of files (images / PDFs) is handled directly on the textarea via onPaste prop in VibeInputBox2 —
 	// container-level paste listener was removed because it duplicated processing in bubble phase.
@@ -1342,8 +1400,8 @@ export const VibeChatArea: React.FC<VibeideChatAreaProps> = ({
 						<Paperclip size={16} />
 					</button>
 
-					{/* Run role-route button — opens a modal to launch «Выполнить маршрут ролей» */}
-					<ChatRunRouteButton />
+					{/* Role-route (subagent) + scout moved next to the model dropdown — they're about
+					    behaviour/paths, not chat, and stay visible in the simplified view. */}
 
 					{/* Quick-continue button — left of the send arrow, hidden while streaming */}
 					{!isStreaming && onContinue && <ChatContinueButton onSend={onContinue} />}
@@ -1377,15 +1435,22 @@ export const VibeChatArea: React.FC<VibeideChatAreaProps> = ({
 					<div className='flex items-center flex-wrap gap-x-2 gap-y-1 text-nowrap flex-1 min-w-0'>
 						{featureName === 'Chat' && <ChatModeDropdown className='text-xs text-vibe-fg-3 @@vibe-toolbar-pill rounded-xl overflow-hidden py-0.5 px-1.5' />}
 						<ChatModelHealthDropdown featureName={featureName} className='text-xs text-vibe-fg-3 @@vibe-toolbar-pill rounded-xl overflow-hidden py-0.5 px-1.5' />
-						{featureName === 'Chat' && <ChatTrainingPolicyBadge />}
-						{featureName === 'Chat' && <ChatAgentAutopilotToggle />}
-						{featureName === 'Chat' && <ChatRuleLinksRecursiveToggle />}
-						{featureName === 'Chat' && <ChatSessionResetButton />}
-						{featureName === 'Chat' && <ChatAgentIterationsControl />}
-						{featureName === 'Chat' && <ChatAgentNudgesControl />}
-						{featureName === 'Chat' && <ChatAgentQuestionNudgesControl />}
-						{featureName === 'Chat' && <ChatSubagentResumesControl />}
-						<ReasoningOptionSlider featureName={featureName} />
+						{/* Behaviour/paths — role-route (subagent) + scout. Right after the model, and kept
+						    visible in the simplified view (they're interaction, not a chat knob). */}
+						{featureName === 'Chat' && <ChatRunRouteButton />}
+						{featureName === 'Chat' && <ChatScoutToggleButton />}
+						{/* Advanced knobs — hidden in the simplified view (mode + model stay visible). */}
+						{!simplified && <>
+							{featureName === 'Chat' && <ChatTrainingPolicyBadge />}
+							{featureName === 'Chat' && <ChatAgentAutopilotToggle />}
+							{featureName === 'Chat' && <ChatRuleLinksRecursiveToggle />}
+							{featureName === 'Chat' && <ChatSessionResetButton />}
+							{featureName === 'Chat' && <ChatAgentIterationsControl />}
+							{featureName === 'Chat' && <ChatAgentNudgesControl />}
+							{featureName === 'Chat' && <ChatAgentQuestionNudgesControl />}
+							{featureName === 'Chat' && <ChatSubagentResumesControl />}
+							<ReasoningOptionSlider featureName={featureName} />
+						</>}
 					</div>
 				)}
 				<div className='flex shrink-0 items-center gap-2'>
@@ -4447,6 +4512,45 @@ const ChatBubble = React.memo((props: ChatBubbleProps) => {
 		prev._scrollToBottom === next._scrollToBottom;
 });
 
+// Auto-scout gate (Vibe Agents): read-only scout ran on a continuation request; the user confirms
+// its guess ('Продолжить'), asks to refine ('Уточнить' → next message is re-scouted), or dismisses.
+const ScoutComponent = ({ message, threadId, messageIdx }: { message: ScoutMessage; threadId: string; messageIdx: number }) => {
+	const accessor = useAccessor();
+	const chatThreadService = accessor.get('IChatThreadService');
+	const pending = message.state === 'pending';
+	const act = (action: 'proceed' | 'refine' | 'cancel') => chatThreadService.scoutAction({ threadId, messageIdx, action });
+	return (
+		<div className='my-2'>
+			<div className='border rounded-lg p-3 bg-blue-500/10 border-blue-500/30'>
+				<div className='flex items-center gap-2 mb-2'>
+					<span>🔎</span>
+					<h3 className='font-semibold text-sm text-blue-300'>Разведка контекста</h3>
+					{message.state === 'proceeded' && <span className='text-xs text-vibe-fg-3'>— принято, продолжаю</span>}
+					{message.state === 'cancelled' && <span className='text-xs text-vibe-fg-3'>— отменено</span>}
+					{message.state === 'refining' && <span className='text-xs text-vibe-fg-3'>— уточните запрос</span>}
+				</div>
+				{message.hypothesis && <p className='text-vibe-fg-2 text-sm mb-2'><span className='text-vibe-fg-3'>Гипотеза:</span> {message.hypothesis}</p>}
+				{message.leads.length > 0 && (
+					<div className='space-y-1 mb-2'>
+						{message.leads.map((l, i) => (
+							<div key={i} className='text-xs text-vibe-fg-3 truncate' title={l.note ? `${l.path} — ${l.note}` : l.path}>
+								<span className='text-vibe-fg-2'>{l.path}</span>{l.note ? ` — ${l.note}` : ''}
+							</div>
+						))}
+					</div>
+				)}
+				{pending && (
+					<div className='flex items-center gap-2 mt-2'>
+						<button onClick={() => act('proceed')} className='px-3 py-1 rounded bg-blue-600 text-white text-xs hover:bg-blue-500'>Продолжить</button>
+						<button onClick={() => act('refine')} className='px-3 py-1 rounded border border-vibe-border-1 text-vibe-fg-2 text-xs hover:bg-white/5'>Уточнить</button>
+						<button onClick={() => act('cancel')} className='px-3 py-1 rounded border border-vibe-border-1 text-vibe-fg-3 text-xs hover:bg-white/5'>Отмена</button>
+					</div>
+				)}
+			</div>
+		</div>
+	);
+};
+
 const _ChatBubble = React.memo(({ threadId, chatMessage, currCheckpointIdx, isCommitted, messageIdx, chatIsRunning, _scrollToBottom }: ChatBubbleProps) => {
 	const role = chatMessage.role;
 
@@ -4528,6 +4632,14 @@ const _ChatBubble = React.memo(({ threadId, chatMessage, currCheckpointIdx, isCo
 		return <ReviewComponent
 			message={chatMessage}
 			isCheckpointGhost={isCheckpointGhost}
+		/>;
+	}
+
+	else if (role === 'scout') {
+		return <ScoutComponent
+			message={chatMessage}
+			threadId={threadId}
+			messageIdx={messageIdx}
 		/>;
 	}
 
@@ -5040,6 +5152,16 @@ export const SidebarChat = () => {
 	const curModelSel = settingsState.modelSelectionOfFeature['Chat'] ?? null;
 	const curChatMode = settingsState.globalSettings.chatMode;
 	const curAutopilot = settingsState.globalSettings.chatAgentAutopilot === true;
+
+	// Simplified view forces autopilot + link-recursion ON (their toggles are hidden there, so a
+	// casual user gets the «just works» behaviour without touching the advanced knobs).
+	const simplified = useSimplifiedControls();
+	useEffect(() => {
+		if (!simplified) { return; }
+		if (settingsState.globalSettings.chatAgentAutopilot !== true) { void vibeideSettingsService.setGlobalSetting('chatAgentAutopilot', true); }
+		if (configurationService.getValue<boolean>(PROJECT_RULES_RESOLVE_LINKS_KEY) !== true) { void configurationService.updateValue(PROJECT_RULES_RESOLVE_LINKS_KEY, true); }
+		if (configurationService.getValue<boolean>(PROJECT_RULES_RESOLVE_LINKS_RECURSIVE_KEY) !== true) { void configurationService.updateValue(PROJECT_RULES_RESOLVE_LINKS_RECURSIVE_KEY, true); }
+	}, [simplified, settingsState.globalSettings.chatAgentAutopilot, vibeideSettingsService, configurationService]);
 	const readChatConfig = useCallback(() => ({
 		model: curModelSel ? { providerName: curModelSel.providerName, modelName: curModelSel.modelName } : null,
 		chatMode: curChatMode as string,
@@ -6441,8 +6563,8 @@ export const SidebarChat = () => {
 		<div className='px-2 pb-2'>
 			{inputChatArea}
 
-			{/* Context usage indicator */}
-			{modelSel ? (
+			{/* Context usage indicator — hidden in the simplified view */}
+			{!simplified && modelSel ? (
 				(() => {
 					const pctNum = Math.max(0, Math.min(100, Math.round(contextPct * 100)));
 					const color = contextPct >= 1 ? 'text-red-500' : contextPct > 0.8 ? 'text-amber-500' : 'text-vibe-fg-3';
@@ -6461,7 +6583,7 @@ export const SidebarChat = () => {
 	const landingPageInput = <div>
 		<div className='pt-8'>
 			{inputChatArea}
-			{modelSel ? (
+			{!simplified && modelSel ? (
 				(() => {
 					const pctNum = Math.max(0, Math.min(100, Math.round(contextPct * 100)));
 					const color = contextPct >= 1 ? 'text-red-500' : contextPct > 0.8 ? 'text-amber-500' : 'text-vibe-fg-3';
@@ -6549,10 +6671,10 @@ export const SidebarChat = () => {
 			<ContextChipsBar />
 		</ErrorBoundary>
 
-        {/* Quick Actions shortcuts */}
-        <ErrorBoundary>
+        {/* Quick Actions shortcuts — hidden in the simplified view */}
+        {!simplified && <ErrorBoundary>
             <QuickActionsBar />
-        </ErrorBoundary>
+        </ErrorBoundary>}
 
 		{Object.keys(chatThreadsState.allThreads).length > 1 ? // show if there are threads
 			<ErrorBoundary>

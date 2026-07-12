@@ -26,6 +26,12 @@ export interface VibeAgentRoute {
 	readonly roles: readonly SubagentType[];
 	/** True when the security role was appended by the security-by-default rule (VA.4). */
 	readonly securityAdded: boolean;
+	/**
+	 * Role that should receive attached image(s) (vision routing, звено 1) — the leading vision
+	 * analyst. Undefined when no image is attached. The orchestrator hands the image ONLY to this
+	 * role; downstream coder roles get its TEXT analysis via the normal stage handoff.
+	 */
+	readonly imageSink?: SubagentType;
 }
 
 // NOTE: `\b` (word boundary) is ASCII-only in JS and does NOT work next to Cyrillic letters,
@@ -75,13 +81,32 @@ export function needsSecurity(text: string): boolean {
 	return RE_SECURITY.test(text);
 }
 
+/** Role that analyzes attached images and hands a text description to the coder roles. */
+const VISION_SINK_ROLE: SubagentType = 'designer';
+
 /**
- * Builds the role workflow for a task: classify → route → append `security` when the
- * security-by-default rule fires (and it is not already in the route).
+ * Builds the role workflow for a task: classify → route → (vision-lead when an image is attached)
+ * → append `security` when the security-by-default rule fires (and it is not already in the route).
+ *
+ * @param opts.hasImages When true, a leading vision stage ({@link VISION_SINK_ROLE}) is promoted to
+ * the front so a vision-capable role reads the image first and hands a text analysis downstream.
  */
-export function buildRoute(text: string): VibeAgentRoute {
+export function buildRoute(text: string, opts?: { readonly hasImages?: boolean }): VibeAgentRoute {
 	const kind = classifyTask(text);
-	const stages = ROUTE_STAGES[kind].map(stage => [...stage]);
+	let stages = ROUTE_STAGES[kind].map(stage => [...stage]);
+	let imageSink: SubagentType | undefined;
+
+	// Vision routing (звено 1): an attached image needs a vision-capable analyst BEFORE the coder
+	// roles (which may run blind models). Promote the vision sink to a solo leading stage — dedup it
+	// from wherever the base route already placed it so it runs exactly once, first.
+	if (opts?.hasImages) {
+		stages = stages
+			.map(stage => stage.filter(role => role !== VISION_SINK_ROLE))
+			.filter(stage => stage.length > 0);
+		stages.unshift([VISION_SINK_ROLE]);
+		imageSink = VISION_SINK_ROLE;
+	}
+
 	const flat = stages.flat();
 	let securityAdded = false;
 	if (needsSecurity(text) && !flat.includes('security')) {
@@ -89,5 +114,5 @@ export function buildRoute(text: string): VibeAgentRoute {
 		flat.push('security');
 		securityAdded = true;
 	}
-	return { kind, stages, roles: flat, securityAdded };
+	return { kind, stages, roles: flat, securityAdded, imageSink };
 }

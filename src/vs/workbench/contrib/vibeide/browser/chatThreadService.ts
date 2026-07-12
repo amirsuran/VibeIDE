@@ -25,7 +25,7 @@ import { ModelHealthTracker, HEALTH_FAILURE_THRESHOLD, HEALTH_WINDOW_MS, classif
 import { translateProviderError } from '../common/providerErrorTranslator.js';
 import { generateUuid } from '../../../../base/common/uuid.js';
 import { autoModelFallbackProviderOrder, ChatMode, FeatureName, ModelSelection, ModelSelectionOptions, ProviderName } from '../common/vibeideSettingsTypes.js';
-import { isVisionByNameHeuristic } from '../common/modelVisionHeuristics.js';
+import { isModelVisionCapable } from '../common/modelVisionHeuristics.js';
 import { detectVisionDropResponse } from '../common/visionDropDetector.js';
 import { IVibeideSettingsService } from '../common/vibeideSettingsService.js';
 import { BuiltinToolCallParams, BuiltinToolResultType, TerminalResolveReason, ToolCallParams, ToolName, ToolResult } from '../common/toolsServiceTypes.js';
@@ -76,6 +76,9 @@ import { AuditEvent, IAuditLogService } from '../common/auditLogService.js';
 import { IVibeAgentActivityLogService } from './vibeAgentActivityLogService.js';
 import { IVibeLLMJudgeService } from '../common/vibeLLMJudgeService.js';
 import { IVibePersistedPlanService } from '../common/vibePersistedPlanService.js';
+import { IVibeSubagentService } from '../common/vibeSubagentService.js';
+import { isContinuationRequest, buildScoutGoal } from '../common/scoutTrigger.js';
+import { ScoutLead, ScoutMessage } from '../common/chatThreadServiceTypes.js';
 import { IVibePlanEventJournalService } from '../common/vibePlanEventJournalService.js';
 import { IVibePlanBindingRegistry } from './vibePlanBindingRegistry.js';
 import { IVibeTaskDecompositionService } from '../common/vibeTaskDecompositionService.js';
@@ -644,6 +647,14 @@ export interface IChatThreadService {
 	// Plan management methods
 	approvePlan(opts: { threadId: string; messageIdx: number }): void;
 	rejectPlan(opts: { threadId: string; messageIdx: number }): void;
+	/** Act on a scout gate (Vibe Agents auto-scout): proceed with its context, refine (re-scout next message), or cancel. */
+	scoutAction(opts: { threadId: string; messageIdx: number; action: 'proceed' | 'refine' | 'cancel' }): void;
+	/** Fires the threadId when the «scout next turn» arm flag changes (input toggle / refine / consumption). */
+	readonly onDidChangeScoutArmed: Event<string>;
+	/** Manual override (C): whether the next message on this thread is forced through the scout. */
+	isScoutArmed(threadId: string): boolean;
+	/** Toggle the manual «scout my next message» arm flag for a thread (input toolbar toggle). */
+	toggleScoutArmed(threadId: string): void;
 	editPlan(opts: { threadId: string; messageIdx: number; updatedPlan: PlanMessage }): void;
 	toggleStepDisabled(opts: { threadId: string; messageIdx: number; stepNumber: number }): void;
 	reorderPlanSteps(opts: { threadId: string; messageIdx: number; newStepOrder: number[] }): void;
@@ -688,6 +699,11 @@ class ChatThreadService extends Disposable implements IChatThreadService {
 
 	private readonly _onDidChangeStreamState = new Emitter<{ threadId: string }>();
 	readonly onDidChangeStreamState: Event<{ threadId: string }> = this._onDidChangeStreamState.event;
+
+	// Fires the threadId whenever the «scout my next turn» arm flag flips (toggle in the input
+	// toolbar, «Уточнить» on a scout card, or consumption when the turn actually scouts).
+	private readonly _onDidChangeScoutArmed = new Emitter<string>();
+	readonly onDidChangeScoutArmed: Event<string> = this._onDidChangeScoutArmed.event;
 
 	private readonly _onDidChangeProviderHealth = new Emitter<void>();
 	readonly onDidChangeProviderHealth: Event<void> = this._onDidChangeProviderHealth.event;
@@ -915,6 +931,7 @@ class ChatThreadService extends Disposable implements IChatThreadService {
 		@IVibeNotifySoundService private readonly _notifySoundService: IVibeNotifySoundService,
 		@IVibeDesktopNotificationService private readonly _desktopNotificationService: IVibeDesktopNotificationService,
 		@IVibeQuirkAutoFeedService private readonly _quirkAutoFeedService: IVibeQuirkAutoFeedService,
+		@IVibeSubagentService private readonly _subagentService: IVibeSubagentService,
 	) {
 		super();
 		this.state = { allThreads: {}, currentThreadId: null as unknown as string, openTabIds: [] }; // default state
@@ -973,6 +990,9 @@ class ChatThreadService extends Disposable implements IChatThreadService {
 
 	// If true for a thread, suppress plan generation once for the next user message
 	private _suppressPlanOnceByThread: Record<string, boolean>;
+	// One-shot «scout my next message» — set by the input toggle (manual override C) and by the scout
+	// card's «Уточнить» action; forces a scout on the next turn regardless of continuation phrasing.
+	private readonly _scoutNextTurnByThread: Record<string, boolean> = {};
 
 	async focusCurrentChat() {
 		const threadId = this.state.currentThreadId;
@@ -1510,50 +1530,9 @@ class ChatThreadService extends Disposable implements IChatThreadService {
 	 * like OpenRouter where modality info is per-model) → provider heuristics → name-based fallback.
 	 */
 	private _isModelVisionCapable(modelSelection: ModelSelection, capabilities: { supportsVision?: boolean } | undefined): boolean {
-		// Authoritative when set: catalog-derived flag (OpenRouter, openAICompatible, etc.).
-		// Distinguish explicit false from undefined — undefined falls through to heuristics.
-		if (capabilities && typeof capabilities.supportsVision === 'boolean') {
-			return capabilities.supportsVision;
-		}
-
-		const name = modelSelection.modelName.toLowerCase();
-		const provider = modelSelection.providerName.toLowerCase();
-
-		// Known vision-capable models
-		if (provider === 'gemini') { return true; } // all Gemini models support vision
-		if (provider === 'anthropic') {
-			return name.includes('3.5') || name.includes('3.7') || name.includes('4') || name.includes('opus') || name.includes('sonnet');
-		}
-		if (provider === 'openai') {
-			// GPT-5 series (all variants support vision)
-			if (name.includes('gpt-5') || name.includes('gpt-5.1')) { return true; }
-			// GPT-4.1 series
-			if (name.includes('4.1')) { return true; }
-			// GPT-4o series
-			if (name.includes('4o')) { return true; }
-			// o-series reasoning models (o1, o3, o4-mini support vision)
-			if (name.startsWith('o1') || name.startsWith('o3') || name.startsWith('o4')) { return true; }
-			// Legacy GPT-4 models
-			if (name.includes('gpt-4')) { return true; }
-		}
-		if (provider === 'mistral') {
-			// Pixtral models support vision
-			if (name.includes('pixtral')) { return true; }
-		}
-		if (provider === 'ollama' || provider === 'vllm') {
-			return name.includes('llava') || name.includes('bakllava') || name.includes('vision');
-		}
-		// Aggregators / OpenAI-compatible — without a catalog flag, fall back to the shared
-		// substring whitelist (single source of truth in common/modelVisionHeuristics.ts).
-		// Conservative: only well-known vision markers — anything else stays false to avoid
-		// sending images into a text-only model and getting hallucinated descriptions.
-		// `minimax` is the native (OpenAI-compatible) endpoint serving both text-only (M2) and
-		// multimodal (M3) models, so vision is per-model just like an aggregator.
-		if (provider === 'openrouter' || provider === 'opencode' || provider === 'opencodezen' || provider === 'openaicompatible' || provider === 'litellm' || provider === 'pollinations' || provider === 'minimax') {
-			if (isVisionByNameHeuristic(modelSelection.modelName)) { return true; }
-		}
-
-		return false;
+		// Single source of truth (common/modelVisionHeuristics.ts) — shared with the subagent runner's
+		// vision-role fallback so the image-attach gate and the fallback can never disagree.
+		return isModelVisionCapable(modelSelection, capabilities);
 	}
 
 	/**
@@ -8051,7 +8030,164 @@ We only need to do it for files that were edited since `from`, ie files between 
 	}
 
 
-	private async _addUserMessageAndStreamResponse({ userMessage, _chatSelections, threadId, images, pdfs, noPlan, displayContent }: { userMessage: string; _chatSelections?: StagingSelectionItem[]; threadId: string; images?: ChatImageAttachment[]; pdfs?: ChatPDFAttachment[]; noPlan?: boolean; displayContent?: string }) {
+	// ── Auto-scout (Vibe Agents) ──────────────────────────────────────────────
+	// A continuation request («продолжи») triggers a read-only explore scout of the recent edits +
+	// unfinished plan; its leads are surfaced in-thread with an «оно / не оно» gate before the main
+	// turn. Pure trigger + goal live in scoutTrigger.ts; config gates are vibeide.subagent.autoScout
+	// and …scoutAutoProceedConfidence.
+
+	isScoutArmed(threadId: string): boolean {
+		return !!this._scoutNextTurnByThread[threadId];
+	}
+
+	toggleScoutArmed(threadId: string): void {
+		if (this._scoutNextTurnByThread[threadId]) { delete this._scoutNextTurnByThread[threadId]; }
+		else { this._scoutNextTurnByThread[threadId] = true; }
+		this._onDidChangeScoutArmed.fire(threadId);
+	}
+
+	scoutAction({ threadId, messageIdx, action }: { threadId: string; messageIdx: number; action: 'proceed' | 'refine' | 'cancel' }): void {
+		const thread = this.state.allThreads[threadId];
+		const msg = thread?.messages[messageIdx];
+		if (!msg || msg.role !== 'scout' || msg.state !== 'pending') { return; }
+		if (action === 'cancel') { this._editMessageInThread(threadId, messageIdx, { ...msg, state: 'cancelled' }); return; }
+		if (action === 'refine') {
+			this._editMessageInThread(threadId, messageIdx, { ...msg, state: 'refining' });
+			this._scoutNextTurnByThread[threadId] = true; // the user's next message is scouted again
+			this._onDidChangeScoutArmed.fire(threadId);
+			return;
+		}
+		// proceed: fold the scout context into the preceding user message (invisible to the user —
+		// displayContent is untouched), mark the card, then run the main turn on the existing messages.
+		this._applyScoutContext(threadId, this._nearestUserIdxBefore(threadId, messageIdx), msg.contextForTurn);
+		this._editMessageInThread(threadId, messageIdx, { ...msg, state: 'proceeded' });
+		this._wrapRunAgentToNotify(this._runChatAgent({ threadId, ...this._currentModelSelectionProps() }), threadId);
+	}
+
+	/** Index of the nearest `user` message at or before `idx` (the request the scout card belongs to). */
+	private _nearestUserIdxBefore(threadId: string, idx: number): number {
+		const thread = this.state.allThreads[threadId];
+		if (!thread) { return -1; }
+		for (let i = Math.min(idx, thread.messages.length - 1); i >= 0; i--) {
+			if (thread.messages[i]?.role === 'user') { return i; }
+		}
+		return -1;
+	}
+
+	/** Prepend the scout findings to a user message's LLM `content` (its visible `displayContent` stays as typed). */
+	private _applyScoutContext(threadId: string, userIdx: number, context: string): void {
+		if (userIdx < 0 || !context.trim()) { return; }
+		const thread = this.state.allThreads[threadId];
+		const um = thread?.messages[userIdx];
+		if (!um || um.role !== 'user') { return; }
+		this._editMessageInThread(threadId, userIdx, { ...um, content: `${context}\n\n${um.content}` });
+	}
+
+	/** Files touched recently in this thread (from checkpoint snapshots) — context for the scout goal. */
+	private _recentChangedPaths(threadId: string): string[] {
+		const thread = this.state.allThreads[threadId];
+		if (!thread) { return []; }
+		const seen = new Set<string>();
+		for (let i = thread.messages.length - 1; i >= 0 && seen.size < 20; i--) {
+			const m = thread.messages[i];
+			if (m.role !== 'checkpoint') { continue; }
+			for (const fsPath of Object.keys(m.voidFileSnapshotOfURI ?? {})) { seen.add(fsPath); }
+		}
+		return [...seen];
+	}
+
+	/** Last in-thread plan that isn't finished, as a short summary for the scout goal (undefined if none). */
+	private _unfinishedPlanSummary(threadId: string): string | undefined {
+		const thread = this.state.allThreads[threadId];
+		if (!thread) { return undefined; }
+		for (let i = thread.messages.length - 1; i >= 0; i--) {
+			const m = thread.messages[i];
+			if (m.role !== 'plan') { continue; }
+			if (m.approvalState === 'aborted') { return undefined; }
+			const incomplete = m.steps.filter(s => s.status !== 'succeeded' && s.status !== 'skipped' && !s.disabled);
+			if (!incomplete.length) { return undefined; }
+			return (m.summary ? `${m.summary}\n` : '') + incomplete.map(s => `— [${s.status ?? 'queued'}] ${s.description}`).join('\n');
+		}
+		return undefined;
+	}
+
+	/** True when a live, approved-but-incomplete plan already carries the continuation context (v2 skip). */
+	private _hasLiveClearPlan(threadId: string): boolean {
+		const thread = this.state.allThreads[threadId];
+		if (!thread) { return false; }
+		for (let i = thread.messages.length - 1; i >= 0; i--) {
+			const m = thread.messages[i];
+			if (m.role !== 'plan') { continue; }
+			if (m.approvalState !== 'approved' && m.approvalState !== 'executing') { return false; }
+			return m.steps.some(s => s.status !== 'succeeded' && s.status !== 'skipped' && !s.disabled);
+		}
+		return false;
+	}
+
+	/**
+	 * Runs the read-only scout when the trigger fires and inserts the in-thread gate.
+	 * Returns 'gate' (short-circuit — wait for the user's click), 'auto-proceed' (high confidence —
+	 * caller continues the main turn; the proceeded scout card feeds context via the converter), or
+	 * 'skip' (no scout / nothing found — caller runs the turn normally).
+	 */
+	private async _maybeRunScout({ threadId, userRequest, forceScout }: { threadId: string; userRequest: string; forceScout?: boolean }): Promise<'gate' | 'auto-proceed' | 'skip'> {
+		const forced = !!forceScout || !!this._scoutNextTurnByThread[threadId];
+		if (this._scoutNextTurnByThread[threadId]) { delete this._scoutNextTurnByThread[threadId]; this._onDidChangeScoutArmed.fire(threadId); } // one-shot consume → un-arm the toggle
+		const autoEnabled = this._configurationService.getValue<boolean>('vibeide.subagent.autoScout') ?? true;
+		const auto = autoEnabled && isContinuationRequest(userRequest);
+		if (!forced && !auto) { return 'skip'; }
+		// Thin-context skip (v2): a live, incomplete plan already IS the continuation context; an explicit force overrides.
+		if (!forced && this._hasLiveClearPlan(threadId)) { return 'skip'; }
+
+		const changedPaths = this._recentChangedPaths(threadId);
+		const planSummary = this._unfinishedPlanSummary(threadId);
+
+		this._setStreamState(threadId, { isRunning: 'preparing', llmInfo: { displayContentSoFar: '🔎 Разведка контекста…', reasoningSoFar: '', toolCallSoFar: null }, interrupt: Promise.resolve(() => { }) });
+
+		let leads: ScoutLead[] = [];
+		let hypothesis = '';
+		let confidence = 0;
+		try {
+			const { awaitResult } = await this._subagentService.spawnExplore({
+				parentThreadId: threadId,
+				goal: buildScoutGoal(userRequest, changedPaths, planSummary),
+				contextItems: changedPaths.slice(0, 20),
+				maxSteps: 15,
+				maxWallClockMs: 60_000,
+			});
+			const result = await awaitResult();
+			const report = result.exploreReport;
+			leads = (report?.citations ?? []).slice(0, 8).map(c => ({ path: c.path, note: c.snippet }));
+			if (!leads.length) { leads = (report?.paths ?? []).slice(0, 8).map(p => ({ path: p, note: '' })); }
+			hypothesis = result.summary?.trim() ?? '';
+			confidence = report?.confidence ?? 0;
+		} catch (e) {
+			vibeLog.warn('chatThread', `[scout] explore failed: ${e}`);
+		}
+		if (!leads.length) { return 'skip'; } // nothing useful found → don't block the user with an empty gate
+
+		const contextForTurn = [
+			'Контекст от read-only разведки (для продолжения задачи):',
+			...leads.map(l => `• ${l.path}${l.note ? ` — ${l.note}` : ''}`),
+			hypothesis ? `Гипотеза: ${hypothesis}` : '',
+		].filter(Boolean).join('\n');
+
+		const autoProceedThreshold = this._configurationService.getValue<number>('vibeide.subagent.scoutAutoProceedConfidence') ?? 0.85;
+		const autoProceed = confidence >= autoProceedThreshold;
+
+		// The user message was committed by the caller just before this — it's the last message now.
+		const userIdx = this._nearestUserIdxBefore(threadId, this.state.allThreads[threadId]!.messages.length - 1);
+		const scoutMsg: ScoutMessage = { role: 'scout', originalRequest: userRequest, leads, hypothesis, contextForTurn, state: autoProceed ? 'proceeded' : 'pending', createdAt: Date.now() };
+		this._addMessageToThread(threadId, scoutMsg);
+
+		if (autoProceed) {
+			this._applyScoutContext(threadId, userIdx, contextForTurn);
+			return 'auto-proceed';
+		}
+		return 'gate';
+	}
+
+	private async _addUserMessageAndStreamResponse({ userMessage, _chatSelections, threadId, images, pdfs, noPlan, displayContent, forceScout }: { userMessage: string; _chatSelections?: StagingSelectionItem[]; threadId: string; images?: ChatImageAttachment[]; pdfs?: ChatPDFAttachment[]; noPlan?: boolean; displayContent?: string; forceScout?: boolean }) {
 		const thread = this.state.allThreads[threadId];
 		if (!thread) { return; } // should never happen
 
@@ -8196,6 +8332,15 @@ We only need to do it for files that were edited since `from`, ie files between 
 		this._addMessageToThread(threadId, userHistoryElt);
 
 		this._setThreadState(threadId, { currCheckpointIdx: null }); // no longer at a checkpoint because started streaming
+
+		// Auto-scout (Vibe Agents): on a continuation request («продолжи»), run a read-only scout of the
+		// recent edits + unfinished plan BEFORE the main turn, and surface a confirmation gate in-thread.
+		// Returns 'gate' → short-circuit (wait for the user's click); 'auto-proceed'/'skip' → continue.
+		const scoutOutcome = await this._maybeRunScout({ threadId, userRequest: instructions, forceScout });
+		if (scoutOutcome === 'gate') {
+			this._setStreamState(threadId, { isRunning: undefined });
+			return;
+		}
 
 		// Set early preparing state to give immediate feedback
 		let preparationCancelled = false;
@@ -8345,7 +8490,7 @@ We only need to do it for files that were edited since `from`, ie files between 
 	}
 
 
-	async addUserMessageAndStreamResponse({ userMessage, _chatSelections, threadId, images, pdfs, noPlan, displayContent }: { userMessage: string; _chatSelections?: StagingSelectionItem[]; threadId: string; images?: ChatImageAttachment[]; pdfs?: ChatPDFAttachment[]; noPlan?: boolean; displayContent?: string }) {
+	async addUserMessageAndStreamResponse({ userMessage, _chatSelections, threadId, images, pdfs, noPlan, displayContent, forceScout }: { userMessage: string; _chatSelections?: StagingSelectionItem[]; threadId: string; images?: ChatImageAttachment[]; pdfs?: ChatPDFAttachment[]; noPlan?: boolean; displayContent?: string; forceScout?: boolean }) {
 		const thread = this.state.allThreads[threadId];
 		if (!thread) { return; }
 
@@ -8369,7 +8514,7 @@ We only need to do it for files that were edited since `from`, ie files between 
 
 
 		// Now call the original method to add the user message and stream the response
-		await this._addUserMessageAndStreamResponse({ userMessage, _chatSelections, threadId, images, pdfs, noPlan, displayContent });
+		await this._addUserMessageAndStreamResponse({ userMessage, _chatSelections, threadId, images, pdfs, noPlan, displayContent, forceScout });
 
 		// Safety: ensure stream state is cleared when the stream finishes (unless awaiting user approval)
 		const s = this.streamState[threadId];
