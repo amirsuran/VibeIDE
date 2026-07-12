@@ -649,6 +649,12 @@ export interface IChatThreadService {
 	rejectPlan(opts: { threadId: string; messageIdx: number }): void;
 	/** Act on a scout gate (Vibe Agents auto-scout): proceed with its context, refine (re-scout next message), or cancel. */
 	scoutAction(opts: { threadId: string; messageIdx: number; action: 'proceed' | 'refine' | 'cancel' }): void;
+	/** Fires the threadId when the «scout next turn» arm flag changes (input toggle / refine / consumption). */
+	readonly onDidChangeScoutArmed: Event<string>;
+	/** Manual override (C): whether the next message on this thread is forced through the scout. */
+	isScoutArmed(threadId: string): boolean;
+	/** Toggle the manual «scout my next message» arm flag for a thread (input toolbar toggle). */
+	toggleScoutArmed(threadId: string): void;
 	editPlan(opts: { threadId: string; messageIdx: number; updatedPlan: PlanMessage }): void;
 	toggleStepDisabled(opts: { threadId: string; messageIdx: number; stepNumber: number }): void;
 	reorderPlanSteps(opts: { threadId: string; messageIdx: number; newStepOrder: number[] }): void;
@@ -693,6 +699,11 @@ class ChatThreadService extends Disposable implements IChatThreadService {
 
 	private readonly _onDidChangeStreamState = new Emitter<{ threadId: string }>();
 	readonly onDidChangeStreamState: Event<{ threadId: string }> = this._onDidChangeStreamState.event;
+
+	// Fires the threadId whenever the «scout my next turn» arm flag flips (toggle in the input
+	// toolbar, «Уточнить» on a scout card, or consumption when the turn actually scouts).
+	private readonly _onDidChangeScoutArmed = new Emitter<string>();
+	readonly onDidChangeScoutArmed: Event<string> = this._onDidChangeScoutArmed.event;
 
 	private readonly _onDidChangeProviderHealth = new Emitter<void>();
 	readonly onDidChangeProviderHealth: Event<void> = this._onDidChangeProviderHealth.event;
@@ -8025,6 +8036,16 @@ We only need to do it for files that were edited since `from`, ie files between 
 	// turn. Pure trigger + goal live in scoutTrigger.ts; config gates are vibeide.subagent.autoScout
 	// and …scoutAutoProceedConfidence.
 
+	isScoutArmed(threadId: string): boolean {
+		return !!this._scoutNextTurnByThread[threadId];
+	}
+
+	toggleScoutArmed(threadId: string): void {
+		if (this._scoutNextTurnByThread[threadId]) { delete this._scoutNextTurnByThread[threadId]; }
+		else { this._scoutNextTurnByThread[threadId] = true; }
+		this._onDidChangeScoutArmed.fire(threadId);
+	}
+
 	scoutAction({ threadId, messageIdx, action }: { threadId: string; messageIdx: number; action: 'proceed' | 'refine' | 'cancel' }): void {
 		const thread = this.state.allThreads[threadId];
 		const msg = thread?.messages[messageIdx];
@@ -8033,6 +8054,7 @@ We only need to do it for files that were edited since `from`, ie files between 
 		if (action === 'refine') {
 			this._editMessageInThread(threadId, messageIdx, { ...msg, state: 'refining' });
 			this._scoutNextTurnByThread[threadId] = true; // the user's next message is scouted again
+			this._onDidChangeScoutArmed.fire(threadId);
 			return;
 		}
 		// proceed: fold the scout context into the preceding user message (invisible to the user —
@@ -8110,7 +8132,7 @@ We only need to do it for files that were edited since `from`, ie files between 
 	 */
 	private async _maybeRunScout({ threadId, userRequest, forceScout }: { threadId: string; userRequest: string; forceScout?: boolean }): Promise<'gate' | 'auto-proceed' | 'skip'> {
 		const forced = !!forceScout || !!this._scoutNextTurnByThread[threadId];
-		if (this._scoutNextTurnByThread[threadId]) { delete this._scoutNextTurnByThread[threadId]; } // one-shot consume
+		if (this._scoutNextTurnByThread[threadId]) { delete this._scoutNextTurnByThread[threadId]; this._onDidChangeScoutArmed.fire(threadId); } // one-shot consume → un-arm the toggle
 		const autoEnabled = this._configurationService.getValue<boolean>('vibeide.subagent.autoScout') ?? true;
 		const auto = autoEnabled && isContinuationRequest(userRequest);
 		if (!forced && !auto) { return 'skip'; }

@@ -1094,6 +1094,33 @@ const ChatRunRouteButton = () => {
 	);
 };
 
+// Manual scout override (C): arms the read-only scout for the NEXT message on this thread, even when
+// it isn't a continuation request. The arm flag lives in the service (auto-consumed once the turn
+// scouts); this button subscribes to onDidChangeScoutArmed so its state stays in sync.
+const ChatScoutToggleButton = () => {
+	const accessor = useAccessor();
+	const chatThreadService = accessor.get('IChatThreadService');
+	const threadId = chatThreadService.state.currentThreadId;
+	const [armed, setArmed] = useState<boolean>(() => !!threadId && chatThreadService.isScoutArmed(threadId));
+	useEffect(() => {
+		setArmed(!!threadId && chatThreadService.isScoutArmed(threadId));
+		const d = chatThreadService.onDidChangeScoutArmed(tid => { if (tid === threadId) { setArmed(chatThreadService.isScoutArmed(threadId)); } });
+		return () => d.dispose();
+	}, [chatThreadService, threadId]);
+	if (!threadId) { return null; }
+	return (
+		<button
+			type="button"
+			onClick={() => chatThreadService.toggleScoutArmed(threadId)}
+			className={`flex-shrink-0 p-1.5 rounded-xl transition-colors ${armed ? 'bg-blue-500/20 text-blue-300' : 'hover:bg-vibe-bg-2-alt text-vibe-fg-4 hover:text-vibe-fg-2'}`}
+			aria-label='Сначала разведать следующий запрос'
+			title={armed ? 'Разведка следующего запроса включена — нажмите, чтобы выключить' : 'Сначала разведать: перед ответом собрать зацепки по последним правкам и плану (read-only)'}
+		>
+			🔎
+		</button>
+	);
+};
+
 const ChatContinueButton = ({ onSend }: { onSend: (text: string) => void }) => {
 	const accessor = useAccessor();
 	const configurationService = accessor.get('IConfigurationService');
@@ -1351,6 +1378,9 @@ export const VibeChatArea: React.FC<VibeideChatAreaProps> = ({
 
 					{/* Run role-route button — opens a modal to launch «Выполнить маршрут ролей» */}
 					<ChatRunRouteButton />
+
+					{/* Scout toggle — arm the read-only scout for the next message (manual override C) */}
+					<ChatScoutToggleButton />
 
 					{/* Quick-continue button — left of the send arrow, hidden while streaming */}
 					{!isStreaming && onContinue && <ChatContinueButton onSend={onContinue} />}
