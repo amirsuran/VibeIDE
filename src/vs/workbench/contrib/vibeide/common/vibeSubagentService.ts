@@ -29,6 +29,7 @@ import { IConfigurationService } from '../../../../platform/configuration/common
 import { DEFAULT_SUBAGENT_TOKEN_QUOTA } from './subagentIsolationPolicy.js';
 import type { SubagentStopReason } from './subagentLoopPolicy.js';
 import type { ProviderName } from './vibeideSettingsTypes.js';
+import type { ChatImageAttachment } from './chatThreadServiceTypes.js';
 import { IAuditLogService } from './auditLogService.js';
 import { IVibeConstraintsService } from './vibeConstraintsService.js';
 import { IVibeSubagentRunner } from './vibeSubagentRunner.js';
@@ -54,6 +55,13 @@ export interface SubagentHandoff {
 	acceptanceCriteria?: string;
 	/** Explicit context items (file paths, refs) injected into the subagent's first message */
 	contextItems?: string[];
+	/**
+	 * Image attachments handed to the subagent's first message (VA — vision routing, звено 2).
+	 * Reuses the chat's `ChatImageAttachment` so the existing LLM-message converter base64-encodes
+	 * them exactly as for the main thread. Only meaningful for roles whose resolved model supports
+	 * vision — routing/gating of which role receives the image is a separate step.
+	 */
+	images?: readonly ChatImageAttachment[];
 	/** Hard ceiling on tokens this subagent may spend; undefined = inherit parent remaining */
 	maxTokens?: number;
 	/** Hard ceiling on tool-call steps (anti-loop) */
@@ -360,6 +368,7 @@ class VibeSubagentService extends Disposable implements IVibeSubagentService {
 			goal: handoff.goal,
 			acceptanceCriteria: handoff.acceptanceCriteria,
 			contextItems: handoff.contextItems,
+			images: handoff.images,
 			allowedTools,
 			maxSteps,
 			maxTokensEst: Math.max(0, maxTokens),

@@ -99,6 +99,9 @@ class VibeSubagentRunnerService extends Disposable implements IVibeSubagentRunne
 			content: taskMessage,
 			displayContent: taskMessage,
 			selections: null,
+			// Vision routing (звено 2): images ride the first user message. prepareLLMChatMessages
+			// base64-encodes them into image parts exactly as for the main thread — no new plumbing.
+			...(req.images && req.images.length ? { images: [...req.images] } : {}),
 			state: { stagingSelections: [], isBeingEdited: false },
 		}];
 
