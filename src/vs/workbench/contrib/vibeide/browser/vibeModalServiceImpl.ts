@@ -9,6 +9,7 @@ import { Emitter, Event } from '../../../../base/common/event.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
 import { IVibeModalService } from '../common/vibeModalService.js';
+import type { ChatImageAttachment } from '../common/chatThreadServiceTypes.js';
 import {
 	VIBE_MODAL_DEFAULT_VETO_TIMEOUT_MS,
 	VIBE_MODAL_DISMISS_ID,
@@ -89,13 +90,14 @@ export class VibeModalService extends Disposable implements IVibeModalService {
 		return this._queue.map(({ id, options }) => ({ id, options }));
 	}
 
-	resolveHead(buttonId: string, inputValue?: string, fieldValues?: Record<string, number>): void {
+	resolveHead(buttonId: string, inputValue?: string, fieldValues?: Record<string, number>, images?: readonly ChatImageAttachment[]): void {
 		const head = this._queue.shift();
 		if (!head) { return; }
 		const result = {
 			buttonId,
 			...(inputValue !== undefined ? { inputValue } : {}),
 			...(fieldValues !== undefined ? { fieldValues } : {}),
+			...(images && images.length ? { images } : {}),
 			...checkedFor(head.options),
 		};
 		head.resolve(result);

@@ -1029,11 +1029,12 @@ const ChatRunRouteButton = () => {
 		let timeSec = num('vibeide.subagent.maxWallClockSec', 300);
 		let resumes = num('vibeide.subagent.maxResumes', 2);
 		while (true) {
-			const { buttonId, inputValue, fieldValues } = await modal.showModal({
+			const { buttonId, inputValue, fieldValues, images } = await modal.showModal({
 				title: 'Выполнить маршрут ролей',
-				body: '**Промпт для субагента.** Команда ролей (планировщик → разработчики → ревьюер → QA → security) выполнит задачу под автопилотом. Лимиты ниже — на этот прогон (под автопилотом всё равно авто-продлеваются; правьте базу).',
+				body: '**Промпт для субагента.** Команда ролей (планировщик → разработчики → ревьюер → QA → security) выполнит задачу под автопилотом. Приложите картинку (скриншот/макет/ошибку) — её разберёт роль с vision-моделью. Лимиты ниже — на этот прогон (под автопилотом всё равно авто-продлеваются; правьте базу).',
 				bodyMarkdown: true,
-				input: { placeholder: 'Что должна сделать команда ролей? Напр.: добавить и проверить страницу входа через OAuth', multiline: true, initialValue: promptInit, validator: v => v.trim() ? null : 'Опишите задачу' },
+				input: { placeholder: 'Что должна сделать команда ролей? Напр.: разбери ошибку на скриншоте и почини', multiline: true, initialValue: promptInit, validator: v => v.trim() ? null : 'Опишите задачу' },
+				imageInput: true,
 				numberFields: [
 					{ id: 'maxSteps', label: 'Шаги', default: steps, min: 5, max: 500 },
 					{ id: 'maxTokens', label: 'Токены', default: tokens, min: 10000, max: 100000000 },
@@ -1065,7 +1066,7 @@ const ChatRunRouteButton = () => {
 				continue;
 			}
 			if (buttonId === 'run' && inputValue?.trim()) {
-				commandService.executeCommand('vibeide.vibeAgents.executeRoute', { prompt: inputValue.trim(), overrides: fieldValues });
+				commandService.executeCommand('vibeide.vibeAgents.executeRoute', { prompt: inputValue.trim(), overrides: fieldValues, ...(images && images.length ? { images } : {}) });
 			}
 			break;
 		}

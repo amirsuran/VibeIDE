@@ -7,6 +7,7 @@
 import { Event } from '../../../../base/common/event.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { VibeModalOptions, VibeModalQueueEntry, VibeModalResult } from './vibeModalTypes.js';
+import type { ChatImageAttachment } from './chatThreadServiceTypes.js';
 
 export const IVibeModalService = createDecorator<IVibeModalService>('vibeModalService');
 
@@ -68,7 +69,7 @@ export interface IVibeModalService {
 	 * Used for tests and for keyboard shortcuts that need to commit a choice
 	 * without a real click. No-op if no modal is active.
 	 */
-	resolveHead(buttonId: string, inputValue?: string, fieldValues?: Record<string, number>): void;
+	resolveHead(buttonId: string, inputValue?: string, fieldValues?: Record<string, number>, images?: readonly ChatImageAttachment[]): void;
 
 	/**
 	 * Dismiss the head modal (equivalent to ESC). Only succeeds if the
