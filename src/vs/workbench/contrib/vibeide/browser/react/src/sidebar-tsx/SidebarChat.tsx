@@ -1029,7 +1029,7 @@ const ChatRunRouteButton = () => {
 		let timeSec = num('vibeide.subagent.maxWallClockSec', 300);
 		let resumes = num('vibeide.subagent.maxResumes', 2);
 		while (true) {
-			const { buttonId, inputValue, fieldValues, images } = await modal.showModal({
+			const { buttonId, inputValue, fieldValues, images, pdfs } = await modal.showModal({
 				title: 'Выполнить маршрут ролей',
 				body: '**Промпт для субагента.** Команда ролей (планировщик → разработчики → ревьюер → QA → security) выполнит задачу под автопилотом. Приложите картинку (скриншот/макет/ошибку) — её разберёт роль с vision-моделью. Лимиты ниже — на этот прогон (под автопилотом всё равно авто-продлеваются; правьте базу).',
 				bodyMarkdown: true,
@@ -1066,7 +1066,13 @@ const ChatRunRouteButton = () => {
 				continue;
 			}
 			if (buttonId === 'run' && inputValue?.trim()) {
-				commandService.executeCommand('vibeide.vibeAgents.executeRoute', { prompt: inputValue.trim(), overrides: fieldValues, ...(images && images.length ? { images } : {}) });
+				// PDFs contribute their extracted text to the prompt (as the main composer does); images
+				// ride the binary `images` path (delivered to the vision-sink role by the orchestrator).
+				const docText = (pdfs ?? [])
+					.map(p => p.extractedText?.trim() ? `\n\n[Документ: ${p.filename}]\n${p.extractedText.trim()}` : '')
+					.join('');
+				const prompt = inputValue.trim() + docText;
+				commandService.executeCommand('vibeide.vibeAgents.executeRoute', { prompt, overrides: fieldValues, ...(images && images.length ? { images } : {}) });
 			}
 			break;
 		}
