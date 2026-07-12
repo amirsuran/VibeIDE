@@ -31,6 +31,15 @@ const roleSelectStyle: React.CSSProperties = {
 	backgroundPosition: 'right 10px center',
 };
 
+// Small bordered pill shown next to a role name (e.g. «только чтение», «🖼 картинки»).
+const roleBadgeStyle: React.CSSProperties = {
+	fontSize: '10px',
+	whiteSpace: 'nowrap',
+	border: '1px solid var(--vscode-input-border, var(--vscode-widget-border, transparent))',
+	borderRadius: '4px',
+	padding: '0 4px',
+};
+
 /**
  * Per-role model mapping for Vibe Agents (VA.2). Shared between the Settings page and the in-chat
  * «Роли» modal (opened from the route launcher) — a plain select per role over the computed model
@@ -71,18 +80,10 @@ export const AgentRoleModels = () => {
 							<div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
 								<span className='text-xs text-vibe-fg-2'>{preset.displayName}</span>
 								{isReadOnly && (
-									<span
-										className='text-vibe-fg-3'
-										style={{
-											fontSize: '10px',
-											whiteSpace: 'nowrap',
-											border: '1px solid var(--vscode-input-border, var(--vscode-widget-border, transparent))',
-											borderRadius: '4px',
-											padding: '0 4px',
-										}}
-									>
-										только чтение
-									</span>
+									<span className='text-vibe-fg-3' style={roleBadgeStyle}>только чтение</span>
+								)}
+								{preset.receivesImages && (
+									<span className='text-vibe-fg-3' style={roleBadgeStyle} title='Роль разбирает приложенные картинки — по умолчанию берёт vision-модель'>🖼 картинки</span>
 								)}
 							</div>
 							<select

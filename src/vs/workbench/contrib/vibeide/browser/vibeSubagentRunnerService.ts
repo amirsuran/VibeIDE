@@ -91,21 +91,32 @@ class VibeSubagentRunnerService extends Disposable implements IVibeSubagentRunne
 			return this._outcome(req, 'failed', 'Не выбрана модель для субагента (настройте модель чата).', [], 0, false, 'нет модели', []);
 		}
 
-		// Vision fallback (звено 3): this role was handed an image (звено 1/2), but its resolved model
-		// may be a strong coder that can't see. Rather than silently dropping the image into a blind
-		// model (→ hallucinated descriptions), switch to a vision-capable enabled model for this run.
-		if (req.images && req.images.length) {
-			const overrides = this._settings.state.overridesOfModel;
-			const sees = (sel: ModelSelection) => sel.providerName !== 'auto'
-				&& isModelVisionCapable(sel, getModelCapabilities(sel.providerName, sel.modelName, overrides));
-			if (!sees(modelSelection)) {
-				const visionAlt = this._settings.state._modelOptions.find(o => sees(o.selection));
-				if (visionAlt) {
-					this._notification.info(localize('subagent.visionFallback', "Роль «{0}»: приложено изображение, но модель {1} его не видит — для этого прогона взята vision-модель {2}.", this._registry.getPreset(req.type).displayName, modelSelection.modelName, visionAlt.selection.modelName));
-					modelSelection = visionAlt.selection;
-				} else {
-					this._notification.warn(localize('subagent.visionNone', "Роль «{0}» получила изображение, но ни одна включённая модель не поддерживает vision — картинка будет проигнорирована. Настройте vision-модель.", this._registry.getPreset(req.type).displayName));
-				}
+		// Vision routing model resolution. `sees` = can this selection accept image input; `firstVision`
+		// = the first enabled vision-capable model. Shared by звено 4 (default) and звено 3 (guarantee)
+		// so the two never drift; the decision itself lives in common/modelVisionHeuristics.ts.
+		const overridesOfModel = this._settings.state.overridesOfModel;
+		const sees = (sel: ModelSelection) => sel.providerName !== 'auto'
+			&& isModelVisionCapable(sel, getModelCapabilities(sel.providerName, sel.modelName, overridesOfModel));
+		const firstVision = (): ModelSelection | undefined => this._settings.state._modelOptions.find(o => sees(o.selection))?.selection;
+
+		// Звено 4: the vision-sink role (designer) defaults to a vision-capable model when the user
+		// left its per-role model unset and the chat fallback can't see — so it is vision-ready by
+		// default, before any image arrives. An explicit per-role pick is always respected.
+		const explicitRoleModel = req.modelSelection ?? this._settings.state.modelSelectionOfRole?.[req.type];
+		if (!explicitRoleModel && preset.receivesImages && !sees(modelSelection)) {
+			const v = firstVision();
+			if (v) { modelSelection = v; }
+		}
+
+		// Звено 3: an actually-attached image MUST reach a vision model — overrides even an explicit
+		// pick, since silently feeding an image to a blind model yields hallucinated descriptions.
+		if (req.images && req.images.length && !sees(modelSelection)) {
+			const v = firstVision();
+			if (v) {
+				this._notification.info(localize('subagent.visionFallback', "Роль «{0}»: приложено изображение, но модель {1} его не видит — для этого прогона взята vision-модель {2}.", preset.displayName, modelSelection.modelName, v.modelName));
+				modelSelection = v;
+			} else {
+				this._notification.warn(localize('subagent.visionNone', "Роль «{0}» получила изображение, но ни одна включённая модель не поддерживает vision — картинка будет проигнорирована. Настройте vision-модель.", preset.displayName));
 			}
 		}
 
