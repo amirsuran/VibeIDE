@@ -24,6 +24,10 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+# Silence the progress bar: Invoke-WebRequest's per-chunk progress rendering makes
+# large downloads (the ~150 MB installer below) pathologically slow and can appear to
+# hang in non-interactive shells. Suppressing it restores normal download speed.
+$ProgressPreference = "SilentlyContinue"
 $Root = Split-Path $PSScriptRoot -Parent
 Set-Location $Root
 
