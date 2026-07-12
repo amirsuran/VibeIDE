@@ -28,7 +28,7 @@ import { ChatMode, displayInfoOfProviderName, FeatureName, isFeatureNameDisabled
 import { ICommandService } from '../../../../../../../platform/commands/common/commands.js';
 import { WarningBox } from '../vibe-settings-tsx/WarningBox.js';
 import { getModelCapabilities, getIsReasoningEnabledState, getReservedOutputTokenSpace } from '../../../../common/modelCapabilities.js';
-import { AlertTriangle, File, Ban, Check, ChevronRight, ChevronDown, Dot, FileIcon, Pencil, Undo, Undo2, X, Flag, Copy as CopyIcon, Info, CirclePlus, Ellipsis, CircleEllipsis, Folder, ALargeSmall, TypeOutline, Text, Paperclip, Waypoints, LoaderCircle, Maximize2, Maximize, Pin, FileDown, RotateCcw, StepForward } from 'lucide-react';
+import { AlertTriangle, File, Ban, Check, ChevronRight, ChevronDown, Dot, FileIcon, Pencil, Undo, Undo2, X, Flag, Copy as CopyIcon, Info, CirclePlus, Ellipsis, CircleEllipsis, Folder, ALargeSmall, TypeOutline, Text, Paperclip, Waypoints, LoaderCircle, Maximize2, Maximize, Pin, FileDown, RotateCcw, StepForward, Footprints } from 'lucide-react';
 import { ChatMessage, CheckpointEntry, StagingSelectionItem, ToolMessage, PlanMessage, ReviewMessage, ScoutMessage, PlanStep, StepStatus, PlanApprovalState, ChatImageAttachment, ChatPDFAttachment, normalizePendingInjections } from '../../../../common/chatThreadServiceTypes.js';
 import { formatChatTimestamp, chatTimestampToISO, CHAT_TIMESTAMP_STREAMING_PLACEHOLDER } from '../../../../common/chatTimestampFormatter.js';
 import { BuiltinToolCallParams, BuiltinToolName, ToolName, LintErrorItem, ToolApprovalType, toolApprovalTypes } from '../../../../common/toolsServiceTypes.js';
@@ -1132,7 +1132,7 @@ const ChatScoutToggleButton = () => {
 			aria-label='Сначала разведать следующий запрос'
 			title={armed ? 'Разведка следующего запроса включена — нажмите, чтобы выключить' : 'Сначала разведать: перед ответом собрать зацепки по последним правкам и плану (read-only)'}
 		>
-			🔎
+			<Footprints size={16} />
 		</button>
 	);
 };
@@ -1394,11 +1394,8 @@ export const VibeChatArea: React.FC<VibeideChatAreaProps> = ({
 						<Paperclip size={16} />
 					</button>
 
-					{/* Run role-route button — opens a modal to launch «Выполнить маршрут ролей» */}
-					<ChatRunRouteButton />
-
-					{/* Scout toggle — arm the read-only scout for the next message (manual override C) */}
-					<ChatScoutToggleButton />
+					{/* Role-route (subagent) + scout moved next to the model dropdown — they're about
+					    behaviour/paths, not chat, and stay visible in the simplified view. */}
 
 					{/* Quick-continue button — left of the send arrow, hidden while streaming */}
 					{!isStreaming && onContinue && <ChatContinueButton onSend={onContinue} />}
@@ -1432,6 +1429,10 @@ export const VibeChatArea: React.FC<VibeideChatAreaProps> = ({
 					<div className='flex items-center flex-wrap gap-x-2 gap-y-1 text-nowrap flex-1 min-w-0'>
 						{featureName === 'Chat' && <ChatModeDropdown className='text-xs text-vibe-fg-3 @@vibe-toolbar-pill rounded-xl overflow-hidden py-0.5 px-1.5' />}
 						<ChatModelHealthDropdown featureName={featureName} className='text-xs text-vibe-fg-3 @@vibe-toolbar-pill rounded-xl overflow-hidden py-0.5 px-1.5' />
+						{/* Behaviour/paths — role-route (subagent) + scout. Right after the model, and kept
+						    visible in the simplified view (they're interaction, not a chat knob). */}
+						{featureName === 'Chat' && <ChatRunRouteButton />}
+						{featureName === 'Chat' && <ChatScoutToggleButton />}
 						{/* Advanced knobs — hidden in the simplified view (mode + model stay visible). */}
 						{!simplified && <>
 							{featureName === 'Chat' && <ChatTrainingPolicyBadge />}
