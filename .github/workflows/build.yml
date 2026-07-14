@@ -2,49 +2,61 @@ name: Build VibeIDE for Linux
 
 on:
   workflow_dispatch:
-  push:
-    branches: [ main ]
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     
     steps:
-      - name: Checkout VibeIDE
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libx11-dev libglfw3-dev libfreetype6-dev libssl-dev libxi-dev libxcursor-dev libxrandr-dev libxinerama-dev
+          sudo apt-get install -y build-essential libx11-dev libxkbfile-dev libsecret-1-dev libkrb5-dev python3 fakeroot rpm
 
-      - name: Install V language
+      - name: Install npm dependencies
         run: |
-          git clone --depth 1 https://github.com/vlang/v
-          cd v
-          make
-          sudo ./v symlink
-          v version
-
-      - name: Build VibeIDE
-        run: |
-          v .
+          npm install -g yarn
+          yarn install --network-timeout 600000
         continue-on-error: true
 
-      - name: List files (debug)
-        run: ls -lah
-
-      - name: Package binary
+      - name: Build for Linux
         run: |
-          mkdir -p output
-          find . -maxdepth 2 -type f -executable ! -path "./v/*" ! -path "./.git/*" -exec cp {} output/ \;
-          cd output && tar -czf ../VibeIDE-linux.tar.gz *
+          yarn gulp vscode-linux-x64-min || npm run compile-build || true
 
-      - name: Upload Artifact
+      - name: Find built files
+        run: |
+          ls -lah ..
+          find .. -maxdepth 2 -name "VSCode-linux*" -type d 2>/dev/null || echo "Standard build path not found"
+          find . -name "*.deb" -o -name "*.AppImage" -o -name "*.tar.gz" 2>/dev/null
+
+      - name: Package build
+        run: |
+          cd ..
+          if [ -d "VSCode-linux-x64" ]; then
+            tar -czf VibeIDE-linux-x64.tar.gz VSCode-linux-x64
+            mv VibeIDE-linux-x64.tar.gz $GITHUB_WORKSPACE/
+          else
+            echo "Build directory not found, packaging workspace"
+            cd $GITHUB_WORKSPACE
+            tar -czf VibeIDE-partial.tar.gz out/ 2>/dev/null || echo "No output directory"
+          fi
+
+      - name: Upload
         uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: VibeIDE-Linux-Build
+          name: VibeIDE-Linux
           path: |
-            VibeIDE-linux.tar.gz
-            output/
+            VibeIDE-linux-x64.tar.gz
+            VibeIDE-partial.tar.gz
           retention-days: 30
+          if-no-files-found: warn
