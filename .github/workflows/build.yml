@@ -1,0 +1,50 @@
+name: Build VibeIDE for Linux
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout VibeIDE
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libglfw3-dev libfreetype6-dev libssl-dev libxi-dev libxcursor-dev libxrandr-dev libxinerama-dev
+
+      - name: Install V language
+        run: |
+          git clone --depth 1 https://github.com/vlang/v
+          cd v
+          make
+          sudo ./v symlink
+          v version
+
+      - name: Build VibeIDE
+        run: |
+          v .
+        continue-on-error: true
+
+      - name: List files (debug)
+        run: ls -lah
+
+      - name: Package binary
+        run: |
+          mkdir -p output
+          find . -maxdepth 2 -type f -executable ! -path "./v/*" ! -path "./.git/*" -exec cp {} output/ \;
+          cd output && tar -czf ../VibeIDE-linux.tar.gz *
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VibeIDE-Linux-Build
+          path: |
+            VibeIDE-linux.tar.gz
+            output/
+          retention-days: 30
